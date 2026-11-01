@@ -48,7 +48,7 @@ fn percent_decode(text: &str) -> Option<String> {
 /// one fills in the form and spends nothing. Never log the URL.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PairingLink {
-    /// As given; `address::origin` decides whether it's usable.
+    /// As given, several joined by ", "; `address::origins` decides whether it's usable.
     pub address: Option<String>,
     pub token: PairingToken,
 }
@@ -66,12 +66,8 @@ impl PairingLink {
             return None;
         }
         let token = PairingToken::parse(fragment.strip_prefix("token=")?)?;
-        let address = query.split('&').find_map(|item| item.strip_prefix("address=")).map(percent_decode);
-        let address = match address {
-            Some(decoded) => Some(decoded?),
-            None => None,
-        };
-        Some(PairingLink { address, token })
+        let addresses = query.split('&').filter_map(|item| item.strip_prefix("address=")).map(percent_decode).collect::<Option<Vec<_>>>()?;
+        Some(PairingLink { address: (!addresses.is_empty()).then(|| addresses.join(", ")), token })
     }
 }
 
@@ -138,6 +134,15 @@ mod tests {
         for text in ["localflow://settings".to_string(), "localflow://pair".to_string(), format!("localflow://pair?token={t}"), "localflow://pair#token=nope".to_string(), format!("localflow://session/start#token={t}"), format!("https://pair#token={t}"), format!("localflow://pair/x#token={t}")] {
             assert!(PairingLink::parse(&text).is_none(), "{text}");
         }
+    }
+
+    #[test]
+    fn a_link_with_several_addresses() {
+        let t = token();
+        let link = PairingLink::parse(&format!("localflow://pair?address=https%3A%2F%2Fa.example.com&x=1&address=http%3A%2F%2F100.64.0.1%3A8090#token={t}")).unwrap();
+        assert_eq!(link.address.as_deref(), Some("https://a.example.com, http://100.64.0.1:8090"));
+        assert_eq!(super::super::address::origins(&link.address.unwrap()).map(|o| o.len()), Some(2));
+        assert!(PairingLink::parse(&format!("localflow://pair?address=https%3A%2F%2Fa.example.com&address=%zz#token={t}")).is_none(), "a bad one fails the parse");
     }
 
     #[test]

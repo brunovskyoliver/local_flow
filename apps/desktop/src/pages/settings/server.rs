@@ -8,7 +8,7 @@ impl SettingsPage {
         let on = p.bool_or("remote.enabled", false);
         let state = core::remote_state(p);
         let title = if core::meeting_only(p) { "Your server" } else { "Remote dictation" };
-        let detail = core::remote_detail(p, self.identity.is_some());
+        let detail = core::remote_detail(p);
         let r = core::routing(p);
         let server_only = r.server_only;
         let use_all = r.use_for_everything;
@@ -20,41 +20,16 @@ impl SettingsPage {
             body = body.child(hairline(cx)).child(row("Pair with a token", Some("Use a token from your server's owner.".into()), button, cx));
         }
         if on && self.pinned.is_some() {
-            let url = core::remote_server_url(p);
-            let shown = flow_core::remote::address::address_notice(&url).map_or(url.clone(), str::to_string);
+            let url = core::remote_addresses(p).join(", ");
+            let shown = flow_core::remote::address::list_notice(&url).map_or(url.clone(), str::to_string);
             let button = prototype_button("settings.remoteAddressEdit", "Change Address").on_click(cx.listener(|this, _, w, cx| crate::remote::open_address(this, w, cx)));
             body = body.child(hairline(cx)).child(row("Server address", Some(shown), button, cx));
         }
-        if on && (state != "approved" || self.identity.is_some() || self.remote_error.is_some()) {
-            let mut details = v_flex().id("settings.setupDetails").test_support().w_full().items_start().gap(px(12.)).py(px(16.));
-            if let Some(identity) = &self.identity {
-                details = details
-                    .child(div().id("settings.remoteFingerprintLabel").test_support().child(t("Server fingerprint").font(12., 500.).color(pl.muted)))
-                    .child(div().id("settings.remoteFingerprint").test_support().w_full().child(selectable("settings.remoteFingerprint.text", identity.fingerprint.clone(), 13., true, pl.ink, 16.)))
-                    .child(rich(vec![span("Compare it with "), span("flowd admin identity").serif(false), span(" on the server before trusting it.")]).size(12.).color(pl.muted))
-                    .child(prototype_button("settings.remoteTrust", "Trust This Server").on_click(cx.listener(|this, _, _, cx| this.trust_server(cx))));
-            } else if state != "approved"
-                && let Some(pinned) = &self.pinned
-            {
-                details = details.child(selectable("settings.pinnedFingerprint", format!("Pinned fingerprint  {pinned}"), 12., true, pl.muted, 15.));
-            }
-            if on && state == "pinned" && self.identity.is_none() {
-                let services = &cx.global::<Core>().services;
-                let (apple, google) = (services.apple_sign_in_available(), services.google_sign_in_available());
-                details = details.child(
-                    h_flex()
-                        .gap(px(8.))
-                        .when(apple, |d| d.child(prototype_button("settings.remoteSignInApple", "Sign in with Apple").disabled(self.busy).on_click(cx.listener(|this, _, _, cx| this.sign_in("apple", cx)))))
-                        .when(google, |d| d.child(prototype_button("settings.remoteSignInGoogle", "Sign in with Google").disabled(self.busy).on_click(cx.listener(|this, _, _, cx| this.sign_in("google", cx))))),
-                );
-            }
-            if matches!(state, "pin_mismatch" | "revoked" | "rejected") {
-                details = details.child(prototype_button("settings.remoteEnrollAgain", "Enroll Again").disabled(self.busy).on_click(cx.listener(|this, _, _, cx| this.fetch_identity(cx))));
-            }
-            if let Some(e) = &self.remote_error {
-                details = details.child(t(e.clone()).size(12.).color(pl.warning));
-            }
-            body = body.child(hairline(cx)).child(details);
+        if on && state != "approved"
+            && let Some(pinned) = &self.pinned
+        {
+            let details = v_flex().id("settings.setupDetails").test_support().w_full().items_start().gap(px(12.)).py(px(16.));
+            body = body.child(hairline(cx)).child(details.child(selectable("settings.pinnedFingerprint", format!("Pinned fingerprint  {pinned}"), 12., true, pl.muted, 15.)));
         }
         if r.routes {
             body = body.child(hairline(cx)).child(row(
@@ -183,98 +158,12 @@ impl SettingsPage {
         if prefs(cx).bool_or("remote.enabled", false) {
             self.prompt_turn_off(window, cx);
         } else {
-            self.remote_error = None;
-            let stored = core::remote_server_url(prefs(cx));
-            self.server_draft.update(cx, |s, cx| s.set_value(stored, window, cx));
-            self.server_draft.read(cx).focus_handle(cx).focus(window, cx); // SwiftUI focuses a sheet's first field.
-            self.modal = Some(Modal::Consent);
+            crate::remote::open_pair(self, None, window, cx);
         }
         cx.notify();
-    }
-
-    /// The consent step: only now are the address and the switch stored.
-    pub(super) fn confirm_consent(&mut self, cx: &mut Context<Self>) {
-        if self.modal != Some(Modal::Consent) {
-            return;
-        }
-        // Return follows the disabled Turn On, so Swift's "Enter the server's https://…" stays unreachable (SET-091).
-        let Some(origin) = core::remote_origin(&val(&self.server_draft, cx)) else { return };
-        let p = prefs_mut(cx);
-        p.set("remote.serverURL", origin);
-        p.set("remote.consentVersion", core::CONSENT_VERSION);
-        p.set("remote.enabled", true);
-        self.modal = None;
-        self.fetch_identity(cx);
-    }
-
-    pub(super) fn fetch_identity(&mut self, cx: &mut Context<Self>) {
-        let base = self.remote_base.clone().unwrap_or_else(|| core::remote_server_url(prefs(cx)));
-        self.busy = true;
-        self.remote_error = None;
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let answer = cx.background_spawn(async move { core::fetch_identity(&base) }).await;
-            let _ = this.update(cx, |this, cx| {
-                this.busy = false;
-                match answer {
-                    Ok(identity) => this.identity = Some(identity),
-                    Err(_) => {
-                        this.identity = None;
-                        this.remote_error = Some("The server did not answer with a LocalFlow identity. Check the address.".into());
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// `pin`: credentials go, the key is stored, the state moves to pinned.
-    pub(super) fn trust_server(&mut self, cx: &mut Context<Self>) {
-        let Some(identity) = self.identity.clone() else { return };
-        let Some(key) = identity.validated_key() else {
-            self.remote_error = Some("The server identity could not be saved.".into());
-            cx.notify();
-            return;
-        };
-        if let Some(remote) = &cx.global::<Core>().remote {
-            remote.enrollment.cancel();
-        }
-        let services = &cx.global::<Core>().services;
-        for account in ["device-key", "refresh-token", "access-token"] {
-            let _ = services.remove_secret(&core::remote_keychain(account));
-        }
-        if services.set_secret_data(&core::remote_keychain("server-key"), &key).is_err() {
-            self.remote_error = Some("The server identity could not be saved.".into());
-            cx.notify();
-            return;
-        }
-        let p = prefs_mut(cx);
-        p.remove("remote.notice");
-        p.set("remote.state", "pinned");
-        self.identity = None;
-        self.refresh(cx);
-        cx.notify();
-    }
-
-    /// Apple and Google need the platform's sign-in and a device key.
-    pub(super) fn sign_in(&mut self, provider: &str, cx: &mut Context<Self>) {
-        self.remote_error = None;
-        self.busy = true;
-        cx.notify();
-        let provider = crate::remote::provider(provider);
-        crate::remote::run(cx, move |e| e.enroll(provider), |this: &mut Self, result, cx| {
-            this.busy = false;
-            if let Err(error) = result {
-                this.remote_error = crate::remote::sign_in_message(&error).map(str::to_string);
-            }
-            this.refresh(cx);
-        });
     }
 
     pub(super) fn confirm_turn_off(&mut self, cx: &mut Context<Self>) {
-        self.identity = None;
-        self.remote_error = None;
         cx.global_mut::<Core>().turn_off_remote();
         self.refresh(cx);
         cx.notify();
@@ -291,14 +180,14 @@ impl SettingsPage {
             cx.notify();
             return;
         }
-        let base = self.remote_base.clone().unwrap_or_else(|| core::remote_server_url(prefs(cx)));
+        let addresses = self.remote_base.clone().map_or_else(|| core::remote_addresses(prefs(cx)), |base| vec![base]);
         let services = &cx.global::<Core>().services;
         let key = services.secret_data(&core::remote_keychain("server-key")).ok().flatten();
         let token = services.secret(&core::remote_keychain("access-token")).ok().flatten();
         self.checking = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let answer = cx.background_spawn(async move { core::ping(&base, key.as_deref(), token.as_deref()) }).await;
+            let answer = cx.background_spawn(async move { addresses.iter().find_map(|base| core::ping(base, key.as_deref(), token.as_deref())) }).await;
             let _ = this.update(cx, |this, cx| {
                 this.checking = false;
                 this.check_result = Some(match answer {

@@ -18,7 +18,7 @@ struct Stub {
     log: Log,
     /// What a permission prompt answers.
     answer: Rc<Cell<PermissionState>>,
-    /// The sign-in's outcome: a state, or the service's failure.
+    /// What the shortcut recorder answers.
     recorded: Rc<RefCell<Option<Option<String>>>>,
     globe: Rc<Cell<bool>>,
     background: Rc<Cell<bool>>,
@@ -658,19 +658,6 @@ async fn editing_the_address_writes_each_keystroke_and_invalidates(cx: &mut Test
     assert_eq!(read(cx, w, |p, _| (p.connection_revision, p.connection_testing)), (revision + 2, false));
 }
 
-// parity: ONB-207
-/// The consent sheet opens with the address field focused, so it draws the focus ring.
-#[flow_ui::gpui::test]
-async fn consent_opens_with_the_address_field_focused(cx: &mut TestAppContext) {
-    let w = rig(cx, true, &[]).win;
-    set(cx, w, |p| {
-        p.setup.step = Step::AiDetails;
-        p.setup.ai_mode = AiMode::Remote;
-    });
-    click(cx, w, "settings.remoteEnabled");
-    w.update(cx, |p, win, cx| assert!(p.server_draft.read(cx).focus_handle(cx).is_focused(win))).unwrap();
-}
-
 // parity: ONB-315 ONB-317 ONB-327 ONB-331 ONB-332 ONB-333 ONB-049 ONB-334 ONB-336
 #[flow_ui::gpui::test]
 async fn permission_group_shows_only_what_is_missing(cx: &mut TestAppContext) {
@@ -1076,66 +1063,59 @@ async fn test_step_arms_and_done_copy(cx: &mut TestAppContext) {
     assert_saw(&["Start a meeting in Notetaker."]);
 }
 
-// parity: ONB-200 ONB-057 ONB-174 ONB-175 ONB-176 ONB-177 ONB-178 ONB-179 ONB-180 ONB-192 ONB-193 ONB-194 ONB-195 ONB-196 ONB-197 ONB-198 ONB-199 ONB-202 ONB-203 ONB-204 ONB-205 ONB-206 ONB-207 ONB-208 ONB-209 ONB-210 ONB-212 ONB-213 ONB-214 ONB-215 ONB-217 ONB-218 ONB-219 ONB-222 ONB-045
+// parity: ONB-057 ONB-174 ONB-175 ONB-176 ONB-177 ONB-178 ONB-179 ONB-180 ONB-195 ONB-205 ONB-218 ONB-219 ONB-222
 #[flow_ui::gpui::test]
-async fn server_step_consent_trust_sign_in_and_turn_off(cx: &mut TestAppContext) {
+async fn server_step_pairing_and_turn_off(cx: &mut TestAppContext) {
     let r = rig(cx, true, &[]);
     let w = r.win;
-    let (body, fingerprint) = identity();
     set(cx, w, |p| {
         p.setup.step = Step::AiDetails;
         p.setup.ai_mode = AiMode::Remote;
-        p.remote.base = Some(http(vec![("/v1/remote/identity", 200, body.clone())]));
     });
-    assert_saw(&["Connect ", "your server", "Turn on Remote dictation and confirm what the server receives. Compare its fingerprint, then sign in; the administrator approves this Mac once. You can change this later in Settings.", "Remote dictation", "Run dictation, rewriting, summaries and meetings on a LocalFlow server you run.", "Nothing leaves this Mac until", "Sign in to continue", "Use this server"]);
+    assert_saw(&["Connect ", "your server", "Turn on Remote dictation with the address and token from your server. You can change this later in Settings.", "Remote dictation", "Run dictation, rewriting, summaries and meetings on a LocalFlow server you run.", "Nothing leaves this Mac until", "Pair to continue", "Use this server"]);
     assert!(disabled(cx, w, "onboarding.primary"));
-    // Toggle shows consent; Cancel leaves it off.
+    // The switch opens the pairing sheet; Cancel and Esc leave it off and store nothing.
     click(cx, w, "settings.remoteEnabled");
-    assert_saw(&["Use your LocalFlow server?", "Dictation audio, transcripts, Dictionary terms"]);
-    assert!(disabled(cx, w, "settings.remoteConsentConfirm"));
-    click(cx, w, "settings.remoteConsentCancel");
-    assert!(!read(cx, w, |p, _| p.remote.consent_open) && !flag(cx, "remote.enabled"));
-    // An unusable address is refused with its message; a good one fetches the identity.
+    assert_saw(&["Pair with a token", "Dictation audio, transcripts, Dictionary terms"]);
+    assert!(disabled(cx, w, "settings.remotePairConfirm"));
+    click(cx, w, "settings.remotePairCancel");
+    assert!(read(cx, w, |p, _| p.pair.sheet.is_none()) && !flag(cx, "remote.enabled"));
     click(cx, w, "settings.remoteEnabled");
-    w.update(cx, |p, w, cx| p.server_draft.update(cx, |s, cx| s.set_value("http://x.example.com/path", w, cx))).unwrap();
-    w.update(cx, |p, _, cx| p.confirm_consent(cx)).unwrap();
+    cx.update_window(w.into(), |_, w, cx| w.press("escape", cx)).unwrap();
     frame(cx, w);
-    assert_saw(&["Enter the server's address without a path."]);
-    w.update(cx, |p, w, cx| p.server_draft.update(cx, |s, cx| s.set_value("https://box.example.com", w, cx))).unwrap();
+    assert!(read(cx, w, |p, _| p.pair.sheet.is_none()) && !flag(cx, "remote.enabled"), "Esc cancels");
+    // Stored addresses come back in the sheet, all of them.
+    cx.update(|cx| {
+        let prefs = &mut cx.global_mut::<Core>().prefs;
+        prefs.set("remote.serverURL", "https://old.example.com");
+        prefs.set("remote.alternateAddresses", ["https://old2.example.com"]);
+    });
+    click(cx, w, "settings.remoteEnabled");
+    assert_eq!(read(cx, w, |p, cx| p.pair.address.read(cx).value().to_string()), "https://old.example.com, https://old2.example.com");
+    // Pairing turns it on and unlocks the step.
+    let server = cx.update(|cx| install(cx, vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")], false));
+    let token = server.token();
+    w.update(cx, |p, w, cx| {
+        p.pair.address.update(cx, |s, cx| s.set_value("https://box.example.com", w, cx));
+        p.pair.token.update(cx, |s, cx| s.set_value(token, w, cx));
+    })
+    .unwrap();
     frame(cx, w);
     assert_saw(&["Server: box.example.com"]);
-    click(cx, w, "settings.remoteConsentConfirm");
+    click(cx, w, "settings.remotePairConfirm");
+    frame(cx, w);
     assert!(flag(cx, "remote.enabled"));
     assert_eq!(pref(cx, "remote.serverURL").as_deref(), Some("https://box.example.com"));
-    assert_saw(&["Server fingerprint", &fingerprint, "flowd admin identity", "Trust This Server", "Compare the fingerprint"]);
-    // Trust pins, then both sign-ins appear when configured.
-    click(cx, w, "settings.remoteTrust");
-    assert_eq!(pref(cx, "remote.state").as_deref(), Some("pinned"));
-    assert!(r.log.borrow().contains(&format!("secret {}", flow_core::settings::remote_keychain("server-key"))), "{:?}", r.log.borrow());
-    assert!(r.log.borrow().contains(&format!("remove {}", flow_core::settings::remote_keychain("device-key"))), "pinning clears old credentials");
-    assert_saw(&[&format!("Pinned fingerprint  {fingerprint}"), "Sign in with Apple"]);
-    assert!(!saw("Sign in with Google"));
-    set(cx, w, |p| p.remote.google = true);
-    assert_saw(&["Sign in with Google"]);
-    // A failed sign-in stays pinned and says so.
-    cx.update(|cx| install(cx, vec![Reply::ready()], false, true));
-    click(cx, w, "settings.remoteSignInApple");
-    assert_saw(&["Sign-in did not finish."]);
-    assert_eq!(pref(cx, "remote.state").as_deref(), Some("pinned"));
-    cx.update(|cx| install(cx, vec![Reply::Close(1006)], true, true));
-    click(cx, w, "settings.remoteSignInApple");
-    assert_saw(&["The server could not be reached. Try again."]);
-    cx.update(|cx| install(cx, vec![Reply::ready(), Reply::enrolled("pending", Some("lfr_1"))], true, true));
-    click(cx, w, "settings.remoteSignInApple");
-    assert_eq!(pref(cx, "remote.state").as_deref(), Some("pending"));
+    assert_eq!(pref(cx, "remote.state").as_deref(), Some("approved"));
     assert!(!disabled(cx, w, "onboarding.primary"), "enrolled unlocks the step");
-    // Pin mismatch offers Enroll Again, whose failure is the identity error.
+    // A device still pending from before shows the pin.
+    cx.update(|cx| cx.global_mut::<Core>().prefs.set("remote.state", "pending"));
+    set(cx, w, |p| p.remote.pinned = Some("aaaa-bbbb".into()));
+    assert_saw(&["Pinned fingerprint  aaaa-bbbb", "Waiting for approval"]);
+    // A changed server identity is a state, and pairing stays on offer.
     cx.update(|cx| cx.global_mut::<Core>().prefs.set("remote.state", "pin_mismatch"));
     frame(cx, w);
-    assert_saw(&["Server identity changed"]);
-    set(cx, w, |p| p.remote.base = Some(closed_server()));
-    click(cx, w, "settings.remoteEnrollAgain");
-    assert_saw(&["The server did not answer with a LocalFlow identity. Check the address."]);
+    assert_saw(&["Server identity changed", "Pair with a token"]);
     // Swift's switch: a 54 by 24 track, not the Kit's 44 by 24.
     let track = cx.update_window(w.into(), |_, w, cx| {
         w.render_frame(cx);
@@ -1147,7 +1127,7 @@ async fn server_step_consent_trust_sign_in_and_turn_off(cx: &mut TestAppContext)
     click(cx, w, "settings.remoteEnabled");
     let (message, detail) = cx.pending_prompt().expect("Swift's turn-off alert is native");
     assert_eq!(message, "Turn off remote dictation?");
-    assert!(detail.contains("device key and server pin are deleted"));
+    assert!(detail.contains("device key and server pin are deleted") && detail.contains("new pairing token"));
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
     assert!(flag(cx, "remote.enabled"));
@@ -1155,11 +1135,11 @@ async fn server_step_consent_trust_sign_in_and_turn_off(cx: &mut TestAppContext)
     cx.simulate_prompt_answer("Turn Off");
     cx.run_until_parked();
     assert!(!flag(cx, "remote.enabled"));
-    assert!(read(cx, w, |p, _| p.remote.identity.is_none() && p.remote.pinned.is_none()));
+    assert!(read(cx, w, |p, _| p.remote.pinned.is_none()));
     // Meeting wording, including the consent text with retention.
     cx.update(|cx| cx.global_mut::<Core>().prefs.set("setup.purpose", "meetings"));
     set(cx, w, |p| p.setup.purpose = Purpose::Meetings);
-    assert_saw(&["Turn on Your server and confirm what the server receives. Compare its fingerprint, then sign in; the administrator approves this Mac once. You can change this later in Settings.", "Run meeting transcripts and notes"]);
+    assert_saw(&["Turn on Your server with the address and token from your server. You can change this later in Settings.", "Run meeting transcripts and notes"]);
     assert!(!saw("Advanced: rewrite-only server"));
     click(cx, w, "settings.remoteEnabled");
     assert_saw(&["Meetings handed off to the server stay there"]);
@@ -1285,77 +1265,28 @@ async fn booster_follows_the_speech_model(cx: &mut TestAppContext) {
     assert_eq!(read(cx, w, |p, _| p.error.clone()), before, "its failure is only logged");
 }
 
-// parity: ONB-220 ONB-229
-/// `busy` covers the identity fetch and sign-in and disables Enroll Again and sign-in only.
+// parity: ONB-229
+/// The state is a stored cache: nothing has to answer for an enrolled device to continue.
 #[flow_ui::gpui::test]
-async fn busy_disables_sign_in_and_offline_stays_enrolled(cx: &mut TestAppContext) {
-    let r = rig(cx, true, &[]);
-    let w = r.win;
+async fn offline_stays_enrolled(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[]).win;
     cx.update(|cx| {
         let prefs = &mut cx.global_mut::<Core>().prefs;
         prefs.set("remote.enabled", true);
-        prefs.set("remote.serverURL", "https://box.example.com");
-        prefs.set("remote.state", "pin_mismatch");
-    });
-    set(cx, w, |p| {
-        p.setup.step = Step::AiDetails;
-        p.setup.ai_mode = AiMode::Remote;
-        p.remote.base = Some(closed_server());
-    });
-    assert!(!disabled(cx, w, "settings.remoteEnrollAgain"));
-    // Busy is true from the press until the answer comes back.
-    w.update(cx, |p, _, cx| p.fetch_identity(cx)).unwrap();
-    assert!(read(cx, w, |p, _| p.remote.busy));
-    cx.update_window(w.into(), |_, w, cx| w.render_frame(cx)).unwrap();
-    assert!(disabled(cx, w, "settings.remoteEnrollAgain"));
-    assert!(!disabled(cx, w, "settings.remoteEnabled"), "the switch stays live");
-    frame(cx, w);
-    assert!(!read(cx, w, |p, _| p.remote.busy));
-    assert_saw(&["The server did not answer with a LocalFlow identity. Check the address."]);
-    // Sign-in the same way.
-    cx.update(|cx| {
-        cx.global_mut::<Core>().prefs.set("remote.state", "pinned");
-        cx.global_mut::<Core>().prefs.set("remote.consentVersion", 2);
-        install(cx, vec![Reply::ready(), Reply::enrolled("pending", Some("lfr_1"))], true, true);
-    });
-    frame(cx, w);
-    w.update(cx, |p, _, cx| p.sign_in("apple", cx)).unwrap();
-    assert!(read(cx, w, |p, _| p.remote.busy));
-    cx.update_window(w.into(), |_, w, cx| w.render_frame(cx)).unwrap();
-    assert!(disabled(cx, w, "settings.remoteSignInApple"));
-    frame(cx, w);
-    assert!(!read(cx, w, |p, _| p.remote.busy));
-    // Enrolled, the same closed server blocks nothing: the state is a stored cache.
-    assert_eq!(pref(cx, "remote.state").as_deref(), Some("pending"));
-    assert!(!disabled(cx, w, "onboarding.primary"));
-    click(cx, w, "onboarding.primary");
-    assert_eq!(read(cx, w, |p, _| p.setup.step), Step::Downloads);
-}
-
-// parity: ONB-201
-#[flow_ui::gpui::test]
-async fn sign_in_pin_mismatch_is_a_state_not_an_error(cx: &mut TestAppContext) {
-    let r = rig(cx, true, &[]);
-    let w = r.win;
-    cx.update(|cx| {
-        let prefs = &mut cx.global_mut::<Core>().prefs;
-        prefs.set("remote.enabled", true);
-        prefs.set("remote.serverURL", "https://box.example.com");
-        prefs.set("remote.state", "pinned");
+        prefs.set("remote.serverURL", closed_server());
+        prefs.set("remote.state", "pending");
         prefs.set("remote.consentVersion", 2);
     });
     set(cx, w, |p| {
         p.setup.step = Step::AiDetails;
         p.setup.ai_mode = AiMode::Remote;
     });
-    cx.update(|cx| install(cx, vec![Reply::Close(4001)], true, true));
-    click(cx, w, "settings.remoteSignInApple");
-    assert_eq!(pref(cx, "remote.state").as_deref(), Some("pin_mismatch"));
-    assert!(read(cx, w, |p, _| p.remote.error.is_none()));
-    assert_saw(&["Server identity changed", "Enroll Again"]);
+    assert!(!disabled(cx, w, "onboarding.primary"));
+    click(cx, w, "onboarding.primary");
+    assert_eq!(read(cx, w, |p, _| p.setup.step), Step::Downloads);
 }
 
-// parity: ONB-230 ONB-192
+// parity: ONB-230
 /// `DisclosureGroup`: content 12 under the title, children 16 apart, not the page's 24.
 #[flow_ui::gpui::test]
 async fn advanced_disclosure_spacing(cx: &mut TestAppContext) {
@@ -1367,27 +1298,6 @@ async fn advanced_disclosure_spacing(cx: &mut TestAppContext) {
     });
     let (title, content) = w.update(cx, |_, w, _| (w.find("onboarding.legacyRewriteServer").bounds(), w.find("onboarding.legacyContent").bounds())).unwrap();
     assert_eq!(f32::from(content.origin.y - (title.origin.y + title.size.height)), 12.);
-}
-
-// parity: ONB-196
-/// The sign-in buttons are SwiftUI's default button: 24 high, 8 apart.
-#[flow_ui::gpui::test]
-async fn sign_in_buttons_are_native_sized(cx: &mut TestAppContext) {
-    let w = rig(cx, true, &[]).win;
-    cx.update(|cx| {
-        let prefs = &mut cx.global_mut::<Core>().prefs;
-        prefs.set("remote.enabled", true);
-        prefs.set("remote.serverURL", "https://box.example.com");
-        prefs.set("remote.state", "pinned");
-    });
-    set(cx, w, |p| {
-        p.setup.step = Step::AiDetails;
-        p.setup.ai_mode = AiMode::Remote;
-        p.remote.google = true;
-    });
-    let (apple, google) = w.update(cx, |_, w, _| (w.find("settings.remoteSignInApple").bounds(), w.find("settings.remoteSignInGoogle").bounds())).unwrap();
-    assert_eq!(f32::from(apple.size.height).round(), 24.);
-    assert_eq!(f32::from(google.origin.x - (apple.origin.x + apple.size.width)), 8.);
 }
 
 // parity: ONB-016 ONB-063 ONB-064
@@ -1587,7 +1497,7 @@ async fn turn_off_alert_is_destructive(cx: &mut TestAppContext) {
     click(cx, w, "settings.remoteEnabled");
     let (message, detail) = cx.pending_prompt().expect("Swift's alert is native");
     assert_eq!(message, "Turn off remote dictation?");
-    assert_eq!(detail, "This Mac's sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on.");
+    assert_eq!(detail, "This Mac's credentials, device key and server pin are deleted. Your history stays. You will need a new pairing token to turn it back on.");
     cx.run_until_parked();
     assert_eq!(r.log.borrow().iter().filter(|c| c.starts_with("destructive")).cloned().collect::<Vec<_>>(), ["destructive Turn Off"]);
     cx.simulate_prompt_answer("Turn Off");
@@ -1636,10 +1546,10 @@ async fn turning_off_removes_every_credential_and_closes_the_parked_channel(cx: 
     assert_eq!(calls, expected);
     assert!(!flag(cx, "remote.enabled"));
     // Parked rewrite channels close with it.
-    let server = cx.update(|cx| install(cx, vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2"), Reply::ready()], true, true));
+    let server = cx.update(|cx| install(cx, vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2"), Reply::ready()], true));
     let remote = cx.update(|cx| cx.global_mut::<Core>().remote());
-    remote.enrollment.load(flow_core::remote::enrollment::RemoteSettings { origin: Some("https://box.example.com".into()), state: "pinned".into(), notice: None });
-    remote.enrollment.enroll(flow_core::remote::enrollment::IdentityProvider::Apple).unwrap();
+    remote.enrollment.load(flow_core::remote::enrollment::RemoteSettings { origin: Some("https://box.example.com".into()), state: "off".into(), notice: None, alternates: vec![] });
+    remote.enrollment.pair(&flow_core::remote::pairing::PairingToken::parse(&server.token()).unwrap()).unwrap();
     use flow_core::remote::pool::Role;
     let (channel, op) = remote.pool.lease(Role::Interactive).unwrap();
     remote.pool.release(Role::Interactive, channel, Some(op + 1));
@@ -1943,67 +1853,6 @@ async fn test_step_type_hint_and_final_disable(cx: &mut TestAppContext) {
     assert!(disabled(cx, w, "onboarding.startTest"), "performing");
 }
 
-// parity: ONB-193 ONB-194 ONB-195 ONB-199 ONB-210 ONB-212 ONB-213 ONB-214 ONB-215 ONB-217
-#[flow_ui::gpui::test]
-async fn server_type_keys_prefill_and_trust_failure(cx: &mut TestAppContext) {
-    let r = rig(cx, true, &[]);
-    let w = r.win;
-    let (_, muted, warning) = colours(cx);
-    let (body, fingerprint) = identity();
-    cx.update(|cx| cx.global_mut::<Core>().prefs.set("remote.serverURL", "https://old.example.com"));
-    set(cx, w, |p| {
-        p.setup.step = Step::AiDetails;
-        p.setup.ai_mode = AiMode::Remote;
-        p.remote.base = Some(http(vec![("/v1/remote/identity", 200, body.clone())]));
-    });
-    // Turning on opens the sheet with the stored address, focused.
-    click(cx, w, "settings.remoteEnabled");
-    assert_eq!(read(cx, w, |p, cx| p.server_draft.read(cx).value().to_string()), "https://old.example.com");
-    assert!(w.update(cx, |p, w, cx| p.server_draft.read(cx).focus_handle(cx).is_focused(w)).unwrap());
-    assert_style("Server: old.example.com", 13., Some(500.), cx.update(|cx| pal(cx).ink));
-    // Escape closes it, clears the draft and stores nothing.
-    cx.update_window(w.into(), |_, w, cx| w.press("escape", cx)).unwrap();
-    frame(cx, w);
-    assert!(!read(cx, w, |p, _| p.remote.consent_open) && !flag(cx, "remote.enabled"));
-    // Typed text doesn't survive: the next open starts from the stored address.
-    click(cx, w, "settings.remoteEnabled");
-    w.update(cx, |p, w, cx| p.server_draft.update(cx, |s, cx| s.set_value("https://typed.example.com", w, cx))).unwrap();
-    click(cx, w, "settings.remoteConsentCancel");
-    click(cx, w, "settings.remoteEnabled");
-    assert_eq!(read(cx, w, |p, cx| p.server_draft.read(cx).value().to_string()), "https://old.example.com");
-    click(cx, w, "settings.remoteConsentCancel");
-    // Return follows a disabled Turn On: a bad address is refused in the error line.
-    click(cx, w, "settings.remoteEnabled");
-    w.update(cx, |p, w, cx| p.server_draft.update(cx, |s, cx| s.set_value("http://x.example.com/path", w, cx))).unwrap();
-    frame(cx, w);
-    assert!(disabled(cx, w, "settings.remoteConsentConfirm"));
-    w.update(cx, |p, _, cx| p.confirm_consent(cx)).unwrap();
-    frame(cx, w);
-    assert_style("Enter the server's address without a path.", 12., None, warning);
-    w.update(cx, |p, w, cx| p.server_draft.update(cx, |s, cx| s.set_value("https://box.example.com", w, cx))).unwrap();
-    frame(cx, w);
-    cx.update_window(w.into(), |_, w, cx| w.press("enter", cx)).unwrap();
-    frame(cx, w);
-    assert!(flag(cx, "remote.enabled"), "Return confirms a valid address");
-    assert_style("Server fingerprint", 12., Some(500.), muted);
-    assert_eq!(flow_ui::probe::style_of(&fingerprint).map(|s| s.size), Some(13.));
-    w.update(cx, |_, w, _| assert!(w.try_find("settings.remoteFingerprint").is_some())).unwrap();
-    assert_style("Compare it with flowd admin identity on the server before trusting it.", 12., None, muted);
-    assert_saw(&["Compare it with ", "flowd admin identity", " on the server before trusting it."]);
-    assert!(!flow_ui::probe::seen().iter().any(|text| text.contains('`')), "inline code has no backticks");
-    // The Keychain refusing the key is Swift's error, and nothing is pinned.
-    r.ok.set(false);
-    click(cx, w, "settings.remoteTrust");
-    assert_saw(&["The server identity could not be saved."]);
-    assert_ne!(pref(cx, "remote.state").as_deref(), Some("pinned"));
-    r.ok.set(true);
-    click(cx, w, "settings.remoteTrust");
-    assert_style(&format!("Pinned fingerprint  {fingerprint}"), 12., None, muted);
-    cx.update(|cx| install(cx, vec![Reply::ready()], false, true));
-    click(cx, w, "settings.remoteSignInApple");
-    assert_style("Sign-in did not finish.", 12., None, warning);
-}
-
 // parity: ONB-222 ONB-235 ONB-238 ONB-240 ONB-241 ONB-242
 #[flow_ui::gpui::test]
 async fn rewrite_form_type_masking_and_analysis_lines(cx: &mut TestAppContext) {
@@ -2139,7 +1988,7 @@ async fn insecure_toggle_invalidates_the_test(cx: &mut TestAppContext) {
     assert!(read(cx, w, |p, _| p.connection.is_none() && p.analysis.is_none()));
 }
 
-// parity: ONB-107 ONB-200
+// parity: ONB-107
 #[flow_ui::gpui::test]
 async fn pairing_from_the_server_step(cx: &mut TestAppContext) {
     let r = rig(cx, true, &[]);
@@ -2149,7 +1998,7 @@ async fn pairing_from_the_server_step(cx: &mut TestAppContext) {
         p.setup.ai_mode = AiMode::Remote;
     });
     assert_saw(&["Pair with a token", "Use a token from your server's owner."]);
-    let server = cx.update(|cx| install(cx, vec![Reply::ready(), Reply::error("pairing_token_invalid"), Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")], true, false));
+    let server = cx.update(|cx| install(cx, vec![Reply::ready(), Reply::error("pairing_token_invalid"), Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")], false));
     click(cx, w, "settings.remotePairWithToken");
     assert_saw(&["Pair with a token", "Dictation audio, transcripts"]);
     assert!(disabled(cx, w, "settings.remotePairConfirm"));
@@ -2187,7 +2036,7 @@ async fn cancelling_a_pairing_that_turned_the_feature_on_turns_it_off(cx: &mut T
         p.setup.step = Step::AiDetails;
         p.setup.ai_mode = AiMode::Remote;
     });
-    let server = cx.update(|cx| install(cx, vec![Reply::ready(), Reply::error("busy")], true, false));
+    let server = cx.update(|cx| install(cx, vec![Reply::ready(), Reply::error("busy")], false));
     click(cx, w, "settings.remotePairWithToken");
     let link = server.link();
     w.update(cx, |p, w, cx| {

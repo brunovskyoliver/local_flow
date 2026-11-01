@@ -385,9 +385,6 @@ impl Services for Mac {
     fn open_url(&self, url: &str) -> Result<(), Unavailable> {
         open_with_system(url)
     }
-    fn google_sign_in_available(&self) -> bool {
-        crate::google_client().is_some()
-    }
     fn set_app_appearance(&self, dark: Option<bool>) -> Result<(), Unavailable> {
         // SAFETY: NSApplication and NSAppearance exist with AppKit linked; a nil appearance means follow the system.
         unsafe {

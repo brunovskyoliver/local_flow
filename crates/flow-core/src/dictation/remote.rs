@@ -462,16 +462,9 @@ impl Recognizer for NoServer {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
-    use crate::remote::enrollment::{IdentityProvider, Parts, RemoteSettings, SignIn, system_now};
+    use crate::remote::enrollment::{Parts, RemoteSettings, system_now};
     use crate::remote::scripted::{Counters, Reply, Script};
-    use crate::remote::{DeviceKeys, MemoryDeviceKeys, MemorySecrets, Secrets, Unavailable};
-
-    struct NoSignIn;
-    impl SignIn for NoSignIn {
-        fn sign_in(&self, _: IdentityProvider, _: &str) -> Result<String, Unavailable> {
-            Err(Unavailable("no"))
-        }
-    }
+    use crate::remote::{DeviceKeys, MemoryDeviceKeys, MemorySecrets, Secrets};
 
     /// An approved device on a scripted server.
     pub(in crate::dictation) fn enrolled(replies: Vec<Reply>) -> (Arc<Enrollment>, Counters) {
@@ -483,8 +476,8 @@ pub(super) mod tests {
         let keys = Arc::new(MemoryDeviceKeys::default());
         let (handle, _) = keys.create().unwrap();
         secrets.write("device-key", &handle).unwrap();
-        let e = Enrollment::new(Parts { secrets, keys, sign_in: Arc::new(NoSignIn), identity: Arc::new(crate::remote::enrollment::HttpIdentity), transports: Arc::new(script), now: Box::new(system_now), device_name: "T".into() });
-        e.load(RemoteSettings { origin: Some("http://127.0.0.1:9".into()), state: "approved".into(), notice: None });
+        let e = Enrollment::new(Parts { secrets, keys, identity: Arc::new(crate::remote::enrollment::HttpIdentity), transports: Arc::new(script), now: Box::new(system_now), device_name: "T".into() });
+        e.load(RemoteSettings { origin: Some("http://127.0.0.1:9".into()), state: "approved".into(), notice: None, alternates: vec![] });
         (Arc::new(e), counters)
     }
 

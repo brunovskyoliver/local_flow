@@ -20,16 +20,8 @@ use std::time::Duration;
 /// `RemoteDictationModel`'s view state; the rest is in preferences.
 #[derive(Default)]
 pub struct RemoteState {
-    pub identity: Option<server::Identity>,
     pub pinned: Option<String>,
-    /// Where identity requests go in a test; production uses the stored address.
-    pub base: Option<String>,
-    pub busy: bool,
-    pub error: Option<String>,
-    pub consent_open: bool,
     pub confirm_off: bool,
-    pub apple: bool,
-    pub google: bool,
 }
 
 pub struct OnboardingPage {
@@ -61,7 +53,6 @@ pub struct OnboardingPage {
     /// A scenario or test fixes the snapshot; polling leaves it alone.
     pub frozen: bool,
     pending_credential_clear: bool,
-    server_draft: Entity<InputState>,
     pub pair: crate::remote::PairForm,
     endpoint_input: Entity<InputState>,
     credential_input: Entity<InputState>,
@@ -168,9 +159,9 @@ fn missing(e: Unavailable) -> String {
 
 impl OnboardingPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (mut setup, memory, (apple, google_prefs)) = {
+        let (mut setup, memory) = {
             let core = cx.global::<Core>();
-            (Setup::new(&core.prefs), core.services.physical_memory(), (core.services.apple_sign_in_available(), core.services.google_sign_in_available()))
+            (Setup::new(&core.prefs), core.services.physical_memory())
         };
         // `AppServices.start()`: before any shortcut is configured.
         setup.resume_unfinished(&mut cx.global_mut::<Core>().prefs);
@@ -196,7 +187,6 @@ impl OnboardingPage {
             cx.global_mut::<Core>().prefs.set("rewriteEndpoint", "http://ref.invalid:8080");
         }
         let endpoint = cx.global::<Core>().prefs.string("rewriteEndpoint").unwrap_or_default();
-        let server_draft = cx.new(|cx| InputState::new(window, cx));
         let pair = crate::remote::PairForm::new(window, cx);
         let endpoint_input = cx.new(|cx| InputState::new(window, cx).default_value(endpoint));
         let credential_input = cx.new(|cx| InputState::new(window, cx).masked(true));
@@ -206,11 +196,6 @@ impl OnboardingPage {
                     let text = input.read(cx).value().to_string();
                     this.edit_endpoint(text, cx);
                 }
-            }),
-            cx.subscribe_in(&server_draft, window, |this, _, e: &TextInputEvent, _, cx| match e {
-                TextInputEvent::Change => cx.notify(),
-                TextInputEvent::PressEnter { .. } => this.confirm_consent(cx),
-                _ => {}
             }),
             cx.subscribe_in(&pair.token, window, |this, _, e: &TextInputEvent, w, cx| match e {
                 TextInputEvent::PressEnter { .. } => crate::remote::confirm(this, cx),
@@ -244,7 +229,7 @@ impl OnboardingPage {
             downloaded,
             ai_phase: AiPhase::Idle,
             local_helpers_ready: false,
-            remote: RemoteState { apple, google: google_prefs, pinned, ..Default::default() },
+            remote: RemoteState { pinned, ..Default::default() },
             legacy_open: false,
             credential_present: false,
             credential_error: None,
@@ -255,7 +240,6 @@ impl OnboardingPage {
             analysis: None,
             frozen: false,
             pending_credential_clear: false,
-            server_draft,
             pair,
             endpoint_input,
             credential_input,
@@ -266,9 +250,6 @@ impl OnboardingPage {
         page.effects(cx);
         page.refresh(cx);
         page.apply_scenario(cx);
-        if page.remote.consent_open {
-            page.server_draft.update(cx, |s, cx| s.focus(window, cx));
-        }
         if page.remote.confirm_off {
             cx.defer_in(window, |this, w, cx| this.present_turn_off(w, cx));
         }
@@ -462,7 +443,7 @@ impl OnboardingPage {
 
     pub fn hint(&self, cx: &App) -> Option<String> {
         match self.setup.step {
-            Step::AiDetails if self.setup.ai_mode == AiMode::Remote && !self.server_ready(cx) => Some("Sign in to continue".into()),
+            Step::AiDetails if self.setup.ai_mode == AiMode::Remote && !self.server_ready(cx) => Some("Pair to continue".into()),
             Step::Downloads if !self.snap.model_installed => Some("Waiting for speech recognition…".into()),
             Step::Downloads if !self.setup.downloads_ready(&self.snap) => Some("Waiting for meeting models…".into()),
             Step::Permissions | Step::Personalize if self.meeting_only() => self.snap.meeting_blocked_reason().map(str::to_string),
@@ -610,99 +591,15 @@ impl OnboardingPage {
         if remote_on(&cx.global::<Core>().prefs) {
             self.present_turn_off(window, cx);
         } else {
-            self.remote.error = None;
-            let stored = cx.global::<Core>().prefs.string("remote.serverURL").unwrap_or_default();
-            self.server_draft.update(cx, |s, cx| {
-                s.set_value(stored, window, cx);
-                s.focus(window, cx);
-            });
-            self.remote.consent_open = true;
+            crate::remote::open_pair(self, None, window, cx);
         }
         cx.notify();
-    }
-
-    fn cancel_consent(&mut self, cx: &mut Context<Self>) {
-        self.remote.consent_open = false;
-        cx.notify();
-    }
-
-    pub fn confirm_consent(&mut self, cx: &mut Context<Self>) {
-        if !self.remote.consent_open {
-            return;
-        }
-        let draft = self.server_draft.read(cx).value().to_string();
-        if !confirm_remote_consent(&mut cx.global_mut::<Core>().prefs, &draft) {
-            self.remote.error = Some("Enter the server's address without a path.".into());
-            cx.notify();
-            return;
-        }
-        self.remote.consent_open = false;
-        self.fetch_identity(cx);
-    }
-
-    pub fn fetch_identity(&mut self, cx: &mut Context<Self>) {
-        let base = self.remote.base.clone().unwrap_or_else(|| server::remote_server_url(&cx.global::<Core>().prefs));
-        self.remote.busy = true;
-        self.remote.error = None;
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let answer = cx.background_spawn(async move { server::fetch_identity(&base) }).await;
-            let _ = this.update(cx, |this, cx| {
-                this.remote.busy = false;
-                match answer {
-                    Ok(identity) => this.remote.identity = Some(identity),
-                    Err(_) => {
-                        this.remote.identity = None;
-                        this.remote.error = Some("The server did not answer with a LocalFlow identity. Check the address.".into());
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// `pin`: credentials go, the key is stored, the state moves to pinned.
-    pub fn trust_server(&mut self, cx: &mut Context<Self>) {
-        let Some(identity) = self.remote.identity.clone() else { return };
-        if let Some(remote) = &cx.global::<Core>().remote {
-            remote.enrollment.cancel();
-        }
-        let services = &cx.global::<Core>().services;
-        for account in ["device-key", "refresh-token", "access-token"] {
-            let _ = services.remove_secret(&server::remote_keychain(account));
-        }
-        let saved = server::base64url_decode(&identity.server_key).is_some_and(|key| services.set_secret_data(&server::remote_keychain("server-key"), &key).is_ok());
-        if !saved {
-            self.remote.error = Some("The server identity could not be saved.".into());
-        } else {
-            let prefs = &mut cx.global_mut::<Core>().prefs;
-            prefs.remove("remote.notice");
-            prefs.set("remote.state", "pinned");
-            self.remote.pinned = Some(identity.fingerprint);
-            self.remote.identity = None;
-        }
-        cx.notify();
-    }
-
-    /// `busy` covers the whole sign-in.
-    pub fn sign_in(&mut self, provider: &str, cx: &mut Context<Self>) {
-        self.remote.error = None;
-        self.remote.busy = true;
-        cx.notify();
-        let provider = crate::remote::provider(provider);
-        crate::remote::run(cx, move |e| e.enroll(provider), |this: &mut Self, result, _| {
-            this.remote.busy = false;
-            if let Err(error) = result {
-                this.remote.error = crate::remote::sign_in_message(&error).map(str::to_string);
-            }
-        });
     }
 
     /// `.confirmationDialog`: native on macOS.
     pub fn present_turn_off(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.remote.confirm_off = true;
-        let message = format!("This {}'s sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on.", self.word(cx));
+        let message = format!("This {}'s credentials, device key and server pin are deleted. Your history stays. You will need a new pairing token to turn it back on.", self.word(cx));
         let buttons = [PromptButton::Other("Turn Off".into()), PromptButton::Cancel("Cancel".into())];
         let answer = window.prompt(PromptLevel::Warning, "Turn off remote dictation?", Some(&message), &buttons, cx);
         // `role: .destructive`. GPUI presents the alert on a later turn and has no such role.
@@ -736,9 +633,7 @@ impl OnboardingPage {
 
     /// `turnOffRemoteDictation()`.
     fn turn_off_remote(&mut self, cx: &mut Context<Self>) {
-        self.remote.identity = None;
         self.remote.pinned = None;
-        self.remote.error = None;
         cx.global_mut::<Core>().turn_off_remote();
     }
 
@@ -931,10 +826,10 @@ impl Render for OnboardingPage {
             .text_color(p.ink)
             .font_family(flow_ui::txt::FIGTREE)
             .text_size(px(14.))
-            .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| match e.keystroke.key.as_str() {
-                "enter" if this.remote.consent_open => this.confirm_consent(cx),
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, w, cx| match e.keystroke.key.as_str() {
+                "enter" if this.pair.sheet.is_some() => crate::remote::confirm(this, cx),
+                "escape" if this.pair.sheet.is_some() => crate::remote::cancel(this, w, cx),
                 "enter" if !this.remote.confirm_off => this.primary(cx),
-                "escape" if this.remote.consent_open => this.cancel_consent(cx),
                 // `onExitCommand`: cancels a dictation. It does not go Back.
                 "escape" => {
                     let _ = crate::dictation::session_command(SessionCommand::CancelDictation, cx);

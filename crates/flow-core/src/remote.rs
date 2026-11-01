@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 pub mod address;
 pub mod channel;
 pub mod enrollment;
-pub mod google;
 pub mod handoff;
 pub mod pairing;
 pub mod pool;

@@ -99,7 +99,7 @@ impl Retrier {
             // Recorded for another server, or for none: it waits, untouched, for that server or the
             // user. swift-note: Swift's retrier sends to whichever server is set now.
             // ponytail: the origin alone; the same address re-paired to a new server key still counts as the same server.
-            if self.enrollment.settings().origin.is_none() || history::pending_origin(&self.dir, &item) != self.enrollment.settings().origin {
+            if !history::pending_origin(&self.dir, &item).is_some_and(|origin| self.enrollment.settings().knows(&origin)) {
                 continue;
             }
             if self.retry(&item) {

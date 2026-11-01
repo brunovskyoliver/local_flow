@@ -91,12 +91,6 @@ impl Services for Win {
     fn open_url(&self, url: &str) -> Result<(), Unavailable> {
         crate::win::system::open_url(url)
     }
-    fn google_sign_in_available(&self) -> bool {
-        crate::google_client().is_some()
-    }
-    fn apple_sign_in_available(&self) -> bool {
-        false
-    }
     fn high_contrast(&self) -> bool {
         crate::win::system::high_contrast()
     }

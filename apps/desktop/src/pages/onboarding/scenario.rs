@@ -57,32 +57,16 @@ impl OnboardingPage {
                 self.legacy_open = true;
                 self.connection = Some(Err("Could not reach the server.".into()));
             }
-            "fingerprint" | "signin" | "signinerror" | "approved" | "pending" | "mismatch" | "consent" | "turnoff" => {
+            "approved" | "pending" | "mismatch" | "turnoff" => {
                 s.step = Step::AiDetails;
                 s.ai_mode = AiMode::Remote;
                 let prefs = &mut cx.global_mut::<Core>().prefs;
+                prefs.set("remote.enabled", true);
+                prefs.set("remote.serverURL", "https://server.example.com");
                 match body {
-                    "consent" => self.remote.consent_open = true,
-                    _ => {
-                        prefs.set("remote.enabled", true);
-                        prefs.set("remote.serverURL", "https://server.example.com");
-                    }
-                }
-                match body {
-                    "fingerprint" => self.remote.identity = Some(flow_core::settings::Identity { server_key: String::new(), fingerprint: "SHA256:synthetic-fixture-fingerprint".into(), protocol_versions: vec![], schema_version: 1, server: Default::default(), suite: String::new() }),
-                    "signin" => {
-                        prefs.set("remote.state", "pinned");
-                        self.remote.pinned = Some("SHA256:synthetic-fixture-fingerprint".into());
-                    }
                     "approved" => prefs.set("remote.state", "approved"),
                     "pending" => prefs.set("remote.state", "pending"),
                     "mismatch" => prefs.set("remote.state", "pin_mismatch"),
-                    "signinerror" => {
-                        prefs.set("remote.state", "pinned");
-                        self.remote.pinned = Some("SHA256:synthetic-fixture-fingerprint".into());
-                        self.remote.google = true;
-                        self.remote.error = Some("Sign-in did not finish.".into());
-                    }
                     "turnoff" => {
                         prefs.set("remote.state", "approved");
                         self.remote.confirm_off = true;

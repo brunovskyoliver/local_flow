@@ -8,7 +8,6 @@ pub(crate) enum ContextKind {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Modal {
-    Consent,
     ConsentUpdate,
     Context(ContextKind),
     TurnOff,
@@ -43,7 +42,6 @@ impl SettingsPage {
     }
 
     fn close_modal(&mut self, cx: &mut Context<Self>) {
-        // Consent's Cancel leaves nothing stored; the draft goes with it (done in `key` and on the button).
         self.modal = None;
         cx.notify();
     }
@@ -93,11 +91,6 @@ impl SettingsPage {
             .child(h_flex().w_full().justify_between().child(prompt_button("settings.alert.cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| this.close_modal(cx)))).child(confirm.on_click(cx.listener(|this, _, _, cx| this.confirm_alert(cx)))))
     }
 
-    fn cancel_consent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.server_draft.update(cx, |s, cx| s.set_value("", window, cx));
-        self.close_modal(cx);
-    }
-
     fn confirm_consent_update(&mut self, cx: &mut Context<Self>) {
         prefs_mut(cx).set("remote.consentVersion", core::CONSENT_VERSION);
         self.close_modal(cx);
@@ -115,9 +108,7 @@ impl SettingsPage {
         }
         match (key, self.modal) {
             ("escape", None) => window.focus(&self.focus, cx),
-            ("escape", Some(Modal::Consent)) => self.cancel_consent(window, cx),
             ("escape", Some(_)) => self.close_modal(cx),
-            ("enter", Some(Modal::Consent)) => self.confirm_consent(cx),
             ("enter", Some(Modal::ConsentUpdate)) => self.confirm_consent_update(cx),
             ("enter", Some(Modal::Context(_))) => self.close_modal(cx),
             ("enter", Some(Modal::Download(_))) => self.confirm_alert(cx),
@@ -132,10 +123,9 @@ impl SettingsPage {
         }
         let modal = self.modal?;
         let body: AnyElement = match modal {
-            Modal::Consent => self.consent(window, cx).into_any_element(),
             Modal::ConsentUpdate => self.consent_update(cx).into_any_element(),
             Modal::Context(kind) => self.context_sheet(kind, window, cx).into_any_element(),
-            Modal::TurnOff => self.alert("Turn off remote dictation?".into(), "This Mac's sign-in, device key and server pin are deleted. Your history stays. You will need approval again to turn it back on.".into(), true, "Turn Off", cx).into_any_element(),
+            Modal::TurnOff => self.alert("Turn off remote dictation?".into(), "This Mac's credentials, device key and server pin are deleted. Your history stays. You will need a new pairing token to turn it back on.".into(), true, "Turn Off", cx).into_any_element(),
             Modal::Download(alternate) => {
                 let (title, message) = self.download_copy(alternate);
                 self.alert(title, message, false, "Download", cx).into_any_element()
@@ -144,7 +134,7 @@ impl SettingsPage {
         if matches!(modal, Modal::TurnOff | Modal::Download(_)) {
             return Some(sheet_overlay("settings.modal", window, cx, body).into_any_element());
         }
-        // The context sheet sets its own surface; the consent sheets stay on the native sheet's fill.
+        // The context sheet sets its own surface; the consent sheet stays on the native sheet's fill.
         let fill = if matches!(modal, Modal::Context(_)) { pl.surface } else { sheet_fill(cx) };
         Some(sheet_overlay("settings.modal", window, cx, div().id("settings.sheet").bg(fill).rounded(px(12.)).text_color(pl.ink).child(body).test_support()).into_any_element())
     }
@@ -163,30 +153,6 @@ impl SettingsPage {
             ),
             None => ("Download speech model?".into(), String::new()),
         }
-    }
-
-    fn consent(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let pl = pal(cx);
-        let origin = core::remote_origin(&val(&self.server_draft, cx));
-        let text = core::consent_text(prefs(cx));
-        v_flex()
-            .w(px(460.))
-            .p(px(24.))
-            .gap(px(16.))
-            .child(t("Use your LocalFlow server?").font(17., 500.))
-            .child(input_surface("server.rack", Some("https://server.example.com"), Input::new(&self.server_draft).id("settings.remoteServerURL").aria_label("Server address").accessibility_id("settings.remoteServerURL"), &self.server_draft, window, cx))
-            .child(div().id("settings.consentBody").w_full().child(t(text).size(13.).line_spacing(3.).swift_lines()).test_support())
-            .when_some(flow_core::remote::address::address_notice(&val(&self.server_draft, cx)), |d, n| d.child(t(n).size(12.).color(pl.muted)))
-            .when_some(origin.as_ref(), |d, o| d.child(t(format!("Server: {}", core::origin_host(o))).font(13., 500.)))
-            .when_some(self.remote_error.clone(), |d, e| d.child(t(e).size(12.).color(pl.warning)))
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(sheet_button("settings.remoteConsentCancel", "Cancel", cx).on_click(cx.listener(|this, _, w, cx| this.cancel_consent(w, cx))))
-                    .child(sheet_button("settings.remoteConsentConfirm", "Turn On", cx).disabled(origin.is_none()).on_click(cx.listener(|this, _, _, cx| this.confirm_consent(cx)))),
-            )
     }
 
     fn consent_update(&self, cx: &mut Context<Self>) -> Div {

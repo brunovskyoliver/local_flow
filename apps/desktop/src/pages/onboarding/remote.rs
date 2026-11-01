@@ -6,10 +6,6 @@ use flow_core::onboarding::*;
 use flow_ui::gpui::base::TestSupportExt;
 use flow_ui::prelude::*;
 
-/// Version `REMOTE_CONSENT_VERSION` of both texts; don't edit without a new consent version.
-pub const CONSENT_TEXT: &str = "Dictation audio, transcripts, Dictionary terms and rewrite text will leave this Mac for the server below while remote dictation is on. With Use this server for everything, so will meeting audio, meeting transcripts and the text summaries are made from. The server's administrator can see audio while it is being processed. Nothing is sent until the administrator approves this device; dictation stays local whenever the server can't be reached.";
-pub const MEETING_CONSENT_TEXT: &str = "Meeting audio, meeting transcripts and the text summaries are made from will leave this Mac for the server below. The server's administrator can see audio while it is being processed. Meetings handed off to the server stay there until they are merged back, at most 7 days. Nothing is sent until the administrator approves this device; recordings wait on this Mac while the server can't be reached. If you set up dictation later, dictation audio, transcripts, Dictionary terms and rewrite text go to this server too.";
-
 fn any(e: impl IntoElement) -> AnyElement {
     e.into_any_element()
 }
@@ -23,7 +19,7 @@ impl OnboardingPage {
         let card = self.remote_card(cx);
         let mut body = vec![
             any(headline("Connect ", "your server", ".")),
-            any(lede(format!("Turn on {name} and confirm what the server receives. Compare its fingerprint, then sign in; the administrator approves this {word} once. You can change this later in Settings."), cx)),
+            any(lede(format!("Turn on {name} with the address and token from your server. You can change this later in Settings."), cx)),
             any(setup_card(cx).child(card)),
             any(div().id("onboarding.remoteStatus").w_full().child(note("info.circle", privacy, cx)).test_support()),
         ];
@@ -53,16 +49,14 @@ impl OnboardingPage {
         let meeting = Purpose::stored(prefs) == Purpose::Meetings;
         let title = if meeting { "Your server" } else { "Remote dictation" };
         let detail = if on {
-            let url = prefs.string("remote.serverURL").unwrap_or_default();
-            let status = remote_status(prefs, self.remote.identity.is_some());
+            let url = flow_core::settings::remote_addresses(prefs).join(", ");
+            let status = remote_status(prefs);
             [Some(url.as_str()), status].into_iter().flatten().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
         } else if meeting {
             "Run meeting transcripts and notes on a LocalFlow server you run.".to_string()
         } else {
             "Run dictation, rewriting, summaries and meetings on a LocalFlow server you run.".to_string()
         };
-        let show_details = on && (state != "approved" || self.remote.identity.is_some() || self.remote.error.is_some());
-        let needs_sign_in = on && state == "pinned" && self.remote.identity.is_none();
         let toggle = FlowSwitch::new("settings.remoteEnabled").checked(on).accessibility_label(title).on_click(cx.listener(|this, _: &bool, w, cx| this.request_toggle(w, cx)));
         let mut card = v_flex().w_full().child(settings_row(title, Some(detail), toggle, cx));
         if !on || state != "approved" {
@@ -71,48 +65,17 @@ impl OnboardingPage {
             card = card.child(hairline(cx)).child(settings_row("Pair with a token", Some("Use a token from your server's owner.".to_string()), button, cx));
         }
         if on && self.remote.pinned.is_some() {
-            let url = self.core(cx).prefs.string("remote.serverURL").unwrap_or_default();
-            let shown = flow_core::remote::address::address_notice(&url).map_or(url.clone(), str::to_string);
+            let url = flow_core::settings::remote_addresses(&self.core(cx).prefs).join(", ");
+            let shown = flow_core::remote::address::list_notice(&url).map_or(url.clone(), str::to_string);
             let open = cx.listener(|this: &mut Self, _: &ClickEvent, w, cx| crate::remote::open_address(this, w, cx));
             let button = native_button("settings.remoteAddressEdit", "Change Address").on_click(open);
             card = card.child(hairline(cx)).child(settings_row("Server address", Some(shown), button, cx));
         }
-        if !show_details {
-            return card;
-        }
-        let mut details = v_flex().w_full().items_start().gap(px(12.)).py(px(16.));
-        if let Some(fingerprint) = self.remote.identity.as_ref().map(|i| i.fingerprint.clone()) {
-            let trust = self.click(cx, |this, cx| this.trust_server(cx));
-            details = details
-                .child(t("Server fingerprint").font(12., 500.).color(p.muted))
-                .child(div().id("settings.remoteFingerprint").child(t(fingerprint).mono().size(13.).selectable()).test_support())
-                .child(rich(vec![span("Compare it with "), span("flowd admin identity").serif(false), span(" on the server before trusting it.")]).size(12.).color(p.muted))
-                .child(native_button("settings.remoteTrust", "Trust This Server").on_click(trust));
-        } else if state != "approved"
+        if on && state != "approved"
             && let Some(pinned) = self.remote.pinned.clone()
         {
-            details = details.child(t(format!("Pinned fingerprint  {pinned}")).mono().size(12.).color(p.muted).selectable());
+            card = card.child(hairline(cx)).child(v_flex().w_full().items_start().py(px(16.)).child(t(format!("Pinned fingerprint  {pinned}")).mono().size(12.).color(p.muted).selectable()));
         }
-        if needs_sign_in {
-            let mut row = h_flex().gap(px(8.));
-            if self.remote.apple {
-                let apple = self.click(cx, |this, cx| this.sign_in("apple", cx));
-                row = row.child(native_button("settings.remoteSignInApple", "Sign in with Apple").disabled(self.remote.busy).on_click(apple));
-            }
-            if self.remote.google {
-                let google = self.click(cx, |this, cx| this.sign_in("google", cx));
-                row = row.child(native_button("settings.remoteSignInGoogle", "Sign in with Google").disabled(self.remote.busy).on_click(google));
-            }
-            details = details.child(row);
-        }
-        if matches!(state.as_str(), "pin_mismatch" | "revoked" | "rejected") {
-            let again = self.click(cx, |this, cx| this.fetch_identity(cx));
-            details = details.child(native_button("settings.remoteEnrollAgain", "Enroll Again").min_width(95.5).disabled(self.remote.busy).on_click(again));
-        }
-        if let Some(e) = self.remote.error.clone() {
-            details = details.child(t(e).size(12.).color(p.warning));
-        }
-        card = card.child(hairline(cx)).child(details);
         card
     }
 
@@ -169,37 +132,9 @@ impl OnboardingPage {
         ]
     }
 
-    /// The consent sheet, over the whole page.
+    /// The pairing and address sheets, over the whole page.
     pub(super) fn overlays(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if let Some(body) = crate::remote::sheet_view(self, window, cx) {
-            return Some(any(sheet_overlay("onboarding.modal", window, cx, div().bg(sheet_fill(cx)).rounded(px(12.)).child(body))));
-        }
-        if !self.remote.consent_open {
-            return None;
-        }
-        let p = pal(cx);
-        let word = self.word(cx);
-        let body = {
-            let draft = self.server_draft.read(cx).value().to_string();
-            let origin = remote_origin(&draft);
-            let prefs = &self.core(cx).prefs;
-            let text = if Purpose::stored(prefs) == Purpose::Meetings || prefs.bool_or("server.only", false) { MEETING_CONSENT_TEXT } else { CONSENT_TEXT };
-            let cancel = self.click(cx, |this, cx| this.cancel_consent(cx));
-            let confirm = self.click(cx, |this, cx| this.confirm_consent(cx));
-            v_flex()
-                .w(px(460.))
-                .p(px(24.))
-                .gap(px(16.))
-                .child(t("Use your LocalFlow server?").font(17., 500.))
-                .child(
-                    crate::pages::settings::input_surface("server.rack", Some("https://server.example.com"), Input::new(&self.server_draft).id("settings.remoteServerURL").aria_label("Server address").accessibility_id("settings.remoteServerURL"), &self.server_draft, window, cx),
-                )
-                .child(t(text.replace("Mac", word)).size(13.).line_spacing(3.).swift_lines())
-                .when_some(flow_core::remote::address::address_notice(&draft), |d, n| d.child(t(n).size(12.).color(p.muted)))
-                .when_some(origin.clone(), |d, o| d.child(t(format!("Server: {}", server_host(&o))).font(13., 500.)))
-                .when_some(self.remote.error.clone(), |d, e| d.child(t(e).size(12.).color(p.warning)))
-                .child(h_flex().w_full().justify_end().gap(px(8.)).child(native_button("settings.remoteConsentCancel", "Cancel").fill(p.ink.opacity(0.2)).text_color(p.ink).on_click(cancel)).child(native_button("settings.remoteConsentConfirm", "Turn On").fill(p.ink.opacity(0.2)).text_color(p.ink).disabled(origin.is_none()).on_click(confirm)))
-        };
+        let body = crate::remote::sheet_view(self, window, cx)?;
         Some(any(sheet_overlay("onboarding.modal", window, cx, div().bg(sheet_fill(cx)).rounded(px(12.)).child(body))))
     }
 }

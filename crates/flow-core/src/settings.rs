@@ -18,8 +18,8 @@ pub const PORT_BASE: u16 = 8000;
 pub const CONSENT_VERSION: i64 = 2;
 pub const DICTATION_CONSENT_VERSION: i64 = 1;
 pub const MAX_CONTEXT_RULES: usize = 200;
-pub const REMOTE_KEYS: [&str; 6] =
-    ["remote.enabled", "remote.serverURL", "remote.state", "remote.consentVersion", "remote.fallbackThresholdMs", "remote.notice"];
+pub const REMOTE_KEYS: [&str; 7] =
+    ["remote.enabled", "remote.serverURL", "remote.alternateAddresses", "remote.state", "remote.consentVersion", "remote.fallbackThresholdMs", "remote.notice"];
 pub const RETIRED_KEYS: [&str; 4] =
     ["meetingTranscriptionEnabled", "meetingDiarizationEnabled", "settings.meetingSummariesAutomatic", "settings.speakerIdentificationEnabled"];
 pub const RELEASES_URL: &str = "https://github.com/brunovskyoliver/local_flow/releases/latest";
@@ -102,6 +102,19 @@ pub fn remote_notice(p: &Prefs) -> Option<&'static str> {
 }
 pub fn remote_server_url(p: &Prefs) -> String {
     p.string("remote.serverURL").and_then(|s| remote_origin(&s)).unwrap_or_default()
+}
+/// Every stored address of the server, the current one first.
+pub fn remote_addresses(p: &Prefs) -> Vec<String> {
+    let mut all = vec![remote_server_url(p)];
+    if all[0].is_empty() {
+        return vec![];
+    }
+    for origin in p.get::<Vec<String>>("remote.alternateAddresses").unwrap_or_default().iter().filter_map(|a| remote_origin(a)) {
+        if !all.contains(&origin) {
+            all.push(origin);
+        }
+    }
+    all
 }
 /// `remoteEnrollmentOrigin`: the origin once consent is confirmed and the feature is on. `None`
 /// before that, so nothing connects.
@@ -547,7 +560,7 @@ impl Routing {
 }
 
 /// The one-line remote state, or nil while the switch is off.
-pub fn remote_status(p: &Prefs, has_identity: bool) -> Option<&'static str> {
+pub fn remote_status(p: &Prefs) -> Option<&'static str> {
     if !p.bool_or("remote.enabled", false) {
         return None;
     }
@@ -555,10 +568,8 @@ pub fn remote_status(p: &Prefs, has_identity: bool) -> Option<&'static str> {
         return Some("Update LocalFlow or the server");
     }
     Some(match remote_state(p) {
-        "off" if has_identity => "Compare the fingerprint",
         "off" => "Checking the server…",
-        "pinned" if remote_notice(p) == Some("sign_in_again") => "Sign in again",
-        "pinned" => "Sign in to finish",
+        "pinned" => "Pair again",
         "pending" => "Waiting for approval",
         "approved" => "Approved",
         "rejected" => "Rejected",
@@ -567,11 +578,11 @@ pub fn remote_status(p: &Prefs, has_identity: bool) -> Option<&'static str> {
     })
 }
 /// The detail of the main remote row.
-pub fn remote_detail(p: &Prefs, has_identity: bool) -> String {
+pub fn remote_detail(p: &Prefs) -> String {
     if !p.bool_or("remote.enabled", false) {
         return if meeting_only(p) { "Run meeting transcripts and notes on a LocalFlow server you run." } else { "Run dictation, rewriting, summaries and meetings on a LocalFlow server you run." }.into();
     }
-    [Some(remote_server_url(p).as_str()), remote_status(p, has_identity)].into_iter().flatten().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
+    [Some(remote_server_url(p).as_str()), remote_status(p)].into_iter().flatten().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
 }
 pub fn consent_text(p: &Prefs) -> &'static str {
     if meeting_only(p) || p.bool_or("server.only", false) { MEETING_CONSENT_TEXT } else { CONSENT_TEXT }
@@ -2213,7 +2224,7 @@ pub fn usage_fingerprint(key: &[u8]) -> String {
     hex_of(&sha256(key))
 }
 
-pub fn prepare_automatic_enrollment(db: &Db, origin: &str, fingerprint: &str) -> rusqlite::Result<bool> {
+pub fn prepare_automatic_enrollment(db: &Db, origins: &[String], fingerprint: &str) -> rusqlite::Result<bool> {
     let conn = &db.conn;
     let Some((raw, enabled)) = conn
         .query_row("SELECT binding, enabled FROM usage_reporting_state WHERE id=1", [], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, bool>(1)?)))
@@ -2226,7 +2237,8 @@ pub fn prepare_automatic_enrollment(db: &Db, origin: &str, fingerprint: &str) ->
         return Ok(false);
     }
     let old: Value = serde_json::from_str(&raw).unwrap_or_default();
-    if old["origin"] == origin && old["credentialFingerprint"] == fingerprint {
+    // Any address of the server: failing over to another one is the same binding.
+    if origins.iter().any(|o| old["origin"] == o.as_str()) && old["credentialFingerprint"] == fingerprint {
         return Ok(false);
     }
     conn.execute_batch(
@@ -2349,7 +2361,7 @@ mod tests {
     #[test]
     fn stored_values_drive_the_readers() {
         let mut p = Prefs::memory();
-        assert_eq!(remote_status(&p, true), None, "remote.enabled starts false");
+        assert_eq!(remote_status(&p), None, "remote.enabled starts false");
         assert!(!routing(&p).server_only);
         p.set("server.only", true);
         assert!(routing(&p).server_only);
@@ -2420,23 +2432,22 @@ mod tests {
         assert_eq!(routing(&p).model_place(Service::Rewrite), None);
     }
 
-    // parity: SET-043 SET-044 SET-045 SET-046 SET-047 SET-048 SET-049 SET-050 SET-051 SET-052 SET-081 SET-082 SET-095 SET-096 SET-097 SET-098 SET-068
+    // parity: SET-043 SET-044 SET-048 SET-049 SET-050 SET-051 SET-052 SET-081 SET-082 SET-095 SET-096 SET-097 SET-098 SET-068
     #[test]
     fn remote_status_answers_and_reset() {
         let mut p = Prefs::memory();
-        assert_eq!(remote_status(&p, false), None);
+        assert_eq!(remote_status(&p), None);
         p.set("remote.enabled", true);
-        assert_eq!(remote_status(&p, false), Some("Checking the server…"));
-        assert_eq!(remote_status(&p, true), Some("Compare the fingerprint"));
-        for (state, text) in [("pinned", "Sign in to finish"), ("pending", "Waiting for approval"), ("approved", "Approved"), ("rejected", "Rejected"), ("revoked", "Removed from the server"), ("pin_mismatch", "Server identity changed")] {
+        assert_eq!(remote_status(&p), Some("Checking the server…"));
+        for (state, text) in [("pinned", "Pair again"), ("pending", "Waiting for approval"), ("approved", "Approved"), ("rejected", "Rejected"), ("revoked", "Removed from the server"), ("pin_mismatch", "Server identity changed")] {
             p.set("remote.state", state);
-            assert_eq!(remote_status(&p, false), Some(text));
+            assert_eq!(remote_status(&p), Some(text));
         }
         p.set("remote.state", "pinned");
         p.set("remote.notice", "sign_in_again");
-        assert_eq!(remote_status(&p, false), Some("Sign in again"));
+        assert_eq!(remote_status(&p), Some("Pair again"));
         p.set("remote.notice", "update_required");
-        assert_eq!(remote_status(&p, false), Some("Update LocalFlow or the server"));
+        assert_eq!(remote_status(&p), Some("Update LocalFlow or the server"));
         p.remove("remote.notice");
 
         assert_eq!(apply_server_answer(&mut p, "revoked"), vec!["access-token", "refresh-token"]);
@@ -2826,7 +2837,7 @@ mod tests {
         assert_eq!(context_rewrite_blocked(true, true), None);
     }
 
-    // parity: SET-059 SET-071 SET-072
+    // parity: SET-059 SET-071
     #[test]
     fn identity_validation_and_fingerprint() {
         assert_eq!(hex_of(&sha256(b"abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
@@ -2974,20 +2985,25 @@ mod tests {
     #[test]
     fn automatic_enrollment_follows_the_binding() {
         let db = Db::memory();
-        assert!(prepare_automatic_enrollment(&db, "https://a", "f").unwrap(), "no binding enrolls");
+        assert!(prepare_automatic_enrollment(&db, &["https://a".to_string()], "f").unwrap(), "no binding enrolls");
         let bind = |enabled: i64| {
             db.conn.execute("INSERT OR REPLACE INTO usage_reporting_state(id,binding,enabled) VALUES(1,?1,?2)", rusqlite::params![r#"{"origin":"https://a","credentialFingerprint":"f"}"#, enabled]).unwrap();
         };
         bind(0);
-        assert!(!prepare_automatic_enrollment(&db, "https://b", "f").unwrap(), "an inactive binding stays off");
+        assert!(!prepare_automatic_enrollment(&db, &["https://b".to_string()], "f").unwrap(), "an inactive binding stays off");
         bind(1);
-        assert!(!prepare_automatic_enrollment(&db, "https://a", "f").unwrap(), "the same binding does nothing");
+        assert!(!prepare_automatic_enrollment(&db, &["https://a".to_string()], "f").unwrap(), "the same binding does nothing");
         db.conn.execute("INSERT INTO usage_reporting_completions(id,day) VALUES('00000000-0000-0000-0000-000000000000','2026-10-31')", []).unwrap();
-        assert!(prepare_automatic_enrollment(&db, "https://a", "new-key").unwrap(), "a changed key enrolls again");
+        assert!(prepare_automatic_enrollment(&db, &["https://a".to_string()], "new-key").unwrap(), "a changed key enrolls again");
         let left: i64 = db.conn.query_row("SELECT count(*) FROM usage_reporting_completions", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0, "and wipes");
         bind(1);
-        assert!(prepare_automatic_enrollment(&db, "https://b", "f").unwrap(), "a changed server enrolls again");
+        assert!(prepare_automatic_enrollment(&db, &["https://b".to_string()], "f").unwrap(), "a changed server enrolls again");
+        assert_eq!(remote_addresses(&Prefs::memory()), Vec::<String>::new());
+        let mut p = Prefs::memory();
+        p.set("remote.serverURL", "https://a.example");
+        p.set("remote.alternateAddresses", ["https://b.example", "nope", "https://a.example"]);
+        assert_eq!(remote_addresses(&p), ["https://a.example", "https://b.example"], "current first, stored junk dropped");
     }
 
     // parity: SET-376 SET-375
@@ -3009,7 +3025,7 @@ mod tests {
         assert_eq!(ping("http://127.0.0.1:9", Some(&[0; 32]), None), None);
     }
 
-    // parity: SET-045 SET-071
+    // parity: SET-071
     #[cfg(unix)]
     #[test]
     fn real_flowd_identity_is_validated() {

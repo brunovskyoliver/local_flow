@@ -2,7 +2,7 @@
 //! Sections live in `settings/server.rs` and `settings/models.rs`; dialogs in `settings/sheets.rs`.
 use crate::core::Core;
 use flow_core::settings as core;
-use flow_core::settings::{Connection, Failure, Health, Identity, InputSnapshot, Permission as Perm, RewriteSettings, Runtime, Shortcut, Snapshot};
+use flow_core::settings::{Connection, Failure, Health, InputSnapshot, Permission as Perm, RewriteSettings, Runtime, Shortcut, Snapshot};
 use flow_platform::Permission;
 use flow_ui::gpui::base::TestSupportExt;
 use flow_ui::gpui::DragMoveEvent;
@@ -67,12 +67,9 @@ pub struct SettingsPage {
     /// The origin usage enrollment last looked at, so the Keychain isn't read on every refresh.
     usage_origin: Option<String>,
     // Server
-    /// A plain-HTTP identity base for the local-server test; production uses the stored origin.
+    /// A plain-HTTP base for the local-server test; production uses the stored addresses.
     pub(super) remote_base: Option<String>,
-    pub(super) identity: Option<Identity>,
     pub(super) pinned: Option<String>,
-    pub(super) busy: bool,
-    pub(super) remote_error: Option<String>,
     pub(super) pair: crate::remote::PairForm,
     /// Whether rewrite items exist, by name, and the pin. Polling reads these; `refresh` starts over.
     secrets_seen: std::cell::RefCell<std::collections::HashMap<String, bool>>,
@@ -80,7 +77,6 @@ pub struct SettingsPage {
     pub(super) checking: bool,
     pub(super) check_result: Option<String>,
     pub(super) server_advanced: bool,
-    pub(super) server_draft: Entity<InputState>,
     // Rewriting
     pub(super) rewrite: RewriteSettings,
     pub(super) endpoint: Entity<InputState>,
@@ -152,7 +148,6 @@ impl SettingsPage {
         let summary_url = cx.new(|cx| InputState::new(window, cx).default_value(url_text));
         let summary_model = cx.new(|cx| InputState::new(window, cx).placeholder("Model").default_value(model_text));
         let summary_key = cx.new(|cx| InputState::new(window, cx).placeholder("API key").masked(true));
-        let server_draft = cx.new(|cx| InputState::new(window, cx));
         let pair = crate::remote::PairForm::new(window, cx);
         let bundle_draft = cx.new(|cx| InputState::new(window, cx).placeholder("Bundle ID"));
         let subs = vec![
@@ -188,11 +183,6 @@ impl SettingsPage {
             }),
             cx.subscribe_in(&summary_key, window, |this, _, e: &TextInputEvent, w, cx| match e {
                 TextInputEvent::PressEnter { .. } => this.save_summary_key(w, cx),
-                TextInputEvent::Change => cx.notify(),
-                _ => {}
-            }),
-            cx.subscribe_in(&server_draft, window, |this, _, e: &TextInputEvent, _, cx| match e {
-                TextInputEvent::PressEnter { .. } => this.confirm_consent(cx),
                 TextInputEvent::Change => cx.notify(),
                 _ => {}
             }),
@@ -248,17 +238,13 @@ impl SettingsPage {
             announced_warning: Default::default(),
             usage_origin: None,
             remote_base: None,
-            identity: None,
             pinned: None,
-            busy: false,
-            remote_error: None,
             pair,
             secrets_seen: Default::default(),
             pin_seen: None,
             checking: false,
             check_result: None,
             server_advanced: false,
-            server_draft,
             rewrite: RewriteSettings::default(),
             endpoint,
             credential,
@@ -402,7 +388,7 @@ impl SettingsPage {
             return;
         }
         let (Some(db), Ok(Some(key))) = (core_state.db.as_ref(), core_state.services.secret_data(&core::remote_keychain("device-key"))) else { return };
-        let _ = core::prepare_automatic_enrollment(db, &origin, &core::usage_fingerprint(&key));
+        let _ = core::prepare_automatic_enrollment(db, &core::remote_addresses(p), &core::usage_fingerprint(&key));
         self.usage_origin = Some(origin);
     }
 

@@ -17,7 +17,7 @@ pub const MTPLX_PORT: u16 = 8000;
 /// whisper-large-v3-turbo.json plus speaker-diarization-offline.json.
 pub const MEETING_BYTES: i64 = 1_647_039_790;
 pub const SPEECH_FALLBACK_BYTES: i64 = 632_162_964;
-const REMOTE_KEYS: [&str; 5] = ["remote.serverURL", "remote.state", "remote.consentVersion", "remote.fallbackThresholdMs", "remote.notice"];
+const REMOTE_KEYS: [&str; 6] = ["remote.serverURL", "remote.alternateAddresses", "remote.state", "remote.consentVersion", "remote.fallbackThresholdMs", "remote.notice"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Step {
@@ -743,8 +743,8 @@ pub fn server_ready(prefs: &Prefs, purpose: Purpose, legacy_connected: bool) -> 
     enrolled(prefs) || (purpose != Purpose::Meetings && legacy_connected)
 }
 
-/// `RemoteDictationModel.statusText`, identity present or not.
-pub fn remote_status(prefs: &Prefs, has_identity: bool) -> Option<&'static str> {
+/// `RemoteDictationModel.statusText`.
+pub fn remote_status(prefs: &Prefs) -> Option<&'static str> {
     if !remote_on(prefs) {
         return None;
     }
@@ -753,14 +753,12 @@ pub fn remote_status(prefs: &Prefs, has_identity: bool) -> Option<&'static str> 
         return Some("Update LocalFlow or the server");
     }
     Some(match remote_state(prefs).as_str() {
-        "pinned" if notice.as_deref() == Some("sign_in_again") => "Sign in again",
-        "pinned" => "Sign in to finish",
+        "pinned" => "Pair again",
         "pending" => "Waiting for approval",
         "approved" => "Approved",
         "rejected" => "Rejected",
         "revoked" => "Removed from the server",
         "pin_mismatch" => "Server identity changed",
-        _ if has_identity => "Compare the fingerprint",
         _ => "Checking the server…",
     })
 }
@@ -822,15 +820,6 @@ pub fn server_host(url: &str) -> String {
         .map(|(h, _)| h.trim_matches(['[', ']']).to_string())
         .filter(|h| !h.is_empty())
         .unwrap_or_else(|| url.to_string())
-}
-
-/// `setRemoteServerURL` and consent: only now are the address and the switch stored.
-pub fn confirm_remote_consent(prefs: &mut Prefs, draft: &str) -> bool {
-    let Some(origin) = remote_origin(draft) else { return false };
-    prefs.set("remote.serverURL", origin);
-    prefs.set("remote.consentVersion", REMOTE_CONSENT_VERSION);
-    prefs.set("remote.enabled", true);
-    true
 }
 
 /// `RewriteSettings.normalizedOrigin`: `scheme://host:port` with an explicit port.
@@ -1123,6 +1112,13 @@ pub fn memory(v: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What confirming the pairing sheet leaves behind.
+    fn consent(p: &mut Prefs) {
+        p.set("remote.serverURL", "https://s.example");
+        p.set("remote.consentVersion", REMOTE_CONSENT_VERSION);
+        p.set("remote.enabled", true);
+    }
 
     fn ready() -> Snapshot {
         Snapshot {
@@ -1581,7 +1577,7 @@ mod tests {
         assert_eq!(credential_problem("key"), None);
     }
 
-    // parity: ONB-079 ONB-080 ONB-181 ONB-182 ONB-183 ONB-184 ONB-185 ONB-186 ONB-187 ONB-188 ONB-189 ONB-190 ONB-191 ONB-221 ONB-223 ONB-224 ONB-225 ONB-226 ONB-227 ONB-228 ONB-229 ONB-216
+    // parity: ONB-079 ONB-080 ONB-181 ONB-182 ONB-183 ONB-184 ONB-185 ONB-186 ONB-187 ONB-188 ONB-189 ONB-190 ONB-191 ONB-221 ONB-223 ONB-224 ONB-225 ONB-226 ONB-227 ONB-228 ONB-229
     #[test]
     fn remote_status_privacy_and_gate() {
         let mut p = Prefs::memory();
@@ -1594,19 +1590,15 @@ mod tests {
         p.set("remote.state", "pinned");
         assert!(!enrolled(&p));
         let mut p = Prefs::memory();
-        assert_eq!(remote_status(&p, false), None);
+        assert_eq!(remote_status(&p), None);
         assert!(remote_privacy(&p).starts_with("Nothing leaves this Mac until you confirm"));
-        assert!(!confirm_remote_consent(&mut p, "http://a.example"));
         assert!(!remote_on(&p));
-        assert!(confirm_remote_consent(&mut p, "https://s.example"));
-        assert_eq!(p.string("remote.serverURL").as_deref(), Some("https://s.example"));
-        assert_eq!(p.int_or("remote.consentVersion", 0), 2);
+        consent(&mut p);
         assert!(remote_on(&p));
-        assert_eq!(remote_status(&p, false), Some("Checking the server…"));
-        assert_eq!(remote_status(&p, true), Some("Compare the fingerprint"));
-        for (state, text) in [("pinned", "Sign in to finish"), ("pending", "Waiting for approval"), ("approved", "Approved"), ("rejected", "Rejected"), ("revoked", "Removed from the server"), ("pin_mismatch", "Server identity changed")] {
+        assert_eq!(remote_status(&p), Some("Checking the server…"));
+        for (state, text) in [("pinned", "Pair again"), ("pending", "Waiting for approval"), ("approved", "Approved"), ("rejected", "Rejected"), ("revoked", "Removed from the server"), ("pin_mismatch", "Server identity changed")] {
             p.set("remote.state", state);
-            assert_eq!(remote_status(&p, false), Some(text));
+            assert_eq!(remote_status(&p), Some(text));
             let enrolled_state = matches!(state, "approved" | "pending");
             assert_eq!(enrolled(&p), enrolled_state);
             assert_eq!(server_ready(&p, Purpose::Meetings, true), enrolled_state, "rewrite-only never counts for meetings");
@@ -1616,9 +1608,9 @@ mod tests {
         }
         p.set("remote.state", "pinned");
         p.set("remote.notice", "sign_in_again");
-        assert_eq!(remote_status(&p, false), Some("Sign in again"));
+        assert_eq!(remote_status(&p), Some("Pair again"));
         p.set("remote.notice", "update_required");
-        assert_eq!(remote_status(&p, false), Some("Update LocalFlow or the server"));
+        assert_eq!(remote_status(&p), Some("Update LocalFlow or the server"));
         p.remove("remote.notice");
         p.set("remote.state", "approved");
         assert!(remote_privacy(&p).starts_with("Approved. Dictation"));
@@ -1638,7 +1630,7 @@ mod tests {
         const KEPT: &str = " Meetings handed off to the server stay there until merged, at most 7 days.";
         let mut p = Prefs::memory();
         assert_eq!(remote_privacy(&p), format!("Nothing leaves this Mac until you confirm what is sent and the administrator approves this Mac.{KEPT}"));
-        assert!(confirm_remote_consent(&mut p, "https://s.example"));
+        consent(&mut p);
         p.set("remote.state", "approved");
         assert_eq!(remote_privacy(&p), format!("Approved. Dictation, rewriting, summaries and meetings will use this server. Speech recognition on this Mac takes over when the server can't be reached.{KEPT}"));
         p.set("remote.state", "pending");

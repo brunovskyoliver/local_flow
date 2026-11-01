@@ -2404,8 +2404,10 @@ mod tests {
             assert_eq!((row.attempts, row.next_attempt_at), (item.attempts, item.next_attempt_at), "untouched, so it isn't counted or stopped");
             assert_eq!(std::fs::metadata(dir.join(&item.audio_file)).unwrap().len(), 80_000, "the audio stays");
 
-            std::fs::write(&sidecar, s.enrollment.settings().origin.unwrap()).unwrap();
-            assert_eq!(retry.run_due(), 1, "the same server again");
+            // The server's list now holds the address it was recorded for, though another is current.
+            s.enrollment.load(crate::remote::enrollment::RemoteSettings { alternates: vec!["https://another.example.com".into()], ..s.enrollment.settings() });
+            std::fs::write(&sidecar, "https://another.example.com").unwrap();
+            assert_eq!(retry.run_due(), 1, "another address of the same server");
             assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "audio and origin go with the row");
         }
 

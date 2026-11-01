@@ -4,8 +4,7 @@ use crate::core::Core;
 use flow_core::remote::channel::WebSockets;
 use flow_core::remote::handoff::{self, Handoff, Plan, Queue};
 use flow_core::remote::transfer::{self, Request};
-use flow_core::remote::enrollment::{EnrollError, Enrollment, HttpIdentity, IdentityProvider, Parts, RemoteSettings, SignIn, system_now};
-use flow_core::remote::google::GoogleClient;
+use flow_core::remote::enrollment::{EnrollError, Enrollment, HttpIdentity, Parts, RemoteSettings, system_now};
 use flow_core::remote::pairing::{PairingLink, PairingToken, failure_message};
 use flow_core::remote::pool::Pool;
 use flow_core::remote::{DeviceKeys, Secrets, Unavailable, address, raw_signature_to_der};
@@ -51,16 +50,6 @@ impl DeviceKeys for Platform {
         self.0.device_key_delete(handle).map_err(refused)
     }
 }
-impl SignIn for Platform {
-    fn sign_in(&self, provider: IdentityProvider, nonce: &str) -> Result<String, Unavailable> {
-        if provider == IdentityProvider::Apple {
-            return self.0.sign_in("apple", nonce).map_err(refused);
-        }
-        let (id, secret) = flow_platform::google_client().ok_or(Unavailable("Google sign-in"))?;
-        GoogleClient::new(id, secret).sign_in(nonce, &|url| self.0.open_url(url).map_err(refused))
-    }
-}
-
 pub struct Remote {
     pub enrollment: Arc<Enrollment>,
     pub pool: Arc<Pool>,
@@ -77,7 +66,7 @@ impl Remote {
 
     pub fn native(credentials: Arc<dyn Credentials>) -> Arc<Remote> {
         let platform = Arc::new(Platform(credentials.clone()));
-        Remote::new(Enrollment::new(Parts { secrets: platform.clone(), keys: platform.clone(), sign_in: platform, identity: Arc::new(HttpIdentity), transports: Arc::new(WebSockets::default()), now: Box::new(system_now), device_name: credentials.device_name() }))
+        Remote::new(Enrollment::new(Parts { secrets: platform.clone(), keys: platform, identity: Arc::new(HttpIdentity), transports: Arc::new(WebSockets::default()), now: Box::new(system_now), device_name: credentials.device_name() }))
     }
 }
 
@@ -244,21 +233,6 @@ pub fn start_refreshing(cx: &mut App) {
     .detach();
 }
 
-/// What a failed sign-in says. A pin mismatch is a state, not an error line.
-pub fn sign_in_message(error: &EnrollError) -> Option<&'static str> {
-    use flow_core::remote::channel::ChannelError::*;
-    match error {
-        EnrollError::Channel(PinMismatch) | EnrollError::TurnedOff => None,
-        EnrollError::Channel(Unreachable | Timeout | Closed) | EnrollError::Unreachable => Some("The server could not be reached. Try again."),
-        EnrollError::DeviceKeyUnavailable => Some("This device can't create a device key."),
-        _ => Some("Sign-in did not finish."),
-    }
-}
-
-pub fn provider(name: &str) -> IdentityProvider {
-    if name == "google" { IdentityProvider::Google } else { IdentityProvider::Apple }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Sheet {
     Pair,
@@ -289,7 +263,7 @@ impl PairForm {
     }
 
     fn valid(&self, cx: &App) -> bool {
-        !self.busy && address::origin(&text(&self.address, cx)).is_some() && PairingToken::parse(&text(&self.token, cx)).is_some()
+        !self.busy && address::origins(&text(&self.address, cx)).is_some() && PairingToken::parse(&text(&self.token, cx)).is_some()
     }
 }
 
@@ -303,7 +277,7 @@ pub trait RemotePage: Sized + 'static {
 
 /// Opens the pairing sheet, with a link's fields when one was opened or pasted.
 pub fn open_pair<V: RemotePage>(this: &mut V, link: Option<&PairingLink>, window: &mut Window, cx: &mut Context<V>) {
-    let stored = settings::remote_server_url(&cx.global::<Core>().prefs);
+    let stored = settings::remote_addresses(&cx.global::<Core>().prefs).join(", ");
     let form = this.form();
     form.sheet = Some(Sheet::Pair);
     form.error = None;
@@ -318,7 +292,7 @@ pub fn open_pair<V: RemotePage>(this: &mut V, link: Option<&PairingLink>, window
 }
 
 pub fn open_address<V: RemotePage>(this: &mut V, window: &mut Window, cx: &mut Context<V>) {
-    let stored = settings::remote_server_url(&cx.global::<Core>().prefs);
+    let stored = settings::remote_addresses(&cx.global::<Core>().prefs).join(", ");
     let form = this.form();
     form.sheet = Some(Sheet::Address);
     form.error = None;
@@ -352,10 +326,10 @@ fn confirm_pair<V: RemotePage>(this: &mut V, cx: &mut Context<V>) {
     if !this.form_ref().valid(cx) {
         return;
     }
-    let (Some(origin), Some(token)) = (address::origin(&text(&this.form_ref().address, cx)), PairingToken::parse(&text(&this.form_ref().token, cx))) else { return };
+    let (Some(origins), Some(token)) = (address::origins(&text(&this.form_ref().address, cx)), PairingToken::parse(&text(&this.form_ref().token, cx))) else { return };
     let core = cx.global::<Core>();
     let on = core.prefs.bool_or("remote.enabled", false);
-    if on && !this.form_ref().turned_on && settings::remote_server_url(&core.prefs) != origin {
+    if on && !this.form_ref().turned_on && !settings::remote_addresses(&core.prefs).iter().any(|known| origins.contains(known)) {
         let word = core.services.device_word();
         this.form().error = Some(format!("This {word} already uses another server. Turn off remote dictation first."));
         cx.notify();
@@ -365,7 +339,13 @@ fn confirm_pair<V: RemotePage>(this: &mut V, cx: &mut Context<V>) {
         this.form().turned_on = true;
     }
     let prefs = &mut cx.global_mut::<Core>().prefs;
-    prefs.set("remote.serverURL", origin);
+    // ponytail: stored before `pair` runs, as the single address always was; a failed pair keeps the typed list.
+    prefs.set("remote.serverURL", origins[0].as_str());
+    if origins.len() > 1 {
+        prefs.set("remote.alternateAddresses", &origins[1..]);
+    } else {
+        prefs.remove("remote.alternateAddresses");
+    }
     prefs.set("remote.consentVersion", settings::CONSENT_VERSION);
     prefs.set("remote.enabled", true);
     let form = this.form();
@@ -377,7 +357,7 @@ fn confirm_pair<V: RemotePage>(this: &mut V, cx: &mut Context<V>) {
 
 fn confirm_address<V: RemotePage>(this: &mut V, cx: &mut Context<V>) {
     let draft = text(&this.form_ref().address, cx);
-    if this.form_ref().busy || address::origin(&draft).is_none() {
+    if this.form_ref().busy || address::origins(&draft).is_none() {
         return;
     }
     let form = this.form();
@@ -439,10 +419,11 @@ pub fn sheet_view<V: RemotePage>(this: &V, window: &Window, cx: &mut Context<V>)
     let sheet = form.sheet?;
     let p = pal(cx);
     let draft = text(&form.address, cx);
-    let origin = address::origin(&draft);
+    let origins = address::origins(&draft);
     let surface = |symbol, hint, input, state: &Entity<InputState>, cx: &App| crate::pages::settings::input_surface(symbol, Some(hint), input, state, window, cx);
-    let address_input = surface("server.rack", "https://server.example.com", Input::new(&form.address).id("settings.remoteServerURL").aria_label("Server address").accessibility_id("settings.remoteServerURL"), &form.address, cx);
-    let notice = address::address_notice(&draft);
+    let address_input = surface("server.rack", "https://server.example.com, http://100.64.0.1:8090", Input::new(&form.address).id("settings.remoteServerURL").aria_label("Server address").accessibility_id("settings.remoteServerURL"), &form.address, cx);
+    let notice = address::list_notice(&draft);
+    const EVERY: &str = "Add every address that reaches this server, separated by commas. LocalFlow uses whichever one answers.";
     let mut body = v_flex().w(px(460.)).p(px(24.)).gap(px(16.));
     match sheet {
         Sheet::Pair => {
@@ -450,23 +431,25 @@ pub fn sheet_view<V: RemotePage>(this: &V, window: &Window, cx: &mut Context<V>)
             body = body
                 .child(t("Pair with a token").font(17., 500.))
                 .child(address_input)
+                .child(t(EVERY).size(12.).line_spacing(3.).color(p.muted).swift_lines())
                 .child(surface("key", "lfp_…", Input::new(&form.token).id("settings.remotePairToken").aria_label("Pairing token").accessibility_id("settings.remotePairToken"), &form.token, cx))
                 .child(t(consent).size(13.).line_spacing(3.).swift_lines())
                 .when_some(notice, |d, n| d.child(t(n).size(12.).color(p.muted)))
-                .when_some(origin.as_ref(), |d, o| d.child(t(format!("Server: {}", settings::origin_host(o))).font(13., 500.)));
+                .when_some(origins.as_ref(), |d, o| d.child(t(format!("Server: {}", o.iter().map(|o| settings::origin_host(o)).collect::<Vec<_>>().join(", "))).font(13., 500.)));
         }
         Sheet::Address => {
             let word = cx.global::<Core>().services.device_word();
             body = body
-                .child(t("Change the server address").font(17., 500.))
+                .child(t("Change the server addresses").font(17., 500.))
                 .child(address_input)
+                .child(t(EVERY).size(12.).line_spacing(3.).color(p.muted).swift_lines())
                 .child(t(format!("The server at the new address must have the identity this {word} already trusts.")).size(13.).line_spacing(3.).swift_lines())
                 .when_some(notice, |d, n| d.child(t(n).size(12.).color(p.muted)));
         }
     }
     let (confirm_id, label, enabled) = match sheet {
         Sheet::Pair => ("settings.remotePairConfirm", "Pair", form.valid(cx)),
-        Sheet::Address => ("settings.remoteAddressConfirm", "Change", !form.busy && origin.is_some()),
+        Sheet::Address => ("settings.remoteAddressConfirm", "Change", !form.busy && origins.is_some()),
     };
     let cancel_id = if sheet == Sheet::Pair { "settings.remotePairCancel" } else { "settings.remoteAddressCancel" };
     Some(
@@ -489,23 +472,11 @@ pub(crate) mod testing {
             Ok(self.0.clone())
         }
     }
-    struct Refuses;
-    impl SignIn for Refuses {
-        fn sign_in(&self, _: IdentityProvider, _: &str) -> Result<String, Unavailable> {
-            Err(Unavailable("sign in"))
-        }
-    }
-    struct Accepts;
-    impl SignIn for Accepts {
-        fn sign_in(&self, _: IdentityProvider, _: &str) -> Result<String, Unavailable> {
-            Ok("id-token".into())
-        }
-    }
-
     pub struct Installed {
         pub counters: Counters,
         pub key: Vec<u8>,
         pub secrets: Arc<MemorySecrets>,
+        pub keys: Arc<MemoryDeviceKeys>,
     }
 
     impl Installed {
@@ -517,8 +488,8 @@ pub(crate) mod testing {
         }
     }
 
-    /// A scripted server behind a real `Enrollment`. `pinned` stores its key first, as Trust does.
-    pub fn install(cx: &mut App, replies: Vec<Reply>, sign_in_works: bool, pinned: bool) -> Installed {
+    /// A scripted server behind a real `Enrollment`. `pinned` stores its key first, as pairing does.
+    pub fn install(cx: &mut App, replies: Vec<Reply>, pinned: bool) -> Installed {
         let script = Script::new(replies);
         let (counters, key) = (script.counters(), script.public_key());
         let secrets = Arc::new(MemorySecrets::default());
@@ -526,9 +497,9 @@ pub(crate) mod testing {
             secrets.write("server-key", &key).unwrap();
         }
         let identity = Identity { schema_version: 1, server: serde_json::json!({}), protocol_versions: vec![1], suite: "x25519-hkdfsha256-chacha20poly1305".into(), server_key: base64url_encode(&key), fingerprint: fingerprint_of(&key) };
-        let sign_in: Arc<dyn SignIn> = if sign_in_works { Arc::new(Accepts) } else { Arc::new(Refuses) };
-        let remote = Remote::new(Enrollment::new(Parts { secrets: secrets.clone(), keys: Arc::new(MemoryDeviceKeys::default()), sign_in, identity: Arc::new(Fixed(identity)), transports: Arc::new(script), now: Box::new(system_now), device_name: "Test".into() }));
+        let keys = Arc::new(MemoryDeviceKeys::default());
+        let remote = Remote::new(Enrollment::new(Parts { secrets: secrets.clone(), keys: keys.clone(), identity: Arc::new(Fixed(identity)), transports: Arc::new(script), now: Box::new(system_now), device_name: "Test".into() }));
         cx.global_mut::<Core>().remote = Some(remote);
-        Installed { counters, key, secrets }
+        Installed { counters, key, secrets, keys }
     }
 }

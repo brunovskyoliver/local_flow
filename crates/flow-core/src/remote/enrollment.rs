@@ -1,4 +1,4 @@
-//! `RemoteEnrollment`: identity and pin, enrollment, pairing, tokens, server answers and turning off.
+//! `RemoteEnrollment`: identity and pin, pairing, tokens, server answers and turning off.
 //! Blocking, for background threads. The display state lives here while an operation runs: load it
 //! from `Prefs` first and store it back afterwards unless the feature was turned off meanwhile.
 use super::channel::*;
@@ -14,25 +14,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Access tokens live 15 minutes on the server; the client refreshes after 12.
 pub const REFRESH_AFTER: Duration = Duration::from_secs(12 * 60);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IdentityProvider {
-    Apple,
-    Google,
-}
-impl IdentityProvider {
-    fn as_str(self) -> &'static str {
-        match self {
-            IdentityProvider::Apple => "apple",
-            IdentityProvider::Google => "google",
-        }
-    }
-}
-
-/// `IdentitySignIn`: returns an ID token carrying `nonce`.
-pub trait SignIn: Send + Sync {
-    fn sign_in(&self, provider: IdentityProvider, nonce: &str) -> Result<String, Unavailable>;
-}
 
 /// `RemoteIdentityFetching`.
 pub trait IdentityFetching: Send + Sync {
@@ -56,7 +37,6 @@ pub enum EnrollError {
     /// The identity route didn't answer.
     Unreachable,
     DeviceKeyUnavailable,
-    SignInFailed,
     /// The server answered with an unexpected message.
     Protocol,
     /// The address reaches a server other than the one that issued the token, or than the pin.
@@ -88,20 +68,45 @@ pub struct RemoteSettings {
     pub origin: Option<String>,
     pub state: String,
     pub notice: Option<String>,
+    /// Other addresses of the same server, tried in order when `origin` doesn't connect.
+    pub alternates: Vec<String>,
 }
 
 impl RemoteSettings {
     pub fn from_prefs(p: &Prefs) -> RemoteSettings {
-        RemoteSettings { origin: settings::remote_enrollment_origin(p), state: settings::remote_state(p).to_string(), notice: settings::remote_notice(p).map(str::to_string) }
+        let origin = settings::remote_enrollment_origin(p);
+        let alternates = if origin.is_some() { settings::remote_addresses(p).into_iter().skip(1).collect() } else { vec![] };
+        RemoteSettings { origin, state: settings::remote_state(p).to_string(), notice: settings::remote_notice(p).map(str::to_string), alternates }
     }
     pub fn store(&self, p: &mut Prefs) {
         if let Some(origin) = &self.origin {
             p.set("remote.serverURL", origin.as_str());
+            if self.alternates.is_empty() {
+                p.remove("remote.alternateAddresses");
+            } else {
+                p.set("remote.alternateAddresses", &self.alternates);
+            }
         }
         p.set("remote.state", self.state.as_str());
         match &self.notice {
             Some(notice) => p.set("remote.notice", notice.as_str()),
             None => p.remove("remote.notice"),
+        }
+    }
+    /// The current address first, then the others.
+    pub fn addresses(&self) -> Vec<String> {
+        self.origin.iter().chain(&self.alternates).cloned().collect()
+    }
+    pub fn knows(&self, origin: &str) -> bool {
+        self.origin.as_deref() == Some(origin) || self.alternates.iter().any(|a| a == origin)
+    }
+    /// An alternate that worked becomes current, in place of the old current. Anything else is a no-op,
+    /// so a turn off that emptied the settings stays empty.
+    fn promote(&mut self, address: &str) {
+        if let Some(i) = self.alternates.iter().position(|a| a == address)
+            && let Some(old) = self.origin.replace(address.to_string())
+        {
+            self.alternates[i] = old;
         }
     }
 }
@@ -126,7 +131,6 @@ fn device_name(name: &str) -> String {
 pub struct Parts {
     pub secrets: Arc<dyn Secrets>,
     pub keys: Arc<dyn DeviceKeys>,
-    pub sign_in: Arc<dyn SignIn>,
     pub identity: Arc<dyn IdentityFetching>,
     pub transports: Arc<dyn Transports>,
     /// Includes time asleep, as Swift's `ContinuousClock` does; a token doesn't stop ageing.
@@ -204,13 +208,24 @@ impl Enrollment {
         Channel::new(transport, key)
     }
 
-    // MARK: Identity and pinning
-
-    /// The server identity for the user to compare. Nothing connects before consent and an address.
-    pub fn fetch_server_identity(&self) -> Result<Identity, EnrollError> {
-        let origin = self.origin().ok_or(EnrollError::NotConfigured)?;
-        self.fetch_at(&origin)
+    /// The first address that connects, which then stays current. Only a failure to reach an address
+    /// moves on; what happens on the channel afterwards, a pin mismatch included, belongs to its caller.
+    fn connect_any(&self, key: &[u8]) -> Result<Channel, ChannelError> {
+        let mut last = ChannelError::Closed;
+        for address in self.settings().addresses() {
+            match self.connect(&address, key) {
+                Ok(channel) => {
+                    self.inner().settings.promote(&address);
+                    return Ok(channel);
+                }
+                Err(e @ (ChannelError::Unreachable | ChannelError::Timeout)) => last = e,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last)
     }
+
+    // MARK: Identity and pinning
 
     fn fetch_at(&self, origin: &str) -> Result<Identity, EnrollError> {
         let identity = self.parts.identity.fetch(origin).map_err(|e| match e {
@@ -221,7 +236,7 @@ impl Enrollment {
         Ok(identity)
     }
 
-    /// Pins the key the user saw. Only enrollment pins; a later mismatch never re-pins.
+    /// Pins a server's key. Only pairing pins; a later mismatch never re-pins.
     pub fn pin(&self, identity: &Identity) -> Result<(), EnrollError> {
         self.pin_locked(&mut self.inner(), identity)
     }
@@ -248,27 +263,44 @@ impl Enrollment {
         }
     }
 
-    /// Moves to a new address for the same server. The identity there must be the pinned key and a
-    /// channel must open there; on a match only the stored address changes.
-    pub fn update_address(&self, address: &str) -> Result<(), EnrollError> {
+    /// Replaces the addresses of the same server. An address that's down now may be kept, but at least
+    /// one must verify, and any that answers with another key refuses the lot. Only the addresses change.
+    pub fn update_address(&self, text: &str) -> Result<(), EnrollError> {
         let generation = self.generation();
-        let (Some(_), Some(pinned), Some(checked)) = (self.origin(), self.pinned_key(), super::address::origin(address)) else { return Err(EnrollError::NotConfigured) };
-        let identity = self.fetch_at(&checked)?;
-        let key = identity.validated_key().ok_or(EnrollError::InvalidIdentity)?;
-        if key != pinned {
-            return Err(EnrollError::WrongServer);
+        let (Some(_), Some(pinned), Some(entered)) = (self.origin(), self.pinned_key(), super::address::origins(text)) else { return Err(EnrollError::NotConfigured) };
+        let mut verified = None;
+        let mut last = EnrollError::NotConfigured;
+        for address in &entered {
+            match self.verify_address(address, &pinned) {
+                Ok(()) => {
+                    verified.get_or_insert_with(|| address.clone());
+                }
+                Err(e @ (EnrollError::Unreachable | EnrollError::UnusableRoute)) => last = e,
+                Err(e) => return Err(e),
+            }
         }
-        match self.open_checked(&checked, &pinned) {
-            Ok(_) => {}
-            Err(EnrollError::Channel(ChannelError::PinMismatch)) => return Err(EnrollError::WrongServer),
-            Err(e) => return Err(e),
-        }
+        let Some(first) = verified else { return Err(last) };
         let mut inner = self.inner();
         if generation != self.generation() {
             return Err(EnrollError::TurnedOff);
         }
-        inner.settings.origin = Some(checked);
+        inner.settings.alternates = entered.into_iter().filter(|a| *a != first).collect();
+        inner.settings.origin = Some(first);
         Ok(())
+    }
+
+    /// The identity at `address` must be the pinned key and a channel must open there.
+    fn verify_address(&self, address: &str, pinned: &[u8]) -> Result<(), EnrollError> {
+        let identity = self.fetch_at(address)?;
+        let key = identity.validated_key().ok_or(EnrollError::InvalidIdentity)?;
+        if key != pinned {
+            return Err(EnrollError::WrongServer);
+        }
+        match self.open_checked(address, pinned) {
+            Ok(_) => Ok(()),
+            Err(EnrollError::Channel(ChannelError::PinMismatch)) => Err(EnrollError::WrongServer),
+            Err(e) => Err(e),
+        }
     }
 
     /// An enroll channel at an address whose identity route just answered, so a failure that isn't
@@ -281,83 +313,39 @@ impl Enrollment {
         })
     }
 
-    // MARK: Enrollment
-
-    /// Creates the device key, signs in on a nonce bound to this channel and registers the device.
-    /// Returns the server's state for it.
-    pub fn enroll(&self, provider: IdentityProvider) -> Result<String, EnrollError> {
-        let generation = self.generation();
-        let (Some(origin), Some(key)) = (self.origin(), self.pinned_key()) else { return Err(EnrollError::NotConfigured) };
-        let (handle, public) = self.create_key()?;
-        let result = self.enroll_with(provider, &origin, &key, &handle, &public, generation);
-        if result.is_err() && generation != self.generation() {
-            let _ = self.parts.keys.delete(&handle);
-            return Err(EnrollError::TurnedOff);
-        }
-        if result.is_err() {
-            let _ = self.parts.keys.delete(&handle);
-        }
-        match &result {
-            Err(EnrollError::Channel(ChannelError::PinMismatch)) => self.handle_pin_mismatch(),
-            Err(EnrollError::Channel(ChannelError::Server(code))) => self.apply(code),
-            Ok(state) if state == "approved" => {
-                self.refresh_now();
-            }
-            _ => {}
-        }
-        result
-    }
-
     fn create_key(&self) -> Result<(Vec<u8>, Vec<u8>), EnrollError> {
         let (handle, public) = self.parts.keys.create().map_err(|_| EnrollError::DeviceKeyUnavailable)?;
         let public = x963_public_key(&public).ok_or(EnrollError::DeviceKeyUnavailable)?;
         Ok((handle, public))
     }
 
-    fn enroll_with(&self, provider: IdentityProvider, origin: &str, key: &[u8], handle: &[u8], public: &[u8], generation: u64) -> Result<String, EnrollError> {
-        let mut channel = self.connect(origin, key)?;
-        channel.open(Purpose::Enroll, None)?;
-        let binding = channel.binding();
-        let raw = base64url_encode(&binding);
-        let nonce = match provider {
-            IdentityProvider::Apple => sha256(raw.as_bytes()).iter().map(|b| format!("{b:02x}")).collect(),
-            IdentityProvider::Google => raw,
-        };
-        let id_token = self.parts.sign_in.sign_in(provider, &nonce).map_err(|_| EnrollError::SignInFailed)?;
-        let signature = self.parts.keys.sign(&signature_input(b"localflow-v1-enroll", &binding, &[]), handle).map_err(|_| EnrollError::DeviceKeyUnavailable)?;
-        channel.send(json!({"type": "enroll", "op": 1, "provider": provider.as_str(), "id_token": id_token, "device_name": device_name(&self.parts.device_name), "device_key": base64url_encode(public), "signature": base64url_encode(&signature)}))?;
-        match channel.receive()? {
-            ServerMessage::Enrolled { op: 1, state, refresh_token } => {
-                let mut inner = self.inner();
-                if generation != self.generation() {
-                    return Err(EnrollError::TurnedOff);
-                }
-                self.parts.secrets.write("device-key", handle)?;
-                let _ = self.parts.secrets.remove("access-token");
-                inner.access_issued_at = None;
-                if let Some(refresh) = refresh_token {
-                    self.parts.secrets.write("refresh-token", refresh.as_bytes())?;
-                }
-                inner.settings.notice = None;
-                inner.settings.state = state.clone();
-                Ok(state)
-            }
-            ServerMessage::Error { code } => Err(ChannelError::Server(code).into()),
-            _ => Err(EnrollError::Protocol),
-        }
-    }
-
     // MARK: Pairing
 
-    /// Redeems a pairing token. The caller has shown consent. The token goes only into a channel
-    /// sealed to the key it names, and only if the address serves that key. The pin, which clears
-    /// existing credentials, comes after the server's answer, so a refused token leaves a working
-    /// device as it was.
+    /// Redeems a pairing token at the first address that reaches its server. The caller has shown
+    /// consent. Only an address that can't be reached moves on: any answer from a server stops here,
+    /// so a refused token goes nowhere else. The address that worked becomes current.
     pub fn pair(&self, token: &PairingToken) -> Result<(), EnrollError> {
         let generation = self.generation();
-        let origin = self.origin().ok_or(EnrollError::NotConfigured)?;
-        channel_url(&origin).ok_or(EnrollError::NotConfigured)?;
-        let identity = self.fetch_at(&origin)?;
+        let mut result = Err(EnrollError::NotConfigured);
+        for address in self.settings().addresses() {
+            result = self.pair_at(&address, token, generation);
+            if !matches!(&result, Err(EnrollError::Unreachable | EnrollError::UnusableRoute | EnrollError::Channel(ChannelError::Unreachable | ChannelError::Timeout))) {
+                break;
+            }
+        }
+        if result.is_ok() {
+            self.refresh_now();
+        }
+        result
+    }
+
+    /// The token goes only into a channel sealed to the key it names, and only if the address serves
+    /// that key. The pin, which clears existing credentials, comes after the server's answer, so a
+    /// refused token leaves a working device as it was. The kept attempt means another address, like
+    /// a retry, redeems with the same device key.
+    fn pair_at(&self, origin: &str, token: &PairingToken, generation: u64) -> Result<(), EnrollError> {
+        channel_url(origin).ok_or(EnrollError::NotConfigured)?;
+        let identity = self.fetch_at(origin)?;
         if identity.validated_key().as_deref() != Some(&token.server_key[..]) {
             return Err(EnrollError::WrongServer);
         }
@@ -372,7 +360,7 @@ impl Enrollment {
                 device
             }
         };
-        let result = self.pair_with(token, &identity, &origin, &handle, &public, generation);
+        let result = self.pair_with(token, &identity, origin, &handle, &public, generation);
         if result.is_err() && generation != self.generation() {
             return Err(EnrollError::TurnedOff);
         }
@@ -388,17 +376,13 @@ impl Enrollment {
             self.forget_attempt();
         }
         match result {
-            Ok(()) => {
-                self.refresh_now();
-                Ok(())
-            }
             Err(EnrollError::Channel(ChannelError::PinMismatch)) => Err(EnrollError::WrongServer),
             // A flowd without `pair` refuses the unknown type with invalid_message, then closes.
             Err(EnrollError::Channel(ChannelError::Server(code))) if code == "invalid_message" || code == "unsupported_version" => {
                 self.apply("unsupported_version");
                 Err(EnrollError::UpdateRequired)
             }
-            Err(e) => Err(e),
+            other => other,
         }
     }
 
@@ -423,6 +407,7 @@ impl Enrollment {
                 self.parts.secrets.write("device-key", handle)?;
                 self.parts.secrets.write("refresh-token", refresh.as_bytes())?;
                 inner.pair_attempt = None;
+                inner.settings.promote(origin);
                 inner.settings.state = "approved".into();
                 Ok(())
             }
@@ -477,7 +462,7 @@ impl Enrollment {
 
     fn perform_refresh(&self) -> Option<String> {
         let credentials = self.credentials.load(Ordering::SeqCst);
-        let origin = self.origin()?;
+        self.origin()?;
         let key = self.pinned_key()?;
         let refresh = self.token("refresh-token")?;
         // A read that failed isn't a lost key: the Keychain may only be locked.
@@ -486,7 +471,7 @@ impl Enrollment {
             self.device_key_lost();
             return None;
         };
-        let mut channel = match self.connect(&origin, &key) {
+        let mut channel = match self.connect_any(&key) {
             Ok(channel) => channel,
             Err(ChannelError::PinMismatch) => {
                 self.handle_pin_mismatch();
@@ -537,17 +522,17 @@ impl Enrollment {
     /// A session channel, with one retry after `token_expired`. Used by `Pool`.
     /// What the server offers now, for `server.capabilities`. None when it can't be reached.
     pub fn capabilities(&self) -> Option<settings::Capabilities> {
-        let (origin, key, token) = (self.origin()?, self.pinned_key()?, self.access_token()?);
-        settings::ping(&origin, Some(&key), Some(&token))?.1
+        let (key, token) = (self.pinned_key()?, self.access_token()?);
+        self.settings().addresses().iter().find_map(|origin| settings::ping(origin, Some(&key), Some(&token)))?.1
     }
 
     pub fn session_channel(&self) -> Result<Channel, ChannelError> {
-        let origin = self.origin().ok_or(ChannelError::Closed)?;
+        self.origin().ok_or(ChannelError::Closed)?;
         let key = self.pinned_key().ok_or(ChannelError::Closed)?;
         let mut token = self.access_token().ok_or(ChannelError::Closed)?;
         let mut retried = false;
         loop {
-            let mut channel = self.connect(&origin, &key)?;
+            let mut channel = self.connect_any(&key)?;
             match channel.open(Purpose::Session, Some(&token)) {
                 Ok(()) => return Ok(channel),
                 Err(ChannelError::Server(code)) if code == "token_expired" && !retried => {
@@ -586,12 +571,12 @@ impl Enrollment {
         }
     }
 
-    /// Close code 4001: refuse to send anything until the user enrolls again. Never re-pins.
+    /// Close code 4001: refuse to send anything until the user pairs again. Never re-pins.
     pub fn handle_pin_mismatch(&self) {
         self.apply("pin_mismatch");
     }
 
-    /// The key no longer loads, as after a restore onto new hardware. The user signs in again.
+    /// The key no longer loads, as after a restore onto new hardware. The user pairs again.
     fn device_key_lost(&self) {
         self.apply("device_key_lost");
     }
@@ -633,18 +618,6 @@ mod tests {
             self.0.lock().unwrap().clone()
         }
     }
-    #[derive(Default)]
-    struct FakeSignIn {
-        nonce: Mutex<String>,
-        refuse: AtomicBool,
-    }
-    impl SignIn for FakeSignIn {
-        fn sign_in(&self, _: IdentityProvider, nonce: &str) -> Result<String, Unavailable> {
-            *self.nonce.lock().unwrap() = nonce.into();
-            if self.refuse.load(Ordering::SeqCst) { Err(Unavailable("sign in")) } else { Ok("id-token".into()) }
-        }
-    }
-
     pub(crate) fn identity_of(key: &[u8]) -> Identity {
         Identity { schema_version: 1, server: json!({}), protocol_versions: vec![1], suite: "x25519-hkdfsha256-chacha20poly1305".into(), server_key: base64url_encode(key), fingerprint: fingerprint_of(key) }
     }
@@ -653,7 +626,6 @@ mod tests {
         e: Enrollment,
         secrets: Arc<MemorySecrets>,
         keys: Arc<MemoryDeviceKeys>,
-        sign_in: Arc<FakeSignIn>,
         counters: Counters,
         key: Vec<u8>,
         clock: Arc<AtomicU64>,
@@ -664,20 +636,18 @@ mod tests {
         let (counters, key) = (script.counters(), script.public_key());
         let secrets = Arc::new(MemorySecrets::default());
         let keys = Arc::new(MemoryDeviceKeys::default());
-        let sign_in = Arc::new(FakeSignIn::default());
         let clock = Arc::new(AtomicU64::new(1000));
         let now = clock.clone();
         let e = Enrollment::new(Parts {
             secrets: secrets.clone(),
             keys: keys.clone(),
-            sign_in: sign_in.clone(),
             identity: Arc::new(FakeIdentity(Mutex::new(Ok(identity_of(&key))))),
             transports: Arc::new(script),
             now: Box::new(move || Duration::from_secs(now.load(Ordering::SeqCst))),
             device_name: "Test".into(),
         });
-        e.load(RemoteSettings { origin: Some("https://flow.example.com".into()), state: "off".into(), notice: None });
-        Fx { e, secrets, keys, sign_in, counters, key, clock }
+        e.load(RemoteSettings { origin: Some("https://flow.example.com".into()), state: "off".into(), notice: None, alternates: vec![] });
+        Fx { e, secrets, keys, counters, key, clock }
     }
 
     fn pair_token(key: &[u8]) -> PairingToken {
@@ -704,10 +674,8 @@ mod tests {
     fn nothing_connects_before_consent() {
         let f = fx(vec![]);
         f.e.load(RemoteSettings::default());
-        assert_eq!(f.e.fetch_server_identity().err(), Some(EnrollError::NotConfigured));
         assert_eq!(f.e.pin(&identity_of(&f.key)), Err(EnrollError::NotConfigured));
         assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::NotConfigured));
-        assert_eq!(f.e.enroll(IdentityProvider::Google), Err(EnrollError::NotConfigured));
         assert_eq!(f.e.access_token(), None);
         assert_eq!(f.counters.opened(), 0);
     }
@@ -725,61 +693,6 @@ mod tests {
         assert_eq!(item(&f, "refresh-token"), None);
         assert_eq!(f.keys.public_key(&old), None, "the old device key is deleted");
         assert_eq!(f.e.settings().state, "pinned");
-    }
-
-    #[test]
-    fn enroll_binds_the_nonce_and_stores_the_answer() {
-        let f = fx(vec![Reply::ready(), Reply::enrolled("pending", Some("lfr_1"))]);
-        f.e.pin(&identity_of(&f.key)).unwrap();
-        assert_eq!(f.e.enroll(IdentityProvider::Google), Ok("pending".to_string()));
-        assert_eq!(*f.sign_in.nonce.lock().unwrap(), base64url_encode(&f.counters.binding()), "Google's nonce is the binding");
-        let m = &f.counters.messages()[1];
-        assert_eq!((m["type"].as_str(), m["provider"].as_str(), m["id_token"].as_str()), (Some("enroll"), Some("google"), Some("id-token")));
-        assert_eq!(item(&f, "refresh-token").unwrap(), b"lfr_1");
-        assert!(item(&f, "device-key").is_some());
-        assert_eq!(f.e.settings().state, "pending");
-    }
-
-    #[test]
-    fn apple_nonce_is_the_hash_of_the_binding() {
-        let f = fx(vec![Reply::ready(), Reply::enrolled("rejected", None)]);
-        f.e.pin(&identity_of(&f.key)).unwrap();
-        assert_eq!(f.e.enroll(IdentityProvider::Apple), Ok("rejected".to_string()));
-        let expect: String = sha256(base64url_encode(&f.counters.binding()).as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-        assert_eq!(*f.sign_in.nonce.lock().unwrap(), expect);
-        assert_eq!(item(&f, "refresh-token"), None);
-    }
-
-    // parity: SET-068
-    #[test]
-    fn enroll_failures() {
-        let f = fx(vec![Reply::ready()]);
-        f.e.pin(&identity_of(&f.key)).unwrap();
-        f.sign_in.refuse.store(true, Ordering::SeqCst);
-        assert_eq!(f.e.enroll(IdentityProvider::Google), Err(EnrollError::SignInFailed));
-        assert!(f.keys.keys.lock().unwrap().is_empty(), "the unused key is deleted");
-        assert_eq!(item(&f, "device-key"), None);
-
-        let f = fx(vec![]);
-        f.e.pin(&identity_of(&f.key)).unwrap();
-        f.keys.unavailable.store(true, Ordering::SeqCst);
-        assert_eq!(f.e.enroll(IdentityProvider::Google), Err(EnrollError::DeviceKeyUnavailable));
-        assert_eq!(f.counters.opened(), 0);
-
-        let f = fx(vec![Reply::Close(4001)]);
-        f.e.pin(&identity_of(&f.key)).unwrap();
-        assert_eq!(f.e.enroll(IdentityProvider::Google), Err(EnrollError::Channel(ChannelError::PinMismatch)));
-        assert_eq!(f.e.settings().state, "pin_mismatch");
-        assert_eq!(item(&f, "server-key").unwrap(), f.key, "never re-pins");
-    }
-
-    #[test]
-    fn approved_enrollment_refreshes_at_once() {
-        let f = fx(vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")]);
-        f.e.pin(&identity_of(&f.key)).unwrap();
-        f.e.enroll(IdentityProvider::Google).unwrap();
-        assert_eq!(item(&f, "access-token").unwrap(), b"lfa_1");
-        assert_eq!(item(&f, "refresh-token").unwrap(), b"lfr_2");
     }
 
     #[test]
@@ -836,6 +749,14 @@ mod tests {
         assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::UnusableRoute));
         let f = fx(vec![Reply::Close(4001)]);
         assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::WrongServer), "the channel, unlike the identity route, proves who holds the key");
+    }
+
+    #[test]
+    fn pair_needs_a_device_key() {
+        let f = fx(vec![]);
+        f.keys.unavailable.store(true, Ordering::SeqCst);
+        assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::DeviceKeyUnavailable));
+        assert_eq!(f.counters.opened(), 0);
     }
 
     // parity: SET-099
@@ -931,13 +852,12 @@ mod tests {
         let e = Arc::new(Enrollment::new(Parts {
             secrets: secrets.clone(),
             keys: keys.clone(),
-            sign_in: Arc::new(FakeSignIn::default()),
             identity: Arc::new(FakeIdentity(Mutex::new(Ok(identity_of(&key))))),
             transports: Arc::new(Midway { script, during: during.clone() }),
             now: Box::new(|| Duration::from_secs(1000)),
             device_name: "Test".into(),
         }));
-        e.load(RemoteSettings { origin: Some("https://flow.example.com".into()), state: "approved".into(), notice: None });
+        e.load(RemoteSettings { origin: Some("https://flow.example.com".into()), state: "approved".into(), notice: None, alternates: vec![] });
         e.pin(&identity_of(&key)).unwrap();
         e.load(RemoteSettings { state: "approved".into(), ..e.settings() });
         let (handle, _) = keys.create().unwrap();
@@ -980,13 +900,12 @@ mod tests {
         let e = Arc::new(Enrollment::new(Parts {
             secrets: secrets.clone(),
             keys: Arc::new(MemoryDeviceKeys::default()),
-            sign_in: Arc::new(FakeSignIn::default()),
             identity: Arc::new(FakeIdentity(Mutex::new(Ok(identity_of(&key))))),
             transports: Arc::new(script),
             now: Box::new(|| Duration::from_secs(1000)),
             device_name: "Test".into(),
         }));
-        e.load(RemoteSettings { origin: Some("https://flow.example.com".into()), state: "off".into(), notice: None });
+        e.load(RemoteSettings { origin: Some("https://flow.example.com".into()), state: "off".into(), notice: None, alternates: vec![] });
         let (off, done) = (e.clone(), Arc::new(AtomicBool::new(false)));
         let finished = done.clone();
         *secrets.1.lock().unwrap() = Some(Box::new(move || {
@@ -1058,6 +977,202 @@ mod tests {
         assert_eq!(f.e.update_address("https://new.example.com"), Err(EnrollError::UnusableRoute));
     }
 
+    /// One server behind several addresses. `dead` answers nothing at all, `no_socket` answers the
+    /// identity route but carries no channel, `wrong` serves another server's key. A `Script` serves the rest.
+    #[derive(Clone, Default)]
+    struct Net {
+        dead: Vec<&'static str>,
+        no_socket: Vec<&'static str>,
+        wrong: Vec<&'static str>,
+        identities: Arc<Mutex<Vec<String>>>,
+        sockets: Arc<Mutex<Vec<String>>>,
+    }
+    struct NetIdentity(Net, Identity);
+    impl IdentityFetching for NetIdentity {
+        fn fetch(&self, origin: &str) -> Result<Identity, IdentityError> {
+            self.0.identities.lock().unwrap().push(origin.to_string());
+            let hit = |list: &[&str]| list.iter().any(|d| origin.contains(d));
+            if hit(&self.0.dead) {
+                return Err(IdentityError::Unreachable);
+            }
+            Ok(if hit(&self.0.wrong) { identity_of(&[1; 32]) } else { self.1.clone() })
+        }
+    }
+    struct NetTransports(Net, Script);
+    impl Transports for NetTransports {
+        fn open(&self, url: &str) -> Result<Box<dyn Transport>, TransportError> {
+            let host = url.split('/').nth(2).unwrap_or_default().to_string();
+            self.0.sockets.lock().unwrap().push(host.clone());
+            if self.0.dead.iter().chain(&self.0.no_socket).any(|d| host.contains(d)) {
+                return Err(TransportError::Unreachable);
+            }
+            self.1.open(url)
+        }
+    }
+
+    /// `current` then `others`, with nothing pinned yet. `dead`, `no_socket` and `wrong` name hosts.
+    fn net(net: Net, replies: Vec<Reply>, current: &str, others: &[&str]) -> (Fx, Net) {
+        let script = Script::new(replies);
+        let (counters, key) = (script.counters(), script.public_key());
+        let (secrets, keys) = (Arc::new(MemorySecrets::default()), Arc::new(MemoryDeviceKeys::default()));
+        let e = Enrollment::new(Parts {
+            secrets: secrets.clone(),
+            keys: keys.clone(),
+            identity: Arc::new(NetIdentity(net.clone(), identity_of(&key))),
+            transports: Arc::new(NetTransports(net.clone(), script)),
+            now: Box::new(|| Duration::from_secs(1000)),
+            device_name: "Test".into(),
+        });
+        e.load(RemoteSettings { origin: Some(current.into()), state: "off".into(), notice: None, alternates: others.iter().map(|o| o.to_string()).collect() });
+        (Fx { e, secrets, keys, counters, key, clock: Arc::default() }, net)
+    }
+
+    /// `net`, as an approved device.
+    fn approved_net(n: Net, replies: Vec<Reply>, current: &str, others: &[&str]) -> (Fx, Net) {
+        let (f, n) = net(n, replies, current, others);
+        f.e.pin(&identity_of(&f.key)).unwrap();
+        let (handle, _) = f.keys.create().unwrap();
+        f.secrets.write("device-key", &handle).unwrap();
+        f.secrets.write("refresh-token", b"lfr_old").unwrap();
+        f.e.load(RemoteSettings { state: "approved".into(), ..f.e.settings() });
+        (f, n)
+    }
+
+    fn seen(list: &Mutex<Vec<String>>) -> Vec<String> {
+        std::mem::take(&mut list.lock().unwrap())
+    }
+
+    #[test]
+    fn settings_round_trip_the_alternates_and_know_them() {
+        let mut p = Prefs::memory();
+        p.set("remote.enabled", true);
+        p.set("remote.consentVersion", 2);
+        p.set("remote.serverURL", "https://a.example");
+        p.set("remote.alternateAddresses", ["https://b.example"]);
+        let mut s = RemoteSettings::from_prefs(&p);
+        assert_eq!(s.alternates, ["https://b.example"]);
+        assert!(s.knows("https://a.example") && s.knows("https://b.example") && !s.knows("https://c.example"));
+        s.promote("https://b.example");
+        s.store(&mut p);
+        assert_eq!(settings::remote_addresses(&p), ["https://b.example", "https://a.example"]);
+        s.alternates.clear();
+        s.store(&mut p);
+        assert!(!p.contains("remote.alternateAddresses"));
+        p.set("remote.alternateAddresses", ["https://b.example"]);
+        p.set("remote.enabled", false);
+        assert_eq!(RemoteSettings::from_prefs(&p).addresses(), Vec::<String>::new(), "nothing to connect to while off");
+    }
+
+    #[test]
+    fn a_dead_address_fails_over_and_the_one_that_answers_sticks() {
+        let n = Net { dead: vec!["a.example"], ..Default::default() };
+        let (f, n) = approved_net(n, vec![Reply::ready(), Reply::tokens("a1", "r1"), Reply::ready(), Reply::tokens("a2", "r2"), Reply::ready()], "https://a.example", &["https://b.example", "https://c.example"]);
+        assert_eq!(f.e.refresh_now().as_deref(), Some("a1"));
+        assert_eq!(seen(&n.sockets), ["a.example", "b.example"]);
+        let s = f.e.settings();
+        assert_eq!(s.origin.as_deref(), Some("https://b.example"));
+        assert_eq!(s.alternates, ["https://a.example", "https://c.example"], "the old current takes its place");
+        assert_eq!(f.e.refresh_now().as_deref(), Some("a2"));
+        assert_eq!(seen(&n.sockets), ["b.example"], "the dead one isn't tried first again");
+        f.e.session_channel().unwrap();
+        assert_eq!(seen(&n.sockets), ["b.example"]);
+        assert_eq!(f.e.settings().origin.as_deref(), Some("https://b.example"));
+    }
+
+    #[test]
+    fn every_address_dead_fails_like_one() {
+        let n = Net { dead: vec!["a.example", "b.example"], ..Default::default() };
+        let (f, n) = approved_net(n, vec![], "https://a.example", &["https://b.example"]);
+        assert_eq!(f.e.refresh_now(), None);
+        assert_eq!(f.e.session_channel().err(), Some(ChannelError::Closed), "no token to open one with");
+        assert_eq!(seen(&n.sockets).len(), 4);
+        assert_eq!(f.e.settings().origin.as_deref(), Some("https://a.example"));
+        assert_eq!(f.e.settings().state, "approved");
+    }
+
+    #[test]
+    fn a_pin_mismatch_is_never_retried_elsewhere() {
+        let (f, n) = approved_net(Net::default(), vec![Reply::Close(4001)], "https://a.example", &["https://b.example"]);
+        assert_eq!(f.e.refresh_now(), None);
+        assert_eq!(f.e.settings().state, "pin_mismatch");
+        assert_eq!(seen(&n.sockets), ["a.example"]);
+        assert_eq!(item(&f, "server-key").unwrap(), f.key);
+
+        let (f, n) = approved_net(Net::default(), vec![Reply::ready(), Reply::tokens("a", "r"), Reply::Close(4001)], "https://a.example", &["https://b.example"]);
+        assert_eq!(f.e.session_channel().err(), Some(ChannelError::PinMismatch));
+        assert_eq!(seen(&n.sockets), ["a.example", "a.example"], "the refresh, then the session");
+    }
+
+    #[test]
+    fn pair_skips_a_dead_address_and_refreshes_through_the_one_that_worked() {
+        let n = Net { dead: vec!["a.example"], ..Default::default() };
+        let (f, n) = net(n, vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")], "https://a.example", &["https://b.example"]);
+        f.e.pair(&pair_token(&f.key)).unwrap();
+        assert_eq!(seen(&n.identities), ["https://a.example", "https://b.example"]);
+        assert_eq!(seen(&n.sockets), ["b.example", "b.example"], "the current address is the new one before the refresh");
+        let s = f.e.settings();
+        assert_eq!((s.origin.as_deref(), s.alternates.as_slice(), s.state.as_str()), (Some("https://b.example"), ["https://a.example".to_string()].as_slice(), "approved"));
+        assert_eq!(item(&f, "refresh-token").unwrap(), b"lfr_2");
+    }
+
+    #[test]
+    fn pair_skips_an_unusable_route_and_a_lost_reply_with_the_same_key() {
+        let n = Net { no_socket: vec!["a.example"], ..Default::default() };
+        let (f, n) = net(n, vec![Reply::ready(), Reply::Close(1006), Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("a", "r")], "https://a.example", &["https://b.example", "https://c.example"]);
+        f.e.pair(&pair_token(&f.key)).unwrap();
+        assert_eq!(seen(&n.sockets), ["a.example", "b.example", "c.example", "c.example"]);
+        let sent: Vec<_> = f.counters.messages().into_iter().filter(|m| m["type"] == "pair").map(|m| m["device_key"].clone()).collect();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0], sent[1], "another address retries with the same device key");
+        assert_eq!(f.keys.keys.lock().unwrap().len(), 1);
+        assert_eq!(f.e.settings().origin.as_deref(), Some("https://c.example"));
+    }
+
+    #[test]
+    fn a_refused_token_never_goes_to_another_address() {
+        let (f, n) = net(Net::default(), vec![Reply::ready(), Reply::error("pairing_token_invalid")], "https://a.example", &["https://b.example"]);
+        assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::Channel(ChannelError::Server("pairing_token_invalid".into()))));
+        assert_eq!(seen(&n.identities), ["https://a.example"]);
+        assert_eq!(seen(&n.sockets), ["a.example"]);
+        assert_eq!(f.e.settings().origin.as_deref(), Some("https://a.example"));
+
+        let n = Net { wrong: vec!["a.example"], ..Default::default() };
+        let (f, n) = net(n, vec![], "https://a.example", &["https://b.example"]);
+        assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::WrongServer), "another server's key stops too");
+        assert_eq!(seen(&n.identities), ["https://a.example"]);
+        assert!(seen(&n.sockets).is_empty());
+    }
+
+    #[test]
+    fn every_pair_address_dead_returns_the_last_failure() {
+        let n = Net { dead: vec!["a.example"], no_socket: vec!["b.example"], ..Default::default() };
+        let (f, _n) = net(n, vec![], "https://a.example", &["https://b.example"]);
+        assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::UnusableRoute));
+        assert_eq!(f.e.settings().origin.as_deref(), Some("https://a.example"));
+    }
+
+    #[test]
+    fn update_address_keeps_what_is_down_and_refuses_another_key_anywhere() {
+        let list = "https://dead.example, https://good.example, https://two.example";
+        let n = Net { dead: vec!["dead.example"], ..Default::default() };
+        let (f, _n) = approved_net(n, vec![Reply::ready(), Reply::ready()], "https://old.example", &["https://older.example"]);
+        f.e.update_address(list).unwrap();
+        let s = f.e.settings();
+        assert_eq!(s.origin.as_deref(), Some("https://good.example"), "the first that verified");
+        assert_eq!(s.alternates, ["https://dead.example", "https://two.example"], "the rest as entered, the old list gone");
+        assert_eq!(item(&f, "refresh-token").unwrap(), b"lfr_old");
+
+        let n = Net { dead: vec!["dead.example"], wrong: vec!["wrong.example"], ..Default::default() };
+        let (f, _n) = approved_net(n, vec![Reply::ready()], "https://old.example", &[]);
+        assert_eq!(f.e.update_address("https://dead.example, https://good.example, https://wrong.example"), Err(EnrollError::WrongServer));
+        assert_eq!((f.e.settings().origin.as_deref(), f.e.settings().alternates.len()), (Some("https://old.example"), 0), "nothing stored");
+
+        let n = Net { dead: vec!["dead.example"], no_socket: vec!["nosocket.example"], ..Default::default() };
+        let (f, _n) = approved_net(n, vec![], "https://old.example", &[]);
+        assert_eq!(f.e.update_address("https://nosocket.example, https://dead.example"), Err(EnrollError::Unreachable), "the last failure");
+        assert_eq!(f.e.settings().origin.as_deref(), Some("https://old.example"));
+    }
+
     #[test]
     fn turn_off_removes_everything_and_stops_what_runs() {
         let f = approved(vec![]);
@@ -1087,14 +1202,13 @@ mod tests {
         let e = Arc::new(Enrollment::new(Parts {
             secrets: secrets.clone(),
             keys: Arc::new(MemoryDeviceKeys::default()),
-            sign_in: Arc::new(FakeSignIn::default()),
             identity: Arc::new(FakeIdentity(Mutex::new(Ok(identity_of(&key))))),
             transports: Arc::new(OffDuring(slot.clone(), script)),
             now: Box::new(|| Duration::ZERO),
             device_name: "T".into(),
         }));
         *slot.lock().unwrap() = Some(e.clone());
-        e.load(RemoteSettings { origin: Some("https://x.example".into()), state: "off".into(), notice: None });
+        e.load(RemoteSettings { origin: Some("https://x.example".into()), state: "off".into(), notice: None, alternates: vec![] });
         assert_eq!(e.pair(&pair_token(&key)), Err(EnrollError::TurnedOff));
         assert!(secrets.items.lock().unwrap().is_empty());
     }
@@ -1102,13 +1216,9 @@ mod tests {
     #[test]
     fn identity_failures_map() {
         let f = fx(vec![]);
-        let identity = |r| Enrollment::new(Parts { secrets: f.secrets.clone(), keys: f.keys.clone(), sign_in: f.sign_in.clone(), identity: Arc::new(FakeIdentity(Mutex::new(r))), transports: Arc::new(Script::new(vec![])), now: Box::new(|| Duration::ZERO), device_name: "T".into() });
-        let e = identity(Err(IdentityError::Unreachable));
-        e.load(f.e.settings());
-        assert_eq!(e.fetch_server_identity().err(), Some(EnrollError::Unreachable));
-        let e = identity(Err(IdentityError::Invalid));
-        e.load(f.e.settings());
-        assert_eq!(e.fetch_server_identity().err(), Some(EnrollError::InvalidIdentity));
+        let identity = |r| Enrollment::new(Parts { secrets: f.secrets.clone(), keys: f.keys.clone(), identity: Arc::new(FakeIdentity(Mutex::new(r))), transports: Arc::new(Script::new(vec![])), now: Box::new(|| Duration::ZERO), device_name: "T".into() });
+        assert_eq!(identity(Err(IdentityError::Unreachable)).fetch_at("https://x.example").err(), Some(EnrollError::Unreachable));
+        assert_eq!(identity(Err(IdentityError::Invalid)).fetch_at("https://x.example").err(), Some(EnrollError::InvalidIdentity));
     }
 
     #[test]
@@ -1153,25 +1263,17 @@ pub(crate) mod flowd_tests {
         }
     }
 
-    struct NoSignIn;
-    impl SignIn for NoSignIn {
-        fn sign_in(&self, _: IdentityProvider, _: &str) -> Result<String, Unavailable> {
-            Err(Unavailable("sign in"))
-        }
-    }
-
     pub(crate) fn client(flowd: &Arc<Flowd>, origin: &str) -> (Enrollment, Arc<MemorySecrets>) {
         let secrets = Arc::new(MemorySecrets::default());
         let e = Enrollment::new(Parts {
             secrets: secrets.clone(),
             keys: Arc::new(GoKeys { flowd: flowd.clone(), scalars: Mutex::default() }),
-            sign_in: Arc::new(NoSignIn),
             identity: Arc::new(HttpIdentity),
             transports: Arc::new(WebSockets::default()),
             now: Box::new(system_now),
             device_name: "Conformance Mac".into(),
         });
-        e.load(RemoteSettings { origin: Some(origin.into()), state: "off".into(), notice: None });
+        e.load(RemoteSettings { origin: Some(origin.into()), state: "off".into(), notice: None, alternates: vec![] });
         (e, secrets)
     }
 
@@ -1238,6 +1340,16 @@ pub(crate) mod flowd_tests {
     }
 
     #[test]
+    fn pairs_past_a_closed_port() {
+        let f = Arc::new(Flowd::start());
+        let (e, _) = client(&f, &f.down);
+        e.load(RemoteSettings { alternates: vec![f.remote.clone()], ..e.settings() });
+        e.pair(&token(&f)).expect("pairs at the second address");
+        assert_eq!(e.settings().origin.as_deref(), Some(f.remote.as_str()));
+        assert_eq!(e.settings().alternates, [f.down.clone()]);
+    }
+
+    #[test]
     fn address_edit_same_and_different_key() {
         let (f, g) = (Arc::new(Flowd::start()), Arc::new(Flowd::start()));
         let (e, secrets) = client(&f, &f.remote);
@@ -1254,6 +1366,12 @@ pub(crate) mod flowd_tests {
         assert_eq!(e.update_address(&f.down), Err(EnrollError::Unreachable));
         assert_eq!(e.update_address(&f.rewrite), Err(EnrollError::InvalidIdentity));
         assert!(e.refresh_now().is_some(), "still works at the new address");
+
+        e.update_address(&format!("{}, {same}", f.down)).expect("a down address may be kept");
+        assert_eq!((e.settings().origin.as_deref(), e.settings().alternates.as_slice()), (Some(same.as_str()), [f.down.clone()].as_slice()));
+        e.load(RemoteSettings { origin: Some(f.down.clone()), alternates: vec![same.clone()], ..e.settings() });
+        assert!(e.refresh_now().is_some(), "over the real channel, past a closed port");
+        assert_eq!(e.settings().origin.as_deref(), Some(same.as_str()), "and it sticks");
     }
 
     #[test]

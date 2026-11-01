@@ -108,10 +108,6 @@ pub(super) fn apply_view(page: &mut SettingsPage, window: &mut Window, cx: &mut 
         "test-passed" => {
             page.test_results.insert("speech", "Working · 412 ms".into());
         }
-        "consent" => {
-            page.server_draft.read(cx).focus_handle(cx).focus(window, cx);
-            page.modal = Some(Modal::Consent);
-        }
         "turn-off" => page.prompt_turn_off(window, cx),
         "consent-update-sheet" => page.modal = Some(Modal::ConsentUpdate),
         "download" => page.prompt_download(false, window, cx),

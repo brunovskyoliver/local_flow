@@ -37,61 +37,61 @@ SET-036	auto	test:default_page_shows_every_section_in_order
 SET-037	auto	test:default_page_shows_every_section_in_order
 SET-038	auto	test:meeting_only_variant
 SET-039	auto	test:approved_server_shows_routing_and_turns_off
-SET-040	auto	test:consent_sheet_stores_nothing_until_turn_on
-SET-041	auto	test:consent_sheet_stores_nothing_until_turn_on
+SET-040	auto	test:the_switch_opens_the_pairing_sheet_and_nothing_is_stored_until_pair
+SET-041	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 SET-042	auto	test:approved_server_shows_routing_and_turns_off
 SET-043	auto	test:remote_status_answers_and_reset
 SET-044	auto	test:remote_status_answers_and_reset
-SET-045	auto	test:trust_pins_the_key_and_shows_the_pin ; test:real_flowd_through_the_page ; test:remote_status_answers_and_reset ; test:real_flowd_identity_is_validated
-SET-046	auto	test:remote_status_answers_and_reset
-SET-047	auto	test:remote_status_answers_and_reset
+SET-045	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-046	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-047	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 SET-048	auto	test:a_press_refreshes_a_pending_device_and_routes_by_the_settings_at_that_moment ; test:remote_status_answers_and_reset
 SET-049	auto	test:approved_server_shows_routing_and_turns_off ; test:remote_status_answers_and_reset
-SET-050	auto	test:rejected_shows_its_status_and_enroll_again ; test:remote_status_answers_and_reset
+SET-050	auto	test:remote_status_answers_and_reset
 SET-051	auto	test:remote_status_answers_and_reset
 SET-052	auto	test:remote_status_answers_and_reset
-SET-053	auto	test:fetched_identity_reads_with_swifts_type
-SET-054	auto	test:fetched_identity_reads_with_swifts_type
-SET-055	auto	test:fingerprint_value_is_monospaced_and_selectable ; test:fetched_identity_reads_with_swifts_type
-SET-056	auto	test:fetched_identity_reads_with_swifts_type
-SET-057	auto	test:fetched_identity_reads_with_swifts_type
-SET-058	auto	test:trust_refuses_a_key_that_does_not_validate
+SET-053	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-054	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-055	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-056	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-057	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-058	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 SET-059	auto	test:pinned_line_is_12_muted_with_two_spaces
-SET-060	auto	test:sign_in_buttons_follow_state_google_and_busy
-SET-061	auto	test:sign_in_buttons_follow_state_google_and_busy
-SET-062	auto	test:sign_in_buttons_follow_state_google_and_busy
-SET-063	not-run	not-run:needs Apple or Google interaction and a wss enroll channel ; service:enroll_device returns Unavailable, button shows SET-066
-SET-064	not-run	not-run:needs interactive Google login ; service:ASWebAuthenticationSession, flow-platform service phase
-SET-065	not-run	not-run:needs interactive Apple login ; service:ASAuthorization, flow-platform service phase
-SET-066	auto	test:remote_status_lines_and_their_controls
-SET-067	auto	test:sign_in_reports_an_unreachable_server
-SET-068	auto	test:enroll_failures ; test:a_pin_mismatch_on_refresh_blocks_and_keeps_the_pin ; test:remote_status_lines_and_their_controls
-SET-069	auto	test:enroll_again_and_the_setup_error
-SET-070	auto	test:real_flowd_through_the_page
+SET-060	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-061	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-062	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-063	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-064	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-065	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-066	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-067	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-068	auto	test:a_pin_mismatch_on_refresh_blocks_and_keeps_the_pin ; test:remote_status_lines_offer_pairing_and_no_sign_in
+SET-069	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-070	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 SET-071	auto	test:identity_validation_and_fingerprint ; test:real_flowd_identity_is_validated
-SET-072	auto	test:real_flowd_through_the_page ; test:identity_validation_and_fingerprint
-SET-073	auto	test:enroll_again_and_the_setup_error
-SET-074	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
-SET-075	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
+SET-072	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-073	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-074	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-075	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 SET-076	auto	test:meeting_only_variant
-SET-077	auto	test:consent_sheet_stores_nothing_until_turn_on ; test:sheets_have_swifts_geometry
-SET-078	auto	test:consent_sheet_stores_nothing_until_turn_on
-SET-079	auto	test:consent_address_field_has_symbol_hint_and_id
-SET-080	auto	test:consent_body_pitch_is_18
+SET-077	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-078	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-079	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-080	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 SET-081	auto	test:remote_status_answers_and_reset
 SET-082	auto	test:meeting_only_variant ; test:remote_status_answers_and_reset
 SET-083	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
-SET-084	auto	test:consent_sheet_stores_nothing_until_turn_on
-SET-085	auto	test:return_follows_the_disabled_turn_on
-SET-086	auto	test:consent_sheet_stores_nothing_until_turn_on
-SET-087	auto	test:consent_sheet_stores_nothing_until_turn_on
-SET-088	auto	test:return_follows_the_disabled_turn_on
-SET-089	auto	test:consent_sheet_stores_nothing_until_turn_on
+SET-084	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-085	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-086	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-087	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-088	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
+SET-089	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 SET-090	auto	test:address_and_credential_validators_match_swift
-SET-091	recorded	recorded:swift-note, Swift behaviour kept and nothing added to verify
+SET-091	recorded	recorded:removed: owner dropped sign-in, 2026-11-01
 SET-092	live	live:audit/mac/settings/turn-off-light-ref.png ; live:audit/mac/settings/turn-off-light-rust.png ; live:audit/mac/settings/turn-off-dark-ref.png ; live:audit/mac/settings/turn-off-dark-rust.png ; test:approved_server_shows_routing_and_turns_off ; note:drawn alert, not native, because a native one cannot colour Turn Off from gpui; title type is Figtree where AppKit draws SF, glass is an averaged fill
 SET-093	auto	test:approved_server_shows_routing_and_turns_off
-SET-094	auto	test:turning_off_clears_identity_and_error ; service:no refresh task or parked rewrite channels in Rust yet, channel service phase; real Keychain not exercised
+SET-094	auto	test:turning_off_clears_the_keychain ; service:no refresh task or parked rewrite channels in Rust yet, channel service phase; real Keychain not exercised
 SET-095	auto	test:approved_server_shows_routing_and_turns_off ; test:remote_status_answers_and_reset
 SET-096	auto	test:approved_server_shows_routing_and_turns_off ; test:remote_status_answers_and_reset
 SET-097	auto	test:server_answers_change_state_and_credentials
@@ -104,7 +104,7 @@ SET-103	auto	test:approved_server_shows_routing_and_turns_off
 SET-104	auto	test:routing_switches_clear_the_check_and_force_the_server
 SET-105	auto	test:consent_update_sheet
 SET-106	auto	test:consent_update_sheet
-SET-107	auto	test:consent_body_pitch_is_18
+SET-107	auto	test:consent_update_sheet_type
 SET-108	auto	test:consent_update_sheet
 SET-109	auto	test:consent_update_sheet
 SET-110	auto	test:approved_server_shows_routing_and_turns_off ; test:lower_sections_are_spaced_like_swift

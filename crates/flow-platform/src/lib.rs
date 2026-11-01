@@ -81,12 +81,6 @@ pub trait MeetingAudio: Send + Sync {
     fn bitrate(&self, system: bool) -> i64;
 }
 
-/// The Desktop-type Google client from the build: its ID and non-confidential secret. Empty is unset.
-pub fn google_client() -> Option<(&'static str, Option<&'static str>)> {
-    let id = option_env!("LOCALFLOW_GOOGLE_CLIENT_ID").filter(|v| !v.trim().is_empty())?;
-    Some((id, option_env!("LOCALFLOW_GOOGLE_CLIENT_SECRET").filter(|v| !v.trim().is_empty())))
-}
-
 /// A connected audio input (Swift's `ConnectedInput`). Read-only: nothing here opens the device.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputDevice {
@@ -338,15 +332,6 @@ pub trait Services: 'static {
     fn install_term_booster(&self) -> Result<(), Unavailable> {
         Err(Unavailable("term booster install"))
     }
-    /// A Desktop-type Google client is built in; loopback sign-in works from it on both platforms.
-    /// The Swift Mac app keeps its own iOS-type client and path until the cutover.
-    fn google_sign_in_available(&self) -> bool {
-        false
-    }
-    /// Sign in with Apple needs Apple's frameworks; not on Windows (ADR 0036).
-    fn apple_sign_in_available(&self) -> bool {
-        true
-    }
     /// The launch model check: a verified install's marker.
     fn speech_model_verified(&self) -> bool {
         false
@@ -490,10 +475,6 @@ pub trait Credentials: Send + Sync {
     fn device_key_public_key(&self, handle: &[u8]) -> Option<Vec<u8>>;
     fn device_key_sign(&self, handle: &[u8], message: &[u8]) -> Result<Vec<u8>, Unavailable>;
     fn device_key_delete(&self, handle: &[u8]) -> Result<(), Unavailable>;
-    /// An ID token from Apple, carrying `nonce`. It needs a signed app. Google's goes through `open_url`.
-    fn sign_in(&self, _provider: &str, _nonce: &str) -> Result<String, Unavailable> {
-        Err(Unavailable("server sign-in"))
-    }
     /// `Services::open_url`, for background threads.
     fn open_url(&self, _url: &str) -> Result<(), Unavailable> {
         Err(Unavailable("opening a link"))

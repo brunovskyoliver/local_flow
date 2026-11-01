@@ -149,72 +149,6 @@ fn pinned(p: &mut flow_core::prefs::Prefs) {
     p.set("remote.consentVersion", 2);
 }
 
-// parity: SET-053 SET-054 SET-055 SET-056 SET-057
-#[flow_ui::gpui::test]
-async fn fetched_identity_reads_with_swifts_type(cx: &mut TestAppContext) {
-    let r = rig(cx, "pending", |_| {});
-    let pl = palette(cx);
-    let key = core::base64url_encode(&[7u8; 32]);
-    set(cx, r.win, |p, _, _| p.identity = Some(identity(&key, "aaaa-bbbb")));
-    assert_type("Server fingerprint", 12., 500., pl.muted);
-    assert_eq!(style("aaaa-bbbb").size, 13., "fingerprint value");
-    assert!(has(cx, r.win, "settings.remoteFingerprint"));
-    assert_type("Compare it with flowd admin identity on the server before trusting it.", 12., 400., pl.muted);
-    assert_eq!(label(cx, r.win, "settings.remoteTrust"), "Trust This Server");
-    let (details, value) = (bounds(cx, r.win, "settings.setupDetails"), bounds(cx, r.win, "settings.remoteFingerprint"));
-    // Swift puts the pairing row between the switch and the details.
-    let row = bounds(cx, r.win, "settings.row.Pair with a token");
-    assert_eq!(details.top() - row.bottom(), px(1.), "one point line above");
-    assert_eq!(details.size.width, row.size.width, "full width");
-    let caption = bounds(cx, r.win, "settings.remoteFingerprintLabel");
-    assert_eq!((caption.top() - details.top(), value.top() - caption.bottom()), (px(16.), px(12.)), "padding 16, spacing 12");
-    let trust = bounds(cx, r.win, "settings.remoteTrust");
-    assert_eq!(details.bottom() - trust.bottom(), px(16.), "bottom padding 16");
-    assert_eq!(trust.left(), details.left(), "leading");
-}
-
-// parity: SET-058
-#[flow_ui::gpui::test]
-async fn trust_refuses_a_key_that_does_not_validate(cx: &mut TestAppContext) {
-    let r = rig(cx, "pending", |_| {});
-    set(cx, r.win, |p, _, _| p.identity = Some(identity("not-a-key", "fp")));
-    click(cx, r.win, "settings.remoteTrust");
-    assert_saw(&["The server identity could not be saved."]);
-    assert_eq!(pref_s(cx, "remote.state").as_deref(), Some("pending"), "state unmoved");
-    assert!(r.log.borrow().iter().all(|c| c.starts_with("read ")), "no credential touched: {:?}", r.log.borrow());
-}
-
-// parity: SET-060 SET-061 SET-062
-#[flow_ui::gpui::test]
-async fn sign_in_buttons_follow_state_google_and_busy(cx: &mut TestAppContext) {
-    let r = rig(cx, "", pinned);
-    assert_eq!(label(cx, r.win, "settings.remoteSignInApple"), "Sign in with Apple");
-    assert!(!has(cx, r.win, "settings.remoteSignInGoogle"), "hidden without a client ID");
-    r.google.set(true);
-    set(cx, r.win, |_, _, _| {});
-    assert_eq!(label(cx, r.win, "settings.remoteSignInGoogle"), "Sign in with Google");
-    let (apple, google) = (bounds(cx, r.win, "settings.remoteSignInApple"), bounds(cx, r.win, "settings.remoteSignInGoogle"));
-    assert_eq!(google.left() - apple.right(), px(8.), "spacing 8");
-    assert!(!disabled(cx, r.win, "settings.remoteSignInApple"));
-    set(cx, r.win, |p, _, _| p.busy = true);
-    assert!(disabled(cx, r.win, "settings.remoteSignInApple") && disabled(cx, r.win, "settings.remoteSignInGoogle"), "disabled while busy");
-    set(cx, r.win, |p, _, _| {
-        p.busy = false;
-        p.identity = Some(identity("k", "fp"));
-    });
-    assert!(!has(cx, r.win, "settings.remoteSignInApple"), "identity nil only");
-}
-
-#[flow_ui::gpui::test]
-async fn windows_offers_google_without_apple(cx: &mut TestAppContext) {
-    let r = rig(cx, "", pinned);
-    r.windows.set(true);
-    r.google.set(true);
-    set(cx, r.win, |_, _, _| {});
-    assert!(!has(cx, r.win, "settings.remoteSignInApple"), "ADR 0036");
-    assert_eq!(label(cx, r.win, "settings.remoteSignInGoogle"), "Sign in with Google");
-}
-
 // parity: SET-059
 #[flow_ui::gpui::test]
 async fn pinned_line_is_12_muted_with_two_spaces(cx: &mut TestAppContext) {
@@ -228,67 +162,14 @@ async fn pinned_line_is_12_muted_with_two_spaces(cx: &mut TestAppContext) {
     assert!(has(cx, r.win, "settings.pinnedFingerprint"));
 }
 
-// parity: SET-069 SET-073
+// parity: SET-107
 #[flow_ui::gpui::test]
-async fn enroll_again_and_the_setup_error(cx: &mut TestAppContext) {
-    let r = rig(cx, "revoked", |_| {});
-    let warning = palette(cx).warning;
-    assert_eq!(label(cx, r.win, "settings.remoteEnrollAgain"), "Enroll Again");
-    assert!(!disabled(cx, r.win, "settings.remoteEnrollAgain"));
-    set(cx, r.win, |p, _, _| {
-        p.busy = true;
-        p.remote_error = Some("It failed".into());
-    });
-    assert!(disabled(cx, r.win, "settings.remoteEnrollAgain"), "disabled while busy");
-    assert_type("It failed", 12., 400., warning);
-}
-
-// parity: SET-079
-#[flow_ui::gpui::test]
-async fn consent_address_field_has_symbol_hint_and_id(cx: &mut TestAppContext) {
-    let r = rig(cx, "consent", |_| {});
-    let link = cx.update(|cx| pal(cx).link());
-    assert_symbols(&["server.rack"]);
-    assert_type("https://server.example.com", 13., 400., link);
-    assert_eq!(label(cx, r.win, "settings.remoteServerURL"), "Server address");
-    type_into(cx, r.win, |p| p.server_draft.clone(), "https://a.example.com");
-    assert!(!saw("https://server.example.com"), "the hint leaves when there's text");
-    assert_eq!(pref_s(cx, "remote.serverURL"), None, "the draft is not persisted");
-}
-
-// parity: SET-080 SET-107
-#[flow_ui::gpui::test]
-async fn consent_body_pitch_is_18(cx: &mut TestAppContext) {
-    let r = rig(cx, "consent", |_| {});
-    let body = bounds(cx, r.win, "settings.consentBody");
-    // The reference's baselines are 18 apart: Figtree 13 is 15, plus spacing 3. The test font wraps
-    // differently, so the height is checked as a whole number of pitches.
-    assert_eq!((f32::from(body.size.height) + 3.) % 18., 0., "{:?}", body.size.height);
+async fn consent_update_sheet_type(cx: &mut TestAppContext) {
+    let r = rig(cx, "consent-update-sheet", |_| {});
     let text = cx.update(|cx| core::consent_text(&cx.global::<Core>().prefs));
-    assert_eq!(style(&text).size, 13.);
-    let r2 = rig(cx, "consent-update-sheet", |_| {});
     assert_type("Send summaries and meetings to your server?", 17., 500., palette(cx).ink);
     assert_eq!(style(&text).size, 13.);
-    assert_eq!(bounds(cx, r2.win, "settings.sheet").size.width, px(460.));
-}
-
-// parity: SET-085 SET-088
-#[flow_ui::gpui::test]
-async fn return_follows_the_disabled_turn_on(cx: &mut TestAppContext) {
-    let r = rig(cx, "consent", |_| {});
-    assert!(disabled(cx, r.win, "settings.remoteConsentConfirm"));
-    type_into(cx, r.win, |p| p.server_draft.clone(), "http://not-https.example");
-    assert!(disabled(cx, r.win, "settings.remoteConsentConfirm"));
-    press(cx, r.win, "enter");
-    assert_eq!(read(cx, r.win, |p, _| p.modal), Some(Modal::Consent), "Return does nothing");
-    assert_eq!(read(cx, r.win, |p, _| p.remote_error.clone()), None, "and shows no error");
-    set(cx, r.win, |p, _, _| p.remote_error = Some("Sheet error".into()));
-    assert_type("Sheet error", 12., 400., palette(cx).warning);
-    assert_eq!(label(cx, r.win, "settings.remoteConsentConfirm"), "Turn On");
-    type_into(cx, r.win, |p| p.server_draft.clone(), "https://flow.example.com");
-    press(cx, r.win, "enter");
-    assert_eq!(read(cx, r.win, |p, _| p.modal), None, "Return confirms a valid one");
-    assert_eq!(pref_s(cx, "remote.serverURL").as_deref(), Some("https://flow.example.com"));
+    assert_eq!(bounds(cx, r.win, "settings.sheet").size.width, px(460.));
 }
 
 // parity: SET-100 SET-101 SET-104
@@ -1030,29 +911,14 @@ async fn own_app_row_says_always_and_has_no_remove(cx: &mut TestAppContext) {
 
 // parity: SET-094
 #[flow_ui::gpui::test]
-async fn turning_off_clears_identity_and_error(cx: &mut TestAppContext) {
+async fn turning_off_clears_the_keychain(cx: &mut TestAppContext) {
     let r = rig(cx, "approved", |_| {});
-    let key = core::base64url_encode(&[7u8; 32]);
-    set(cx, r.win, |p, _, _| {
-        p.identity = Some(identity(&key, "aaaa-bbbb"));
-        p.remote_error = Some("old".into());
-    });
     for account in ["device-key", "server-key", "refresh-token", "access-token"] {
         r.secrets.borrow_mut().insert(core::remote_keychain(account), "x".into());
     }
     set(cx, r.win, |p, _, cx| p.confirm_turn_off(cx));
-    assert!(read(cx, r.win, |p, _| p.identity.is_none()));
-    assert_eq!(read(cx, r.win, |p, _| p.remote_error.clone()), None);
     assert!(r.secrets.borrow().is_empty(), "four Keychain items gone");
     assert_eq!(pref_b(cx, "remote.enabled"), Some(false));
-}
-
-// parity: SET-050
-#[flow_ui::gpui::test]
-async fn rejected_shows_its_status_and_enroll_again(cx: &mut TestAppContext) {
-    let r = rig(cx, "rejected", |_| {});
-    assert_saw(&["Rejected"]);
-    assert_eq!(label(cx, r.win, "settings.remoteEnrollAgain"), "Enroll Again");
 }
 
 // parity: SET-217
@@ -1071,18 +937,6 @@ async fn app_row_geometry(cx: &mut TestAppContext) {
     assert_eq!(tint.size.height, px(24.));
     assert_eq!(text.left() - tint.right(), px(12.), "spacing 12");
     assert_eq!(bundle.top() - name.bottom(), px(2.), "spacing 2");
-}
-
-// parity: SET-055
-#[flow_ui::gpui::test]
-async fn fingerprint_value_is_monospaced_and_selectable(cx: &mut TestAppContext) {
-    let r = rig(cx, "pending", |_| {});
-    let key = core::base64url_encode(&[7u8; 32]);
-    set(cx, r.win, |p, _, _| p.identity = Some(identity(&key, "aaaa-bbbb")));
-    assert_saw(&["mono:aaaa-bbbb"]);
-    assert_eq!(style("aaaa-bbbb").size, 13.);
-    assert!(has(cx, r.win, "settings.remoteFingerprint.text"));
-    assert!(has(cx, r.win, "settings.remoteFingerprint"));
 }
 
 // parity: SET-338

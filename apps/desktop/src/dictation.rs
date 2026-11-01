@@ -881,21 +881,21 @@ pub(crate) mod tests {
             cx.set_global(Driver::spawn(doubles(&root), false));
             let plain = route(cx);
             assert!(plain.server.is_none() && plain.local_allowed && !plain.rewrite.enabled, "off: this Mac");
-            let installed = crate::remote::testing::install(cx, vec![Reply::ready(), Reply::enrolled("pending", Some("lfr_1")), Reply::ready(), Reply::tokens("a", "r")], true, true);
+            let installed = crate::remote::testing::install(cx, vec![Reply::ready(), Reply::tokens("a", "r")], true);
+            use flow_core::remote::{DeviceKeys, Secrets};
+            let (handle, _) = installed.keys.create().unwrap();
+            installed.secrets.write("device-key", &handle).unwrap();
+            installed.secrets.write("refresh-token", b"lfr_1").unwrap();
             let core = cx.global_mut::<Core>();
             core.prefs.set("remote.enabled", true);
             core.prefs.set("remote.consentVersion", 99_i64);
             core.prefs.set("remote.serverURL", "https://flow.example.com");
             core.prefs.set("server.only", true);
-            let remote = core.remote();
-            remote.enrollment.load(flow_core::remote::enrollment::RemoteSettings { origin: Some("https://flow.example.com".into()), state: "pinned".into(), notice: None });
-            
-            remote.enrollment.enroll(crate::remote::provider("apple")).unwrap();
-            remote.enrollment.settings().store(&mut cx.global_mut::<Core>().prefs);
+            core.prefs.set("remote.state", "pending");
             assert!(route(cx).server.is_none(), "pending doesn't stream yet");
             assert!(!route(cx).local_allowed, "server only");
             shortcut(flow_core::dictation::hotkey::Event::Pressed, cx);
-            assert_eq!(installed.counters.opened(), 1, "the press doesn't wait for the refresh");
+            assert_eq!(installed.counters.opened(), 0, "the press doesn't wait for the refresh");
         });
         cx.run_until_parked();
         cx.update(|cx| {

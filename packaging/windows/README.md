@@ -22,8 +22,7 @@ speech model isn't installed here; the worker's `provision` downloads it to
 `%LOCALAPPDATA%\LocalFlow\Models`.
 
 The Visual C++ runtime is linked in with `+crt-static` (`.cargo/config.toml`), so the installer doesn't
-add it. Google sign-in needs `LOCALFLOW_GOOGLE_CLIENT_ID` at build time; CI doesn't set it, so the row
-stays hidden.
+add it.
 
 `scripts/check-windows-installer.py` runs in `scripts/test.sh` and needs no ISCC. `scripts/check-windows-cross.sh`
 is an optional cross-compile check on a Mac; see its comments.

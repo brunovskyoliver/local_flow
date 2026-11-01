@@ -122,6 +122,28 @@ pub fn server_address_kind(ip: &str) -> Option<ServerAddressKind> {
     Some(if b[..6] == [0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0] { ServerAddressKind::Tailscale } else { ServerAddressKind::Lan })
 }
 
+fn pieces(text: &str) -> impl Iterator<Item = &str> + Clone {
+    text.split(|c: char| c == ',' || c.is_whitespace()).filter(|p| !p.is_empty())
+}
+
+/// Several addresses of one server, separated by commas or spaces: at most 8, each a valid `origin`,
+/// without repeats. `None` when any isn't, or there are none.
+pub fn origins(text: &str) -> Option<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for piece in pieces(text) {
+        let checked = origin(piece)?;
+        if !out.contains(&checked) {
+            out.push(checked);
+        }
+    }
+    (!out.is_empty() && out.len() <= 8).then_some(out)
+}
+
+/// `address_notice` for a list: a refused address says so first, then any plain `http://`.
+pub fn list_notice(text: &str) -> Option<&'static str> {
+    pieces(text).filter(|p| origin(p).is_none()).find_map(address_notice).or_else(|| pieces(text).find_map(address_notice))
+}
+
 /// What a server form says under the address: why `http://` is refused, or that it isn't TLS.
 pub fn address_notice(text: &str) -> Option<&'static str> {
     if !text.trim().starts_with("http://") {
@@ -192,6 +214,27 @@ mod tests {
         assert_eq!(address_notice("http://example.com"), Some("http:// works only for private and Tailscale addresses. Use https:// for this one."));
         assert_eq!(address_notice("https://example.com"), None);
         assert_eq!(address_notice(""), None);
+    }
+
+    #[test]
+    fn several_addresses() {
+        let list = |t: &str| origins(t).map(|o| o.join(" "));
+        assert_eq!(list("https://A.example.com, http://100.64.0.1:8090\nhttps://a.example.com/ ,, https://b.example.com").as_deref(), Some("https://a.example.com http://100.64.0.1:8090 https://b.example.com"), "split, normalized, repeats dropped in order");
+        assert_eq!(list("https://a.example.com"), Some("https://a.example.com".into()));
+        for bad in ["", " , ", "https://a.example.com, http://8.8.8.8", "https://a.example.com, nope"] {
+            assert_eq!(origins(bad), None, "{bad}");
+        }
+        let many = |n: usize| (0..n).map(|i| format!("https://s{i}.example.com")).collect::<Vec<_>>().join(",");
+        assert_eq!(origins(&many(8)).map(|o| o.len()), Some(8));
+        assert_eq!(origins(&many(9)), None);
+    }
+
+    #[test]
+    fn a_list_shows_the_notice_of_any_piece() {
+        const NOT_TLS: &str = "This connection is not TLS. Content stays encrypted between this device and the server.";
+        assert_eq!(list_notice("https://a.example.com, http://100.64.0.1:8090"), Some(NOT_TLS));
+        assert_eq!(list_notice("http://100.64.0.1, http://8.8.8.8"), address_notice("http://8.8.8.8"), "a refusal comes first");
+        assert_eq!(list_notice("https://a.example.com, https://b.example.com"), None);
     }
 
     /// Swift's `ServerAddressKindTests`. Every address offered must be one `origin` accepts over http.
