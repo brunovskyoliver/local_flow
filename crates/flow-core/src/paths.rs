@@ -13,11 +13,11 @@ impl Paths {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Paths { root: root.into() }
     }
-    /// `LOCALFLOW_DATA_ROOT`, otherwise the platform's app data folder under `LocalFlow GPUI Dev`.
-    pub fn resolve(platform_app_data: PathBuf) -> Self {
+    /// `LOCALFLOW_DATA_ROOT`, otherwise `folder` in the platform's app data folder.
+    pub fn resolve(platform_app_data: PathBuf, folder: &str) -> Self {
         match std::env::var_os("LOCALFLOW_DATA_ROOT") {
             Some(root) if !root.is_empty() => Paths::new(root),
-            _ => Paths::new(platform_app_data.join("LocalFlow GPUI Dev")),
+            _ => Paths::new(platform_app_data.join(folder)),
         }
     }
     pub fn database(&self) -> PathBuf {

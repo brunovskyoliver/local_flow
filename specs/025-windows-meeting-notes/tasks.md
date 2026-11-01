@@ -42,8 +42,10 @@ Every phase ends with `cargo test --workspace`, `./scripts/check-rust-boundaries
 - [X] T027 Cross-build script `scripts/check-windows-cross.sh`: x64 and arm64 `cargo xwin check`. Optional, skipped when cargo-xwin is missing.
 
 ## Phase 7: Settle, review, report
-- [ ] T028 Update `specs/024-gpui-desktop-views/inventory/status/*` for each row truly settled; keep the others open with a precise reason.
-- [ ] T029 `acceptance/hardware.md`; docs (`docs/architecture/overview.md` if it names these).
+- [X] T028 Update `specs/024-gpui-desktop-views/inventory/status/*` for each row truly settled; keep the others open with a precise reason.
+- [X] T029 `acceptance/hardware.md`; docs (`docs/architecture/overview.md` if it names these). Hardware list complete; ADR 0015 notes Windows at 96 kbit/s. `overview.md` and `server.md` describe the Swift clients and name no Rust client, so nothing to update there.
 - [ ] T030 Independent read-only security review of keys, credentials, enrollment, callback. Fix what it confirms.
-- [ ] T031 `speckit-converge` pass: compare spec to the code, append and do missing tasks once.
+- [X] T031 `speckit-converge` pass: compare spec to the code, append and do missing tasks once.
 - [ ] T032 `make check`, then the Report in `progress.md`.
+- [X] T033 Converge: Windows data lived in `%LOCALAPPDATA%\LocalFlow GPUI Dev`, not the `%LOCALAPPDATA%\LocalFlow` of US3 and the installer. `Services::data_folder` fixes it; the Mac's folder is unchanged until the cutover.
+- [ ] T034 Windows system sleep pauses the meeting with reason `system_sleep` (LIVE-041). Stays open: it needs a window for `WM_POWERBROADCAST`, and can't be tried without a Windows PC (hardware.md 21).

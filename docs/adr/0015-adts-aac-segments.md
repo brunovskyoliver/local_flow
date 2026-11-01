@@ -15,6 +15,8 @@ writers with `SIGKILL` at 5, 20 and 55 s of a 60 s recording.
 
 Every meeting segment is an AAC-LC stream in ADTS framing (`.aac`, `.part` while open):
 microphone mono 48 kHz at 64 kbit/s, system audio stereo (or mono) 48 kHz at 96 kbit/s.
+On Windows (Feature 025) the microphone also records at 96 kbit/s: Microsoft's AAC encoder has no
+64 kbit/s. Each track's stored `bitrate` holds the real value.
 The app encodes through `AVAudioConverter`, composes the 7-byte header itself and writes
 whole frames through a file descriptor it owns, `fsync`ing every 5 s and at finalization.
 A segment is finalized (flush, fsync, rename `.part` → `.aac`, fsync directory) on every

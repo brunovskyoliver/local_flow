@@ -77,7 +77,7 @@ A person runs one per-user installer with no administrator prompt. Uninstall lea
 - **FR-006**: The channel pool MUST exist and `close_parked_channels` MUST work.
 - **FR-007**: Google sign-in on Windows MUST use the loopback flow with PKCE, `state` and a channel-bound nonce, and bind only to a loopback address.
 - **FR-008**: Windows capture MUST use event-driven shared WASAPI for the microphone and process loopback excluding this process for system audio, through a bounded ring.
-- **FR-009**: Windows MUST encode AAC-LC through Media Foundation and write ADTS segments per ADR 0015 at 64 and 96 kbit/s.
+- **FR-009**: Windows MUST encode AAC-LC through Media Foundation and write ADTS segments per ADR 0015: 96 kbit/s on both tracks, since Microsoft's encoder has no 64 kbit/s (research R8); the stored `bitrate` holds the real value.
 - **FR-010**: Meeting state MUST use the existing store, segment rows and launch reconciliation.
 - **FR-011**: Meeting handoff MUST behave as `MeetingHandoff` and `HandoffFileTransfer` do, against the unchanged wire protocol and Swift's `bundle.sqlite`.
 - **FR-012**: On Windows, launch at login, free disk, high contrast, reduce motion and microphone consent MUST be real, not `Unavailable`.

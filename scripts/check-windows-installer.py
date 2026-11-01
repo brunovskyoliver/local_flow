@@ -29,6 +29,10 @@ if define("RunKey") != rust_const("RUN_KEY"):
     problems.append(f'RunKey is {define("RunKey")}, Rust uses {rust_const("RUN_KEY")}')
 if define("RunValue") != rust_const("RUN_VALUE"):
     problems.append(f'RunValue is {define("RunValue")}, Rust uses {rust_const("RUN_VALUE")}')
+# The installer's README and uninstall promise name this folder.
+windows = (root / "crates/flow-platform/src/windows.rs").read_text()
+if not re.search(r'fn data_folder\(&self\) -> &\'static str \{\s*"LocalFlow"\s*\}', windows):
+    problems.append(r"Windows data must live in %LOCALAPPDATA%\LocalFlow, as the installer says")
 if not re.search(r"^PrivilegesRequired=lowest$", iss, re.M):
     problems.append("the installer must set PrivilegesRequired=lowest")
 

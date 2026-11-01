@@ -14,6 +14,9 @@ impl Services for Win {
     fn app_data_dir(&self) -> PathBuf {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_default()
     }
+    fn data_folder(&self) -> &'static str {
+        "LocalFlow"
+    }
     fn permission(&self, p: Permission) -> PermissionState {
         match p {
             Permission::Microphone if crate::win::system::microphone_consent_denied() => PermissionState::Denied,

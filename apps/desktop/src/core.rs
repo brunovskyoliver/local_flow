@@ -30,7 +30,7 @@ impl Core {
         if let Some(f) = services.formats() {
             flow_core::history::set_region(flow_core::history::Region { date: f.date, number: f.number, first_weekday: f.first_weekday });
         }
-        let paths = Paths::resolve(services.app_data_dir());
+        let paths = Paths::resolve(services.app_data_dir(), services.data_folder());
         let (instance_lock, stores) = match paths.prepare() {
             Ok(lock) => (Some(lock), Db::open_or_create(&paths.database()).map_err(|e| e.to_string())),
             Err(e) => (None, Err(e.to_string())),

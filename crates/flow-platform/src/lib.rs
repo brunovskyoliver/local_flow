@@ -147,6 +147,10 @@ pub trait Services: 'static {
     /// "Mac" or "PC" in copy that says "this Mac".
     fn device_word(&self) -> &'static str;
     fn app_data_dir(&self) -> PathBuf;
+    /// This client's folder there. On the Mac, not the Swift app's until the cutover (Feature 028).
+    fn data_folder(&self) -> &'static str {
+        "LocalFlow GPUI Dev"
+    }
     fn permission(&self, p: Permission) -> PermissionState;
     fn open_permission_settings(&self, p: Permission) -> Result<(), Unavailable>;
     fn high_contrast(&self) -> bool;
