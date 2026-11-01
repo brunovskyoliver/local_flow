@@ -217,27 +217,37 @@ pub fn confirm(cx: &mut App) {
     }
     cx.spawn(async move |cx| {
         cx.background_executor().timer(Duration::from_millis(1)).await;
-        let _ = cx.update(|cx| {
+        let prepared = cx.update(|cx| {
             let s = cx.global::<crate::shell::Session>();
             let (cancelled, target, entry, source) = (s.insertion.cancelled, s.insertion.target.clone(), s.insertion.entry.clone(), s.insertion.source.clone());
             let (Some(entry), Some((revision, rewrite))) = (entry, source) else {
                 finish(PREPARE_FAILED, cx);
-                return;
+                return None;
             };
             let core = cx.global::<Core>();
             let Some(Ok((attempt, revision))) = core.db.as_ref().map(|db| history::begin_attempt(db, &entry.id, revision)) else {
                 finish(PREPARE_FAILED, cx);
-                return;
+                return None;
             };
-            let outcome = match (cancelled, target) {
-                (false, Some(t)) => core.services.insert_once(&t, &entry.text).unwrap_or(InsertOutcome::NotInserted),
-                _ => InsertOutcome::NotInserted,
-            };
+            Some((entry, revision, rewrite, attempt, target.filter(|_| !cancelled), core.services.inserter()))
+        });
+        let Some((entry, revision, rewrite, attempt, target, inserter)) = prepared else { return };
+        // Typing waits on the app's acknowledgements, which must not hold the UI thread.
+        let outcome = match (target, inserter) {
+            (Some(t), Some(inserter)) => {
+                let text = entry.text.clone();
+                cx.background_executor().spawn(async move { inserter.insert_once(&t, &text) }).await
+            }
+            (Some(t), None) => cx.update(|cx| cx.global::<Core>().services.insert_once(&t, &entry.text).unwrap_or(InsertOutcome::NotInserted)),
+            (None, _) => InsertOutcome::NotInserted,
+        };
+        cx.update(|cx| {
             let recorded = match outcome {
                 InsertOutcome::Confirmed => history::Outcome::Confirmed,
                 InsertOutcome::NotInserted => history::Outcome::NotInserted,
                 InsertOutcome::Uncertain => history::Outcome::Uncertain,
             };
+            let core = cx.global::<Core>();
             match core.db.as_ref().map(|db| history::record_outcome(db, &entry.id, revision, &attempt, recorded, rewrite.as_deref())) {
                 Some(Ok(_)) => finish(outcome_message(Ok(outcome)), cx),
                 _ => outcome_not_saved(cx),
@@ -570,7 +580,7 @@ mod tests {
         assert_eq!((style.size, style.weight), (26., 600.));
     }
 
-    // parity: SHELL-158
+    // parity: SHELL-158 HIST-168
     /// Leading 20, Cancel then Confirm, 12 apart; message over the row, 16 apart, centered in y.
     #[flow_ui::gpui::test]
     async fn panel_layout_matches_swift(cx: &mut TestAppContext) {
@@ -639,7 +649,7 @@ mod tests {
         cx.update(cancel);
     }
 
-    // parity: SHELL-160 SHELL-161 SHELL-162 SHELL-163 SHELL-165 SHELL-168 SHELL-167 SHELL-173
+    // parity: SHELL-160 SHELL-161 SHELL-162 SHELL-163 SHELL-165 SHELL-168 SHELL-167 SHELL-173 HIST-167 HIST-169 HIST-170
     #[flow_ui::gpui::test]
     async fn panel_runs_select_confirm_insert(cx: &mut TestAppContext) {
         start(cx, Some(field()), Some(InsertOutcome::Confirmed));
@@ -710,7 +720,7 @@ mod tests {
         cx.update(cancel);
     }
 
-    // parity: SHELL-169 SHELL-170 SHELL-171 SHELL-174 SHELL-175 SHELL-176 SHELL-177
+    // parity: SHELL-169 SHELL-170 SHELL-171 SHELL-174 SHELL-175 SHELL-176 SHELL-177 HIST-172
     #[flow_ui::gpui::test]
     async fn cancelling_and_failure_copy(cx: &mut TestAppContext) {
         start(cx, Some(field()), Some(InsertOutcome::Uncertain));
@@ -796,7 +806,7 @@ mod tests {
         cx.update(|cx| history::get(cx.global::<Core>().db.as_ref().unwrap(), &row_id()).unwrap().unwrap())
     }
 
-    // parity: SHELL-166 SHELL-174 SHELL-175 SHELL-176 SHELL-177
+    // parity: SHELL-166 SHELL-174 SHELL-175 SHELL-176 SHELL-177 HIST-171 HIST-174
     /// The attempt is written before dispatch and the outcome after, against the row's revision.
     #[flow_ui::gpui::test]
     async fn delivery_is_recorded_around_the_insert(cx: &mut TestAppContext) {

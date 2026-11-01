@@ -1478,6 +1478,10 @@ pub const KINDS: [(&str, &str); 7] = [("email", "Email"), ("work_chat", "Work ch
 pub fn kind_title(raw: &str) -> &'static str {
     KINDS.iter().find(|k| k.0 == raw).map_or("Other", |k| k.1)
 }
+/// `AppCategory.builtIn[id] == .terminal`.
+pub fn is_terminal(bundle_id: &str) -> bool {
+    BUILT_IN.iter().any(|b| b.0 == bundle_id && b.1 == "terminal")
+}
 const BUILT_IN: [(&str, &str); 32] = [
     ("com.apple.mail", "email"),
     ("com.microsoft.Outlook", "email"),

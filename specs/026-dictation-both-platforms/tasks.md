@@ -21,9 +21,9 @@ Same check rules as Feature 025. Swift references are under `apps/macos/LocalFlo
 - [X] T012 `apps/desktop/src/dictation.rs`: composition, `session_command`, `load_speech_model`, pill and tray from real state, notices (PILL-021, PILL-075, PILL-088..095 when reached).
 
 ## Phase 4: Insertion (US1)
-- [ ] T013 Mac `capture_insertion_target` and `insert_once` by AX and paste, per `CapturedTarget.swift`; restore clipboard; `running_apps`, `app_name`. Outcome logic pure and tested.
-- [ ] T014 Windows UI Automation and `SendInput`; elevated target falls back to copy.
-- [ ] T015 Insertion panel and HIST-167..174 wired.
+- [X] T013 Mac `capture_insertion_target` and `insert_once` by AX and paste, per `CapturedTarget.swift`; restore clipboard; `running_apps`, `app_name`. Outcome logic pure and tested.
+- [X] T014 Windows UI Automation and `SendInput`; elevated target falls back to copy.
+- [X] T015 Insertion panel and HIST-167..174 wired.
 
 ## Phase 5: Remote dictation and rewrite (US3)
 - [ ] T016 `dictation::remote` per `RemoteDictationSession.swift`: windows, progress, fallback threshold, cancel, sleep. Refresh at start (SET-048). Loopback flowd test.

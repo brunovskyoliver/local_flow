@@ -440,14 +440,14 @@ HIST-163	auto	test:review_warns_and_cancel_or_timeout_keep_the_text ; test:the_r
 HIST-164	auto	test:review_warns_and_cancel_or_timeout_keep_the_text ; test:the_review_warns_about_delivery_from_the_row
 HIST-165	auto	test:insert_opens_the_review_only_when_nothing_blocks_it ; test:the_review_warns_about_delivery_from_the_row
 HIST-166	auto	test:review_warns_and_cancel_or_timeout_keep_the_text
-HIST-167	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
-HIST-168	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
-HIST-169	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
-HIST-170	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
-HIST-171	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
-HIST-172	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
+HIST-167	auto	test:panel_runs_select_confirm_insert
+HIST-168	auto	test:panel_layout_matches_swift
+HIST-169	auto	test:panel_runs_select_confirm_insert
+HIST-170	auto	test:panel_runs_select_confirm_insert
+HIST-171	auto	test:delivery_is_recorded_around_the_insert
+HIST-172	auto	test:cancelling_and_failure_copy
 HIST-173	auto	test:review_warns_and_cancel_or_timeout_keep_the_text
-HIST-174	service	service:insertion panel lives in apps/desktop/src/insertion.rs (SHELL-147..178 tests); capture and insert need Services; Mac services work for Feature 024 after the view port
+HIST-174	auto	test:delivery_is_recorded_around_the_insert
 HIST-175	auto	test:delivery_rewrite_and_delete_writes ; test:delivery_writes_each_column_and_outcome
 HIST-176	auto	test:delivery_rewrite_and_delete_writes ; test:delivery_writes_each_column_and_outcome
 HIST-177	auto	test:a_failed_insert_still_reads_as_delivered

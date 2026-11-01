@@ -81,6 +81,17 @@ impl Services for Win {
     fn free_disk_bytes(&self) -> Option<u64> {
         crate::win::system::free_disk_bytes(&self.app_data_dir())
     }
+    fn inserter(&self) -> Option<std::sync::Arc<dyn flow_core::dictation::session::Inserter>> {
+        Some(crate::win::insert::shared())
+    }
+    fn capture_insertion_target(&self) -> Result<Option<crate::CapturedTarget>, Unavailable> {
+        use flow_core::dictation::session::Inserter;
+        Ok(crate::win::insert::shared().capture_target())
+    }
+    fn insert_once(&self, target: &crate::CapturedTarget, text: &str) -> Result<crate::InsertOutcome, Unavailable> {
+        use flow_core::dictation::session::Inserter;
+        Ok(crate::win::insert::shared().insert_once(target, text))
+    }
     fn free_bytes_probe(&self) -> Box<dyn Fn() -> Option<u64> + Send> {
         let dir = self.app_data_dir();
         Box::new(move || crate::win::system::free_disk_bytes(&dir))

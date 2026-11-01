@@ -409,6 +409,8 @@ mod keys_mac;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
+mod insert_mac;
+#[cfg(target_os = "macos")]
 mod mic_mac;
 #[cfg(target_os = "macos")]
 mod region_mac;
@@ -416,6 +418,7 @@ mod region_mac;
 mod win {
     pub mod aac;
     pub mod hotkey;
+    pub mod insert;
     pub mod mic;
     pub mod secrets;
     pub mod system;

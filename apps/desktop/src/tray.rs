@@ -1,6 +1,5 @@
 //! The menu bar extra. The glyph and items are plain data, so they're tested without an OS tray;
 //! `install` builds them with the `tray-icon` crate, which has no headless mode.
-use crate::core::Core;
 use crate::pages::Page;
 use crate::shell::{self, MeetingState, Session};
 use flow_platform::SessionCommand;
@@ -204,6 +203,7 @@ pub use native::install;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Core;
     use crate::shell::{Dictation, MeetingStatus, ensure_session, update_session};
     use crate::testing::boot;
     use flow_platform::Fake;

@@ -23,3 +23,13 @@ Items that need real hardware, a signed install or the owner's screen and microp
 | 17 | Mac and Windows, end to end in the bundled app: hold, speak, release into a text field with the real worker; longer than one 15 s window; the 3-minute limit; Escape while transcribing | T010, T012 | One row per dictation, the text inserted once, no audio left in Temporary Audio | not run |
 | 18 | Kill the speech worker during a recognize job in the running app | T010, T012 | "The speech engine stopped…", waiting dictation in History, retried later | not run |
 | 19 | Launch the bundled app with a shortcut saved and with Input Monitoring off | T012 | Shortcut live at launch, or the setup status tells how to fix it | not run |
+| 20 | Mac: dictate into TextEdit, Notes, Safari, Slack, VS Code and a Chromium app (first press in a new Electron app too); `AXManualAccessibility` builds the tree | T013 | Text typed once at the caret, outcome confirmed; a first-press miss in an Electron app is the known ceiling | not run |
+| 21 | Mac: a password field in Safari and in System Settings | T013 | Nothing typed or read; session copies to the clipboard | not run |
+| 22 | Mac: switch app, window or caret during delivery of a long dictation; an app that hangs AX | T013 | Stops at the next chunk with an uncertain outcome; no stall past the 0.25 s message limit per call | not run |
+| 23 | Mac: Terminal, iTerm and Ghostty paste; clipboard with text, an image and several items is back a second later; a copy during that second stays | T013 | Paste lands, clipboard managers skip it, snapshot restored unless something wrote; `sudo` prompt refuses | not run |
+| 24 | Mac: History review "Choose destination" through "Confirm insertion" against a real field; UI stays responsive during a long insert | T013, T015 | Status text per HIST-174, row delivery state matches | not run |
+| 25 | Mac: Settings context sheet lists running regular apps by name with `running_apps` | T013 | Same list as the Swift app | not run |
+| 26 | Windows: Notepad, Word, a browser and Windows Terminal: focus found by UI Automation, Ctrl-V by `SendInput`, plain-text clipboard restored; a `CF_BITMAP` clipboard is not put back (known ceiling) | T014 | Text once at the caret, outcome confirmed | not run |
+| 27 | Windows: a browser password field | T014 | `CurrentIsPassword` refuses; text copied, nothing pasted | not run |
+| 28 | Windows: a target run as administrator from a non-elevated `localflow.exe` (UIPI) | T014 | No target; text saved and copied, the pill says so; `SendInput` never runs | not run |
+| 29 | Windows: clipboard history (Win+V) stays free of the dictated text after a paste | T014 | `ExcludeClipboardContentFromMonitorProcessing` honored | not run |

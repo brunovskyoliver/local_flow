@@ -601,6 +601,20 @@ impl Services for Mac {
     fn free_disk_bytes(&self) -> Option<u64> {
         free_bytes(&self.app_data_dir())
     }
+    fn inserter(&self) -> Option<std::sync::Arc<dyn flow_core::dictation::session::Inserter>> {
+        Some(crate::insert_mac::shared())
+    }
+    fn capture_insertion_target(&self) -> Result<Option<crate::CapturedTarget>, Unavailable> {
+        use flow_core::dictation::session::Inserter;
+        Ok(crate::insert_mac::shared().capture_target())
+    }
+    fn insert_once(&self, target: &crate::CapturedTarget, text: &str) -> Result<crate::InsertOutcome, Unavailable> {
+        use flow_core::dictation::session::Inserter;
+        Ok(crate::insert_mac::shared().insert_once(target, text))
+    }
+    fn running_apps(&self) -> Vec<(String, String)> {
+        crate::insert_mac::running_apps()
+    }
     fn free_bytes_probe(&self) -> Box<dyn Fn() -> Option<u64> + Send> {
         let dir = self.app_data_dir();
         Box::new(move || free_bytes(&dir))
