@@ -5,6 +5,7 @@ use crate::pill;
 use crate::shell::{self, DictState, Session, update_session};
 use flow_core::db::Db;
 use flow_core::dictation::lifecycle::{Launcher, Lifecycle};
+use flow_core::dictation::learner::{self, Note, Observation};
 use flow_core::dictation::remote::{NoServer, Served};
 use flow_core::dictation::retrier::{self, Retrier};
 use flow_core::dictation::rewrite::{self, Live, Plan};
@@ -90,6 +91,13 @@ pub struct Driver {
     database: PathBuf,
     pending_dir: PathBuf,
     credentials: Arc<dyn Credentials>,
+    inserter: Arc<dyn Inserter>,
+    /// The running observation's cancel; the setting, read live by its thread.
+    observing: Option<Arc<AtomicBool>>,
+    learn_corrections: Arc<AtomicBool>,
+    /// The bubble showing, and those waiting for it to end.
+    note: Option<Note>,
+    notes: std::collections::VecDeque<Note>,
     /// The dictation the last rewrite notice is about, for its Retry.
     action: Option<String>,
     retrier_started: bool,
@@ -107,9 +115,9 @@ impl Driver {
         let (publish, events) = channel();
         let running = Arc::new(AtomicBool::new(false));
         let (mic, flag, sender) = (parts.mic.clone(), running.clone(), publish.clone());
-        let (database, pending_dir, credentials) = (parts.database.clone(), parts.pending_dir.clone(), parts.credentials.clone());
+        let (database, pending_dir, credentials, inserter) = (parts.database.clone(), parts.pending_dir.clone(), parts.credentials.clone(), parts.inserter.clone());
         std::thread::Builder::new().name("dictation".into()).spawn(move || serve(parts, keep_loaded, inbox, publish, flag)).expect("the dictation thread starts");
-        Driver { commands, publish: sender, events: Mutex::new(events), database, pending_dir, credentials, action: None, retrier_started: false, mic, running, control: None, model_installed: false, keep_loaded }
+        Driver { commands, publish: sender, events: Mutex::new(events), database, pending_dir, credentials, inserter, observing: None, learn_corrections: Arc::default(), note: None, notes: Default::default(), action: None, retrier_started: false, mic, running, control: None, model_installed: false, keep_loaded }
     }
 
     fn ask(&self, command: impl FnOnce(Sender<bool>) -> Command, limit: Duration) -> bool {
@@ -266,6 +274,9 @@ fn poll(cx: &mut App) {
         update_session(cx, |s| s.shortcut_available = available);
     }
     start_retrier(cx);
+    let learn = cx.global::<Core>().prefs.bool_or("learnCorrections", false);
+    cx.global::<Driver>().learn_corrections.store(learn, SeqCst);
+    next_note(cx);
     let driver = cx.global_mut::<Driver>();
     if installed && !driver.model_installed {
         let _ = driver.commands.send(Command::ModelChanged);
@@ -328,12 +339,75 @@ fn press(cx: &mut App) {
     crate::remote::refresh_if_pending(cx);
     let route = route(cx);
     let control = Arc::new(Control::default());
+    // `learner.cancel`: a new dictation ends the observation and hides the bubble.
+    update_session(cx, |s| s.pill.learned = None);
     let driver = cx.global_mut::<Driver>();
+    if let Some(cancel) = driver.observing.take() {
+        cancel.store(true, SeqCst);
+    }
     driver.running.store(true, SeqCst);
     driver.control = Some(control.clone());
     let _ = driver.commands.send(Command::Begin { control, entries, route });
     // Escape must work from the press, before the thread's first state arrives.
     cx.global::<Core>().services.set_shortcut_session_active(true);
+}
+
+/// `learner.observe` after a confirmed insertion, on its own thread and connection.
+fn observe_insertion(inserted: flow_core::dictation::session::Inserted, cx: &mut App) {
+    let driver = cx.global_mut::<Driver>();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    if let Some(previous) = driver.observing.replace(cancelled.clone()) {
+        previous.store(true, SeqCst);
+    }
+    let (database, reader, publish, setting) = (driver.database.clone(), driver.inserter.clone(), driver.publish.clone(), driver.learn_corrections.clone());
+    if !setting.load(SeqCst) {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("correction-learner".into()).spawn(move || {
+        let Ok(db) = Db::open_or_create(&database) else { return };
+        let mut sink = |note| drop(publish.send(Event::Note(note)));
+        learner::observe(&mut Observation {
+            dictation: &inserted.dictation,
+            inserted: &inserted.text,
+            target: &inserted.target,
+            changes: &inserted.changes,
+            reader: reader.as_ref(),
+            db: &db,
+            enabled: &|| setting.load(SeqCst),
+            cancelled: &cancelled,
+            poll: learner::POLL_INTERVAL,
+            window: learner::OBSERVATION_WINDOW,
+            sink: &mut sink,
+        });
+    });
+}
+
+/// `showRetired`: one bubble at a time, the next when it ends.
+fn next_note(cx: &mut App) {
+    if cx.global::<Session>().pill.learned.is_some() {
+        return;
+    }
+    let driver = cx.global_mut::<Driver>();
+    driver.note = driver.notes.pop_front();
+    match driver.note.clone() {
+        Some(Note::Learned { canonical, .. }) => pill::show_learned(canonical, pill::LearnedKind::Added, cx),
+        Some(Note::Retired { alias, .. }) => pill::show_learned(alias.clone(), pill::LearnedKind::Retired { alias }, cx),
+        _ => {}
+    }
+}
+
+/// PILL-072 and PILL-073, against the app's own connection.
+fn learned_action(command: SessionCommand, cx: &mut App) -> Result<(), Unavailable> {
+    let note = cx.global_mut::<Driver>().note.take();
+    let core = cx.global::<Core>();
+    let db = core.db.as_ref().ok_or(Unavailable("the dictionary"))?;
+    let done = match (command, note) {
+        (SessionCommand::UndoLearned, Some(Note::Learned { entry, .. })) => flow_core::dictionary::delete(db, &entry, None).is_ok(),
+        (SessionCommand::RestoreLearned, Some(Note::Retired { entry, key, .. })) => flow_core::dictionary::restore_key(db, &entry, &key).is_ok(),
+        _ => false,
+    };
+    shell::history_changed(cx);
+    if done { Ok(()) } else { Err(Unavailable("the dictionary")) }
 }
 
 /// `RemoteDictationRouter` and `RewriteCoordinator.routed`, at the press.
@@ -415,7 +489,19 @@ pub fn apply(event: Event, cx: &mut App) {
             pill::show_action(message, can_retry, cx);
         }
         Event::AudioOffered { audio } => offer_audio(audio, cx),
-        Event::Inserted(_) => {}
+        Event::Inserted(inserted) => {
+            if cx.has_global::<Driver>() {
+                observe_insertion(inserted, cx);
+            }
+        }
+        Event::Note(Note::DictionaryChanged) => shell::history_changed(cx),
+        Event::Note(note) => {
+            if cx.has_global::<Driver>() {
+                cx.global_mut::<Driver>().notes.push_back(note);
+                next_note(cx);
+            }
+            shell::history_changed(cx);
+        }
         Event::Microphone(message) => pill::show_microphone(message, cx),
         Event::HistoryChanged => shell::history_changed(cx),
     }
@@ -475,7 +561,7 @@ pub fn session_command(command: SessionCommand, cx: &mut App) -> Result<(), Unav
             });
             Ok(())
         }
-        // The correction learner's Undo and Restore have no owner here yet.
+        command @ (SessionCommand::UndoLearned | SessionCommand::RestoreLearned) => learned_action(command, cx),
         other => cx.global::<Core>().services.session_command(other),
     }
 }
@@ -672,6 +758,45 @@ mod tests {
             let served = route(cx);
             assert!(served.server.is_some() && served.rewrite.channel.is_some(), "approved now: dictation and rewrite both go to the server");
             assert!(served.rewrite.settings.via_channel);
+        });
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // parity: PILL-074
+    #[flow_ui::gpui::test]
+    async fn notes_queue_one_bubble_and_undo_and_restore_change_the_dictionary(cx: &mut TestAppContext) {
+        use flow_core::dictionary::{self, Entry};
+        boot(cx, Mode::Light);
+        let root = std::env::temp_dir().join(format!("flow-driver-notes-{}", std::process::id()));
+        cx.update(|cx| {
+            ensure_session(cx);
+            cx.set_global(Driver::spawn(doubles(&root), false));
+            let db = cx.global::<Core>().db.as_ref().unwrap();
+            let entry = |id: &str, word: &str| Entry { id: id.into(), canonical: word.into(), aliases: vec![], enabled: true, learned_at: Some(1) };
+            dictionary::save(db, &entry("a", "Alpha"), None, "provisional").unwrap();
+            dictionary::save(db, &entry("b", "Beta"), None, "provisional").unwrap();
+            let key = "boost".to_string();
+            db.conn.execute("UPDATE dictionary_key_usage SET state='retired', retired_at=1, retired_from='provisional', reverted=1 WHERE entry_id='b'", []).unwrap();
+
+            apply(Event::Note(Note::Learned { entry: "a".into(), canonical: "Alpha".into() }), cx);
+            apply(Event::Note(Note::Retired { entry: "b".into(), key: key.clone(), alias: "Beta".into() }), cx);
+            assert_eq!(cx.global::<Session>().pill.learned.as_ref().unwrap().word, "Alpha", "the second waits");
+            assert_eq!(cx.global::<Driver>().notes.len(), 1);
+
+            session_command(SessionCommand::UndoLearned, cx).unwrap();
+            let entries = dictionary::load(cx.global::<Core>().db.as_ref().unwrap()).unwrap().entries;
+            assert!(!entries.iter().any(|e| e.id == "a") && entries.iter().any(|e| e.id == "b"), "Undo removes only the learned entry");
+            update_session(cx, |s| s.pill.learned = None);
+            next_note(cx);
+            assert_eq!(cx.global::<Session>().pill.learned.as_ref().unwrap().word, "Beta");
+            assert!(session_command(SessionCommand::UndoLearned, cx).is_err(), "a retired bubble has no Undo");
+
+            apply(Event::Note(Note::Retired { entry: "b".into(), key: key.clone(), alias: "Beta".into() }), cx);
+            update_session(cx, |s| s.pill.learned = None);
+            next_note(cx);
+            session_command(SessionCommand::RestoreLearned, cx).unwrap();
+            let usage = dictionary::usage(cx.global::<Core>().db.as_ref().unwrap()).unwrap();
+            assert_eq!(usage["b"].iter().find(|u| u.key_id == key).unwrap().state, "established");
         });
         let _ = std::fs::remove_dir_all(&root);
     }

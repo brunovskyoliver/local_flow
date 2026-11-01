@@ -37,3 +37,7 @@ The shortcut format stays the Mac's: Windows virtual keys map to Mac key codes a
 - `speech_model_verified` at launch reads a marker file the install leaves in the models folder, not Swift's size-and-date fingerprint. A model installed only by the Swift app downloads or rehashes once on first install. Test rehashes.
 - Meeting pack progress shows the current model's numbers, not the total of the pack.
 - `speech::set_models_dir` holds the folder process-wide, so `Services` signatures and `settings_action` stay as the pages call them.
+
+## Correction learner
+
+Ported with its scorer, classifier and sighting digests in `dictation::learner`; each observation has its own thread and SQLite connection. Word edges use "not alphanumeric, not a mark, not a kept marker" in place of Swift's punctuation-and-symbols sets, and similarity counts `char`s after NFC in place of grapheme clusters. The Mac reads through AX; Windows has no `read_text` yet, so observation stops at its first read there and nothing is learned.

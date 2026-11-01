@@ -663,6 +663,29 @@ impl Inserter for MacInserter {
         let Ok(_attempt) = self.0.attempt.try_lock() else { return InsertOutcome::Uncertain };
         pooled(|| insert::insert_once(&Attempt(&held), text))
     }
+    /// `CapturedTarget.readText`: only while that app is still in front. Selection changes recreate
+    /// the focused element in web views, so a stale one is read through the focus again.
+    fn read_text(&self, target: &CapturedTarget, location: usize, length: usize) -> Result<String, ()> {
+        let held = self.0.held.lock().unwrap().0.get(&target.token).cloned().ok_or(())?;
+        if held.paste || length == 0 || length > 8_192 {
+            return Err(());
+        }
+        pooled(|| {
+            let front = frontmost().ok_or(())?;
+            if front.pid != held.pid || front.launch != Some(held.launch) {
+                return Err(());
+            }
+            let read = |element: &Owned| {
+                let total = number_of_characters(element);
+                if total.is_some_and(|t| t <= location as i64) {
+                    return None;
+                }
+                let clamped = total.map_or(length as i64, |t| (length as i64).min(t - location as i64));
+                string_for_range(element, Span { location: location as i64, length: clamped }).filter(|v| v.len() <= 64 * 1024)
+            };
+            read(&held.element).or_else(|| focused_element().as_ref().and_then(read)).ok_or(())
+        })
+    }
     fn copy(&self, text: &str) {
         pooled(|| {
             write_text(text, false);

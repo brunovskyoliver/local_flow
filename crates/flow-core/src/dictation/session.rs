@@ -298,6 +298,8 @@ pub enum Event {
     AudioOffered { audio: PathBuf },
     /// Confirmed in this field, for the correction learner.
     Inserted(Inserted),
+    /// From the correction learner's thread, on the same channel.
+    Note(super::learner::Note),
 }
 
 /// Text that landed and where.
@@ -2119,8 +2121,29 @@ mod tests {
             let (e, _) = client(&flowd, &flowd.remote);
             e.pair(&token(&flowd)).expect("pairs");
             let enrollment = Arc::new(e);
+            wait_for_worker(&enrollment);
             let pool = Arc::new(Enrollment::pool(&enrollment));
             Server { flowd: Some(flowd), enrollment, pool }
+        }
+
+        /// flowd listens before its supervisor has the worker's `ready`, and refuses dictations until then.
+        fn wait_for_worker(enrollment: &Enrollment) {
+            use crate::remote::channel::ServerMessage;
+            let began = Instant::now();
+            loop {
+                let mut channel = enrollment.session_channel().unwrap();
+                channel.send(json!({"type": "dictation_start", "op": 1, "format": "f32le", "sample_rate": 16_000})).unwrap();
+                match channel.receive().unwrap() {
+                    ServerMessage::Other(m) if m["type"] == "dictation_accepted" => {
+                        channel.send(json!({"type": "dictation_cancel", "op": 1})).unwrap();
+                        // flowd frees the user's one dictation before it answers.
+                        let _ = channel.receive().unwrap();
+                        return;
+                    }
+                    ServerMessage::Error { code } if code == "worker_unavailable" && began.elapsed() < SETTLE => std::thread::sleep(Duration::from_millis(20)),
+                    other => panic!("{other:?}"),
+                }
+            }
         }
 
         fn run(r: &mut Rig, s: &Server, threshold: Duration, local_allowed: bool) -> Snapshot {

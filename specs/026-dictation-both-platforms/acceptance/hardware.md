@@ -38,3 +38,4 @@ Items that need real hardware, a signed install or the owner's screen and microp
 | 32 | Sleep during a remote dictation on a real Mac, then wake and retry | T016, T018 | The audio waits in History and recovers for review | not run |
 | 33 | Speech, meeting and booster install from the real manifest over HTTPS with the real `flowd-speech` next to the app; Downloads rows and Settings progress | T019 | Progress, Verifying, Done; launch after that shows the model verified | not run |
 | 34 | On-device AI install on a packaged, signed Mac app once its bundle carries the MTPLX resources | T019 | Not yet implementable: today the Mac reports missing local AI files | not run |
+| 35 | Mac: learn corrections on; fix a word in TextEdit and a browser field after dictating, twice; Undo and Restore bubbles | Learner | Suggestion first, then "Added to dictionary"; Undo removes it; a reverted learned word retires with Restore | not run |

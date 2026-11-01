@@ -624,6 +624,63 @@ pub fn usage(db: &Db) -> rusqlite::Result<HashMap<String, Vec<KeyUsage>>> {
     Ok(out)
 }
 
+/// `DictionaryUsageStore.classify`: the keys that retired.
+pub fn classify_usage(db: &Db, dictation: &str, outcomes: &[(crate::dictation::normalize::Change, crate::dictation::learner::Outcome)], now: i64) -> rusqlite::Result<Vec<(String, String)>> {
+    use crate::dictation::learner::Outcome;
+    let tx = db.conn.unchecked_transaction()?;
+    let (mut retired, mut changed) = (vec![], false);
+    for (change, outcome) in outcomes {
+        let name = match outcome {
+            Outcome::Kept => "kept",
+            Outcome::Reverted => "reverted",
+            Outcome::Unclassified => "unclassified",
+        };
+        let n = tx.execute("UPDATE dictionary_usage_events SET outcome = ?, at = ? WHERE dictation_id = ? AND entry_id = ? AND key_id = ? AND outcome = 'applied'", params![name, now, dictation, change.entry_id, change.key_id])?;
+        if n == 0 || *outcome == Outcome::Unclassified {
+            continue;
+        }
+        let usage: Option<(String, i64, i64)> = tx.query_row("SELECT state, kept, reverted FROM dictionary_key_usage WHERE entry_id = ? AND key_id = ?", params![change.entry_id, change.key_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).ok();
+        let Some((from, mut kept, mut reverted)) = usage.filter(|u| u.0 != "retired") else { continue };
+        if *outcome == Outcome::Kept {
+            kept += 1;
+        } else {
+            reverted += 1;
+        }
+        let next = next_key_state(&from, kept, reverted);
+        let is_retired = next == "retired";
+        tx.execute("UPDATE dictionary_key_usage SET kept = ?, reverted = ?, state = ?, retired_at = ?, retired_from = ?, notice_shown = 0 WHERE entry_id = ? AND key_id = ?", params![kept, reverted, next, is_retired.then_some(now), is_retired.then_some(from.as_str()), change.entry_id, change.key_id])?;
+        if next != from {
+            changed = true;
+            if is_retired {
+                retired.push((change.entry_id.clone(), change.key_id.clone()));
+            }
+        }
+    }
+    if changed {
+        bump_usage(db)?;
+    }
+    tx.commit()?;
+    Ok(retired)
+}
+
+pub fn mark_notice_shown(db: &Db, entry_id: &str, key: &str) -> rusqlite::Result<()> {
+    db.conn.execute("UPDATE dictionary_key_usage SET notice_shown = 1 WHERE entry_id = ? AND key_id = ?", params![entry_id, key]).map(|_| ())
+}
+
+/// `CorrectionSightingStore.observe`: digests only, never the text. How often it was seen before.
+pub fn observe_sighting(db: &Db, source: &str, replacement: &str, now: i64) -> rusqlite::Result<i64> {
+    if source.len() > 256 || replacement.len() > 256 {
+        return Ok(0);
+    }
+    let source = nfc(source);
+    let hex = sha256_hex(format!("{}:{source}{}", source.len(), nfc(replacement)).as_bytes());
+    let digest: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0)).collect();
+    let previous = db.conn.query_row("SELECT count FROM correction_sightings WHERE digest = ?", [&digest[..]], |r| r.get(0)).unwrap_or(0);
+    db.conn.execute("INSERT INTO correction_sightings (digest, count, last_seen) VALUES (?, 1, ?) ON CONFLICT(digest) DO UPDATE SET count = min(count + 1, 3), last_seen = excluded.last_seen", params![&digest[..], now])?;
+    db.conn.execute("DELETE FROM correction_sightings WHERE digest IN (SELECT digest FROM correction_sightings ORDER BY last_seen DESC, digest LIMIT -1 OFFSET 512)", [])?;
+    Ok(previous)
+}
+
 pub fn restore_key(db: &Db, entry_id: &str, key: &str) -> rusqlite::Result<()> {
     let tx = db.conn.unchecked_transaction()?;
     let n = db.conn.execute("UPDATE dictionary_key_usage SET state = 'established', reverted = 0, retired_at = NULL, retired_from = NULL, notice_shown = 0 WHERE entry_id = ? AND key_id = ? AND state = 'retired'", params![entry_id, key])?;
