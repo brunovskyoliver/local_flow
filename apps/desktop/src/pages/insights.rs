@@ -45,6 +45,14 @@ const BASELINE_ROW: f32 = 2.;
 /// SwiftUI's layout pass. Measured at 2x on the reference: the first row 3 pt, the second 2 pt, the
 /// rest 0. The inventory (INS-077) says square cells, see INS-114; this matches what Swift renders.
 const HEAT_DOT: [f32; 7] = [3., 2., 0., 0., 0., 0., 0.];
+/// The later-weeks chevron's side of the heat map, the same as the weekday labels', so it covers no month.
+const CHEVRON_SIDE: f32 = 34.;
+// What each card's content needs, including its padding; a row that can't give them this many wraps.
+const PACE_MIN: f32 = 190.;
+const FIXES_MIN: f32 = 232.;
+const VOLUME_MIN: f32 = 280.;
+const APPS_MIN: f32 = 340.;
+const STREAK_MIN: f32 = 400.;
 
 pub struct InsightsPage {
     insights: Option<Insights>,
@@ -217,14 +225,17 @@ impl InsightsPage {
 
     fn usage(&self, i: &Insights, cx: &mut Context<Self>) -> Div {
         let pace = insight_card(cx)
+            .min_w(px(PACE_MIN))
             .id("insights.pace")
             .test_support()
             .child(self.stat(i.words_per_minute().map_or("–".to_string(), |w| w.to_string()), "Words per minute", Some(("pace", "Your dictation pace, against typing at 40 words per minute")), cx))
             .child(dial(dial_fraction(i.words_per_minute()), versus_typing(i.words_per_minute()), cx));
         let row = |value: i64, label: &str, id: &str, help: &str, this: &Self, cx: &mut Context<Self>| {
-            h_flex().w_full().justify_between().gap(px(6.)).child(t(format!("{} {label}", grouped(value))).size(14.5).lines(1)).child(this.info(id, help, cx))
+            // Wraps rather than truncating a number; `.minimumScaleFactor` isn't available here.
+            h_flex().w_full().justify_between().gap(px(6.)).child(div().flex_1().min_w_0().child(t(format!("{} {label}", grouped(value))).size(14.5))).child(div().flex_none().child(this.info(id, help, cx)))
         };
         let fixes = insight_card(cx)
+            .min_w(px(FIXES_MIN))
             .id("insights.fixes")
             .test_support()
             .child(self.stat(grouped(i.words_corrected + i.dictionary_fixes), "Fixes made by LocalFlow", None, cx))
@@ -238,6 +249,7 @@ impl InsightsPage {
             );
         let p = pal(cx);
         let volume = insight_card(cx)
+            .min_w(px(VOLUME_MIN))
             .id("insights.volume")
             .test_support()
             .child(self.stat(grouped(i.total_words), "Total words dictated", None, cx))
@@ -256,7 +268,7 @@ impl InsightsPage {
         v_flex()
             .w_full()
             .gap(px(24.))
-            .child(card_row(cx).child(div().flex_1().min_w_0().flex().flex_row().items_stretch().gap(px(24.)).child(pace).child(fixes)).child(div().flex_1().min_w_0().flex().items_stretch().child(volume)))
+            .child(card_row(cx).child(card_row(cx).flex_1().w_auto().min_w(px(PACE_MIN + FIXES_MIN + 24.)).child(pace).child(fixes)).child(volume))
             .child(card_row(cx).child(apps).child(streak))
     }
 
@@ -271,7 +283,7 @@ impl InsightsPage {
     fn apps(&self, i: &Insights, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = pal(cx);
         let compact = cx.global::<Flow>().compact;
-        let mut rows = v_flex().gap(px(16.)).pt(px(26.));
+        let mut rows = v_flex().w_full().gap(px(16.)).pt(px(26.));
         for (n, (cat, count)) in i.category_rows().into_iter().enumerate() {
             let share = i.share(count);
             let (fill, label) = if count == 0 {
@@ -286,7 +298,7 @@ impl InsightsPage {
                 Tip::Note { title: counted(words, "word", "words"), detail: i.top_app_in(cat).map(|a| format!("Most in {}", app_name(a, cx))) }
             });
             let bar = div()
-                .w(px((share * if compact { 150. } else { 300. }).max(35.)))
+                .w_full()
                 .h(px(28.))
                 .flex()
                 .items_center()
@@ -296,16 +308,19 @@ impl InsightsPage {
                 .child(t(format!("{}%", (share * 100.).round() as i64)).font(12., 500.).mono_digits().tracking(0.7).color(label));
             rows = rows.child(
                 h_flex()
+                    .w_full()
                     .gap(px(14.))
-                    .child(div().w(px(24.)).flex().justify_center().child(icon(cat.symbol(), 18., p.ink)))
-                    .child(self.target(format!("insights.bar.{}", cat.label()), tip, bar, cx).test_support())
-                    .child(caps(&format!("{} {}", grouped(count), cat.label()), p.ink, 12.5)),
+                    .child(div().w(px(24.)).flex_none().flex().justify_center().child(icon(cat.symbol(), 18., p.ink)))
+                    .child(grown(share).max_w(px((share * if compact { 150. } else { 300. }).max(35.))).min_w(px(35.)).child(self.target(format!("insights.bar.{}", cat.label()), tip, bar, cx).test_support()))
+                    .child(div().flex_none().child(caps(&format!("{} {}", grouped(count), cat.label()), p.ink, 12.5)))
+                    .child(grown(1. - share)),
             );
         }
         insight_card(cx)
+            .min_w(px(APPS_MIN))
             .id("insights.apps")
             .test_support()
-            .child(h_flex().w_full().justify_between().items_start().gap(px(8.)).child(t("Desktop usage").font(29., 500.).tracking(-0.6).lines(1)).child(div().pt(px(CAPS_ON_HEADING)).child(caps(&format!("Total apps used | {}", i.apps_used), p.ink, 11.5))))
+            .child(h_flex().flex_wrap().w_full().justify_between().items_start().gap(px(8.)).child(div().flex_none().child(t("Desktop usage").font(29., 500.).tracking(-0.6).lines(1))).child(div().flex_none().pt(px(CAPS_ON_HEADING)).child(caps(&format!("Total apps used | {}", i.apps_used), p.ink, 11.5))))
             .child(rows)
     }
 
@@ -327,15 +342,15 @@ impl InsightsPage {
                     cx.notify();
                 }))
         };
-        let mut months = h_flex().w_full().gap(px(8.)).relative().pb(px(14.)).child(div().w(px(34.)).flex_none().flex().items_start().child(chevron("insights.earlierWeeks", "chevron.left", "Earlier weeks", earliest.is_some_and(|e| e < cols[0]), 1, cx)));
+        let mut months = h_flex().w_full().gap(px(8.)).relative().pb(px(14.)).pr(px(CHEVRON_SIDE)).child(div().w(px(34.)).flex_none().flex().items_start().child(chevron("insights.earlierWeeks", "chevron.left", "Earlier weeks", earliest.is_some_and(|e| e < cols[0]), 1, cx)));
         for w in &cols {
             // The label overflows its column, as `.fixedSize()` does in Swift's overlay.
             months = months.child(div().flex_1().min_w_0().h(px(16.)).relative().when_some(month_label(*w), |d, l: String| d.child(div().absolute().left_0().top_0().w(px(30.)).child(t(l).size(11.).color(p.muted)))));
         }
-        months = months.child(div().absolute().right_0().top_0().bg(p.card).child(chevron("insights.laterWeeks", "chevron.right", "Later weeks", self.page > 0, -1, cx)));
+        months = months.child(div().absolute().right_0().top_0().child(chevron("insights.laterWeeks", "chevron.right", "Later weeks", self.page > 0, -1, cx)));
         let mut grid = v_flex().w_full().gap(px(8.)).pt(px(24.)).child(months);
         for wd in 0..7i64 {
-            let mut r = h_flex().w_full().h(px(13.)).gap(px(8.)).child(div().w(px(34.)).flex_none().child(t(weekday_label(wd)).size(11.).color(p.muted)));
+            let mut r = h_flex().w_full().h(px(13.)).gap(px(8.)).pr(px(CHEVRON_SIDE)).child(div().w(px(34.)).flex_none().child(t(weekday_label(wd)).size(11.).color(p.muted)));
             for w in &cols {
                 let day = w + wd;
                 let usage = i.days.get(&day);
@@ -354,27 +369,33 @@ impl InsightsPage {
             grid = grid.child(r);
         }
         let swatch = |c: Hsla| div().size(px(16.)).rounded(px(3.)).bg(c);
-        let mut legend = h_flex().w_full().gap(px(8.)).pt(px(26.)).child(t("More").size(13.).color(p.muted));
+        let word = |w: &'static str| div().flex_none().child(t(w).size(13.).color(p.muted).lines(1));
+        let mut scale = h_flex().flex_none().gap(px(8.)).child(word("More"));
         for c in p.data_scale {
-            legend = legend.child(swatch(c));
+            scale = scale.child(swatch(c));
         }
-        legend = legend
-            .child(t("Less").size(13.).color(p.muted))
-            .child(div().flex_1())
-            .child(div().size(px(16.)).rounded(px(3.)).border(px(1.2)).border_color(p.streak_outline))
-            .child(t("Current streak").size(13.).color(p.muted));
+        let legend = h_flex()
+            .w_full()
+            .flex_wrap()
+            .justify_between()
+            .gap(px(8.))
+            .pt(px(26.))
+            .child(scale.child(word("Less")))
+            .child(h_flex().flex_none().gap(px(8.)).child(div().size(px(16.)).rounded(px(3.)).border(px(1.2)).border_color(p.streak_outline)).child(word("Current streak")));
         insight_card(cx)
+            .min_w(px(STREAK_MIN))
             .id("insights.streak")
             .test_support()
             .child(
                 h_flex()
                     .w_full()
                     .pb(px(BASELINE_ROW))
+                    .flex_wrap()
                     .justify_between()
                     .items_start()
                     .gap(px(8.))
-                    .child(t(format!("{} day streak", streaks.current)).font(29., 500.).tracking(-0.6).lines(1))
-                    .child(div().pt(px(CAPS_ON_HEADING)).child(caps(&format!("Longest streak | {} {}", streaks.longest, if streaks.longest == 1 { "day" } else { "days" }), p.ink, 11.5))),
+                    .child(div().flex_none().child(t(format!("{} day streak", streaks.current)).font(29., 500.).tracking(-0.6).lines(1)))
+                    .child(div().flex_none().pt(px(CAPS_ON_HEADING)).child(caps(&format!("Longest streak | {} {}", streaks.longest, if streaks.longest == 1 { "day" } else { "days" }), p.ink, 11.5))),
             )
             .child(grid)
             .child(legend)
@@ -518,10 +539,17 @@ fn rule(cx: &App) -> Div {
     div().w_full().py(px(17.)).child(div().h(px(1.)).w_full().bg(pal(cx).rule.opacity(0.6)))
 }
 
-/// `cardRow`: side by side with equal heights, stacked in a compact window.
+/// `cardRow`: side by side with equal heights, stacked in a compact window or when the cards' minimum widths don't fit.
 fn card_row(cx: &App) -> Div {
     let compact = cx.global::<Flow>().compact;
-    div().w_full().flex().gap(px(24.)).items_stretch().when(compact, |d| d.flex_col()).when(!compact, |d| d.flex_row())
+    div().w_full().flex().gap(px(24.)).items_stretch().when(compact, |d| d.flex_col()).when(!compact, |d| d.flex_row().flex_wrap())
+}
+
+/// Takes `share` of a row's free space, however wide the row is.
+fn grown(share: f32) -> Div {
+    let mut d = div().flex_basis(px(0.));
+    d.style().flex_grow = Some(share);
+    d
 }
 
 /// The dial runs to 200 words per minute; no pace yet is an empty dial.
@@ -717,6 +745,22 @@ mod tests {
             frame(cx, w);
             assert_saw(&[text]);
         }
+    }
+
+    /// Owner's screenshot: the 88% bar ran into the next card, and the dial out of its own.
+    #[flow_ui::gpui::test]
+    async fn nothing_leaves_its_card_at_the_narrowest_regular_width(cx: &mut TestAppContext) {
+        let w = open(cx);
+        cx.simulate_window_resize(w.into(), size(px(585.), px(1400.)));
+        frame(cx, w);
+        let apps = bounds(cx, w, "insights.apps");
+        for cat in Category::ALL {
+            let bar = bounds(cx, w, &format!("insights.bar.{}", cat.label()));
+            assert!(bar.right() < apps.right(), "{bar:?} {apps:?}");
+        }
+        let (pace, fixes, volume) = (bounds(cx, w, "insights.pace"), bounds(cx, w, "insights.fixes"), bounds(cx, w, "insights.volume"));
+        assert!(pace.size.width >= px(PACE_MIN) && fixes.size.width >= px(FIXES_MIN), "{pace:?} {fixes:?}");
+        assert!(volume.top() >= pace.bottom(), "the third card wraps {pace:?} {fixes:?} {volume:?}");
     }
 
     // parity: INS-071 INS-074

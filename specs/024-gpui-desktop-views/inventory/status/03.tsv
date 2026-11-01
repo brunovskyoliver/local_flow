@@ -132,16 +132,16 @@ SET-130	auto	test:fallback_stepper_label_and_steps
 SET-131	auto	test:fallback_stepper_label_and_steps
 SET-132	recorded	recorded:swift-note; no remote dictation service reads the threshold yet, so the release guard has nothing to guard
 SET-133	auto	test:advanced_fingerprint_row_has_its_id_and_selects
-SET-134	auto	test:default_page_shows_every_section_in_order
-SET-135	auto	test:default_page_shows_every_section_in_order ; service:test uses a stub, real Sparkle not exercised
-SET-136	auto	test:default_page_shows_every_section_in_order ; service:test uses a stub, real Sparkle not exercised
-SET-137	auto	test:updates_variants ; service:test uses a stub, real Sparkle not exercised
-SET-138	auto	test:update_controls_read_and_gate ; test:updates_variants ; service:test uses a stub, real NSWorkspace open URL not exercised
-SET-139	auto	test:updates_variants
-SET-140	auto	test:update_controls_read_and_gate ; test:updates_variants ; service:test uses a stub, real Sparkle not exercised
-SET-141	service	service:Sparkle, Feature 028
-SET-142	auto	test:update_controls_read_and_gate ; test:updates_variants ; service:test uses a stub, real Sparkle not exercised
-SET-143	service	service:Sparkle, Feature 028
+SET-134	recorded	recorded:removed: owner dropped the Updates section, 2026-11-01
+SET-135	recorded	recorded:removed: owner dropped the Updates section, 2026-11-01
+SET-136	recorded	recorded:removed: owner dropped the Updates section, 2026-11-01
+SET-137	recorded	recorded:removed: owner dropped the Updates section, 2026-11-01
+SET-138	recorded	recorded:removed: owner dropped the Updates section, 2026-11-01
+SET-139	recorded	recorded:removed: owner dropped the Updates section, 2026-11-01
+SET-140	recorded	recorded:removed: owner dropped the Updates section, 2026-11-01
+SET-141	recorded	recorded:removed: owner dropped the Updates section, 2026-11-01
+SET-142	recorded	recorded:removed: owner dropped the Updates section, 2026-11-01
+SET-143	recorded	recorded:removed: owner dropped the Updates section, 2026-11-01
 SET-144	service	service:Sparkle, Feature 028
 SET-145	service	service:Sparkle, Feature 028
 SET-146	auto	test:default_page_shows_every_section_in_order

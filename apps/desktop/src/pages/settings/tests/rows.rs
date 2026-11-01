@@ -57,7 +57,7 @@ async fn section_titles_are_14_medium(cx: &mut TestAppContext) {
     let _r = rig(cx, "", |_| {});
     let ink = palette(cx).ink;
     assert_type("General", 14., 500., ink);
-    let s = style("Updates");
+    let s = style("General");
     assert_eq!((s.size, s.weight), (14., 500.));
     let (outer, text) = (bounds(cx, _r.win, "settings.section.General"), bounds(cx, _r.win, "settings.section.General.text"));
     assert_eq!((text.top() - outer.top(), outer.bottom() - text.bottom()), (px(24.), px(8.)), "padding");
@@ -309,26 +309,6 @@ async fn advanced_fingerprint_row_has_its_id_and_selects(cx: &mut TestAppContext
     })
     .unwrap();
     assert_eq!(selected, fp);
-}
-
-// MARK: Updates
-
-// parity: SET-138 SET-140 SET-142
-#[flow_ui::gpui::test]
-async fn update_controls_read_and_gate(cx: &mut TestAppContext) {
-    let r = rig(cx, "", |_| {});
-    assert_eq!(label(cx, r.win, "settings.updateDownloads"), "View Downloads");
-    click(cx, r.win, "settings.updateDownloads");
-    assert!(logged(&r, "open https://github.com/brunovskyoliver/local_flow/releases/latest"));
-    set(cx, r.win, |p, _, _| p.updates = Updates::Sparkle { automatic: true, can_check: false });
-    assert_eq!(label(cx, r.win, "settings.checkForUpdates"), "Check for Updates…");
-    assert_type("Check for Updates…", 13., 500., palette(cx).ink);
-    assert!(disabled(cx, r.win, "settings.checkForUpdates"), "unless canCheck");
-    assert_eq!(label(cx, r.win, "settings.automaticUpdates"), "Check for updates automatically");
-    assert!(checked(cx, r.win, "settings.automaticUpdates"));
-    set(cx, r.win, |p, _, _| p.updates = Updates::Sparkle { automatic: false, can_check: true });
-    assert!(!disabled(cx, r.win, "settings.checkForUpdates"));
-    assert!(!checked(cx, r.win, "settings.automaticUpdates"));
 }
 
 // MARK: General

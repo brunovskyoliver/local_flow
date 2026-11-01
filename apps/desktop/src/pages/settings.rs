@@ -21,13 +21,6 @@ mod tests;
 
 pub(super) use sheets::{ContextKind, Modal};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Updates {
-    Manual,
-    Failed,
-    Sparkle { automatic: bool, can_check: bool },
-}
-
 pub(super) struct Mics {
     pub entries: Vec<core::InputEntry>,
     pub snapshot: InputSnapshot,
@@ -57,7 +50,6 @@ pub struct SettingsPage {
     shortcut_recovery: flow_core::dictation::hotkey::PermissionRecovery,
     pub(super) testing: Option<&'static str>,
     pub(super) test_results: BTreeMap<&'static str, String>,
-    pub(super) updates: Updates,
     pub(super) mics: Option<Mics>,
     pub(super) modal: Option<Modal>,
     apps: std::cell::RefCell<std::collections::HashMap<String, sheets::AppInfo>>,
@@ -201,6 +193,15 @@ impl SettingsPage {
                 TextInputEvent::Change => cx.notify(),
                 _ => {}
             }),
+            {
+                // The session changes many times a second while dictating; only this repaints the Models rows.
+                let mut was = false;
+                cx.observe_global::<crate::shell::Session>(move |_, cx| {
+                    if models::in_meeting(cx) != std::mem::replace(&mut was, models::in_meeting(cx)) {
+                        cx.notify();
+                    }
+                })
+            },
         ];
         // `observeSettingsWhileVisible`: polls while Settings is the selected page. Leaving is seen
         // on the next tick. ponytail: up to 500 ms late, an on-page-change hook when that matters.
@@ -229,7 +230,6 @@ impl SettingsPage {
             shortcut_recovery: Default::default(),
             testing: None,
             test_results: BTreeMap::new(),
-            updates: if cx.global::<Core>().services.can_check_for_updates() { Updates::Sparkle { automatic: false, can_check: true } } else { Updates::Manual },
             mics: None,
             modal: None,
             apps: Default::default(),
@@ -846,46 +846,6 @@ impl SettingsPage {
             .child(row("Meeting language", None, picker("settings.meetingLanguage", "Meeting language", 210., language, &[("Automatic (English/Slovak)", "automatic"), ("Slovak", "slovak"), ("English", "english")], false, cx), cx))
     }
 
-    fn updates_section(&self, cx: &mut Context<Self>) -> Div {
-        match self.updates {
-            Updates::Manual | Updates::Failed => {
-                let reason = (self.updates == Updates::Failed).then(|| "The updater could not start. Reopen LocalFlow to retry.".to_string());
-                let link = prototype_button("settings.updateDownloads", "View Downloads").on_click(cx.listener(|this, _, _, cx| {
-                    if cx.global::<Core>().services.open_url(core::RELEASES_URL).is_err() {
-                        this.error = Some(core::describe(&Failure::Other("flow_platform.Unavailable".into(), 0)));
-                        cx.notify();
-                    }
-                }));
-                group(cx).child(row("Software updates", reason, link, cx))
-            }
-            Updates::Sparkle { automatic, can_check } => group(cx)
-                .child(row(
-                    "Latest version",
-                    None,
-                    prototype_button("settings.checkForUpdates", "Check for Updates…").disabled(!can_check).on_click(cx.listener(|this, _, _, cx| {
-                        if cx.global::<Core>().services.check_for_updates().is_err() {
-                            this.error = Some(core::describe(&Failure::Other("flow_platform.Unavailable".into(), 0)));
-                            cx.notify();
-                        }
-                    })),
-                    cx,
-                ))
-                .child(hairline(cx))
-                .child(row(
-                    "Check automatically",
-                    None,
-                    switch(
-                        "settings.automaticUpdates",
-                        "Check for updates automatically",
-                        automatic,
-                        false,
-                        cx.listener(|this, _: &bool, _, cx| this.run("toggleAutomaticUpdates", cx)),
-                    ),
-                    cx,
-                )),
-        }
-    }
-
     fn microphones(&self, mics: &Mics, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let list = core::mic_list(&mics.entries, &mics.snapshot);
         let muted = pal(cx).muted;
@@ -1246,9 +1206,7 @@ impl Render for SettingsPage {
             .child(div().id("settings.pageTitle").child(t("Settings").font(26., 500.).tracking(-0.4)).test_support())
             .child(Self::section_title("Server"))
             .child(self.server_section(window, cx))
-            .child(Self::section_title("Updates"))
-            .children(self.swift_import_section(cx))
-            .child(self.updates_section(cx))
+            .when_some(self.swift_import_section(cx), |d, section| d.child(Self::section_title("Data")).child(section))
             .child(Self::section_title("General"))
             .child(self.general(cx));
         if let Some(mics) = &self.mics {

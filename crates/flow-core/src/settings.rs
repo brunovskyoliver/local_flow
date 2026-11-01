@@ -22,7 +22,6 @@ pub const REMOTE_KEYS: [&str; 7] =
     ["remote.enabled", "remote.serverURL", "remote.alternateAddresses", "remote.state", "remote.consentVersion", "remote.fallbackThresholdMs", "remote.notice"];
 pub const RETIRED_KEYS: [&str; 4] =
     ["meetingTranscriptionEnabled", "meetingDiarizationEnabled", "settings.meetingSummariesAutomatic", "settings.speakerIdentificationEnabled"];
-pub const RELEASES_URL: &str = "https://github.com/brunovskyoliver/local_flow/releases/latest";
 
 pub const CONSENT_TEXT: &str = "Once approved, dictation and meeting audio and text go to this server.";
 pub const MEETING_CONSENT_TEXT: &str = "Once approved, meeting audio and text go to this server.";
@@ -1122,22 +1121,23 @@ impl Snapshot {
             Runtime::Unloaded => "Unloaded",
         }
     }
-    pub fn meeting_readiness(&self) -> &'static str {
+    /// Installed says nothing: these models only run during a meeting, and only then read as active.
+    pub fn meeting_readiness(&self, in_meeting: bool) -> &'static str {
         if self.meeting_installing {
             "Installing…"
         } else if self.meeting_installed {
-            "Ready"
+            if in_meeting { "Active" } else { "" }
         } else if self.meeting_failed {
             DOWNLOAD_FAILED
         } else {
             "Not installed · 1.63 GB"
         }
     }
-    pub fn speaker_readiness(&self) -> &'static str {
+    pub fn speaker_readiness(&self, in_meeting: bool) -> &'static str {
         if self.speaker_installing {
             "Installing…"
         } else if self.speaker_installed {
-            "Ready"
+            if in_meeting { "Active" } else { "" }
         } else if self.speaker_failed {
             DOWNLOAD_FAILED
         } else {
@@ -2506,23 +2506,24 @@ mod tests {
             s.runtime = r;
             assert_eq!(s.model_readiness(), t);
         }
-        assert_eq!(s.meeting_readiness(), "Not installed · 1.63 GB");
+        assert_eq!(s.meeting_readiness(false), "Not installed · 1.63 GB");
         assert_eq!(s.boost_readiness(), "Not installed · 103 MB");
-        assert_eq!(s.speaker_readiness(), "Not installed");
+        assert_eq!(s.speaker_readiness(false), "Not installed");
         s.meeting_installing = true;
         s.speaker_installing = true;
         s.boost_installing = true;
-        assert_eq!((s.meeting_readiness(), s.speaker_readiness(), s.boost_readiness()), ("Installing…", "Installing…", "Installing…"));
+        assert_eq!((s.meeting_readiness(false), s.speaker_readiness(false), s.boost_readiness()), ("Installing…", "Installing…", "Installing…"));
         s.meeting_installing = false;
         s.speaker_installing = false;
         s.boost_installing = false;
         s.meeting_installed = true;
         s.speaker_installed = true;
         s.boost_installed = true;
-        assert_eq!((s.meeting_readiness(), s.speaker_readiness(), s.boost_readiness()), ("Ready", "Ready", "Ready"));
+        assert_eq!((s.meeting_readiness(false), s.speaker_readiness(false), s.boost_readiness()), ("", "", "Ready"));
+        assert_eq!((s.meeting_readiness(true), s.speaker_readiness(true)), ("Active", "Active"));
         assert!(SPEECH_ATTRIBUTION.starts_with("Moondream"));
         let mut failed = Snapshot { boost_failed: true, meeting_failed: true, speaker_failed: true, ..Snapshot::default() };
-        assert_eq!((failed.meeting_readiness(), failed.speaker_readiness(), failed.boost_readiness()), ("Download failed", "Download failed", "Download failed"));
+        assert_eq!((failed.meeting_readiness(false), failed.speaker_readiness(false), failed.boost_readiness()), ("Download failed", "Download failed", "Download failed"));
         failed.boost_installing = true;
         assert_eq!(failed.boost_readiness(), "Installing…", "a retry replaces the failure");
 

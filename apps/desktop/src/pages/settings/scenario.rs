@@ -103,8 +103,6 @@ pub(super) fn apply_view(page: &mut SettingsPage, window: &mut Window, cx: &mut 
         page.scroll_handle().set_offset(point(px(0.), px(-y)));
     }
     match page.scenario.as_str() {
-        "updates-sparkle" => page.updates = Updates::Sparkle { automatic: true, can_check: true },
-        "updates-failed" => page.updates = Updates::Failed,
         "shortcut-listening" => page.recording = true,
         "advanced" | "custom" => page.server_advanced = true,
         "test-passed" => {

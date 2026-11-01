@@ -234,9 +234,9 @@ fn logged(r: &Rig, s: &str) -> bool {
 #[flow_ui::gpui::test]
 async fn default_page_shows_every_section_in_order(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
-    assert_saw(&["Settings", "Server", "Remote dictation", "Updates", "Software updates", "General", "Shortcut", "fn / Globe", "Appearance", "Learn corrections", "Show meeting progress", "Meeting language", "App context", "Use app context", "Send context to rewrite server", "Turn on Use app context first.", "Match style to the app", "Experimental", "Excluded apps", "10 apps", "App kinds", "Built in", "Models", "Parakeet", "Dictation · Not installed", "Whisper Turbo", "Meetings · Not installed · 1.63 GB", "Speaker labels", "Not installed", "Term booster", "Not installed · 103 MB", "Keep Parakeet loaded", "Rewriting", "Enable rewriting", "Enter a valid http:// or https:// endpoint first.", "Default mode", "Server URL", "Server secret", "Connection", "Advanced", "Summaries", "Permissions needed", "Microphone", "Input Monitoring", "Accessibility"]);
+    assert_saw(&["Settings", "Server", "Remote dictation", "General", "Shortcut", "fn / Globe", "Appearance", "Learn corrections", "Show meeting progress", "Meeting language", "App context", "Use app context", "Send context to rewrite server", "Turn on Use app context first.", "Match style to the app", "Experimental", "Excluded apps", "10 apps", "App kinds", "Built in", "Models", "Parakeet", "Dictation · Not installed", "Whisper Turbo", "Meetings · Not installed · 1.63 GB", "Speaker labels", "Not installed", "Term booster", "Not installed · 103 MB", "Keep Parakeet loaded", "Rewriting", "Enable rewriting", "Enter a valid http:// or https:// endpoint first.", "Default mode", "Server URL", "Server secret", "Connection", "Advanced", "Summaries", "Permissions needed", "Microphone", "Input Monitoring", "Accessibility"]);
     assert!(!saw("Microphones"), "the catalog isn't wired, so the section is absent");
-    for id in ["settings.remoteEnabled", "settings.updateDownloads", "settings.shortcut", "settings.appearance", "settings.learnCorrections", "settings.showsBackgroundProgress", "settings.meetingLanguage", "settings.contextEnabled", "settings.contextRewriteEnabled", "settings.contextStyleEnabled", "settings.contextExclusions", "settings.contextKinds", "settings.speechDownload", "settings.speechImport", "settings.rewriteEnabled", "settings.rewriteDefaultMode", "settings.rewriteTestConnection", "settings.summaryServer", "settings.keepModelReady"] {
+    for id in ["settings.remoteEnabled", "settings.shortcut", "settings.appearance", "settings.learnCorrections", "settings.showsBackgroundProgress", "settings.meetingLanguage", "settings.contextEnabled", "settings.contextRewriteEnabled", "settings.contextStyleEnabled", "settings.contextExclusions", "settings.contextKinds", "settings.speechDownload", "settings.speechImport", "settings.rewriteEnabled", "settings.rewriteDefaultMode", "settings.rewriteTestConnection", "settings.summaryServer", "settings.keepModelReady"] {
         assert!(has(cx, r.win, id), "{id}");
     }
     assert!(disabled(cx, r.win, "settings.contextRewriteEnabled"));
@@ -271,7 +271,7 @@ async fn permissions_list_only_what_is_missing_in_order(cx: &mut TestAppContext)
 async fn sections_stack_in_swifts_order(cx: &mut TestAppContext) {
     let r = rig(cx, "microphones", |_| {});
     let mut last = px(-1.);
-    for title in ["Server", "Updates", "General", "Microphones", "App context", "Models", "Rewriting", "Summaries", "Permissions needed"] {
+    for title in ["Server", "General", "Microphones", "App context", "Models", "Rewriting", "Summaries", "Permissions needed"] {
         let id: &'static str = format!("settings.section.{title}").leak();
         let top = bounds(cx, r.win, id).top();
         assert!(top > last, "{title} sits below the section before it");
@@ -664,23 +664,6 @@ async fn check_connection_when_the_server_is_down(cx: &mut TestAppContext) {
     assert_saw(&["Nothing runs on your server"]);
 }
 
-// parity: SET-137 SET-138 SET-139 SET-140 SET-142
-#[flow_ui::gpui::test]
-async fn updates_variants(cx: &mut TestAppContext) {
-    let r = rig(cx, "", |_| {});
-    click(cx, r.win, "settings.updateDownloads");
-    assert!(logged(&r, &format!("open {}", core::RELEASES_URL)));
-    let r = rig(cx, "updates-failed", |_| {});
-    assert_saw(&["The updater could not start. Reopen LocalFlow to retry."]);
-    let r2 = rig(cx, "updates-sparkle", |_| {});
-    assert_saw(&["Latest version", "Check for Updates…", "Check automatically"]);
-    drop(r);
-    click(cx, r2.win, "settings.checkForUpdates");
-    assert_saw(&["Error type flow_platform.Unavailable, code 0."]);
-    click(cx, r2.win, "settings.automaticUpdates");
-    assert!(logged(&r2, "action toggleAutomaticUpdates"));
-}
-
 // parity: SET-153 SET-154 SET-163 SET-167 SET-169 SET-171 SET-173
 #[flow_ui::gpui::test]
 async fn general_controls_persist(cx: &mut TestAppContext) {
@@ -971,8 +954,19 @@ async fn other_models(cx: &mut TestAppContext) {
     assert_saw(&["Meetings · Installing…", "Installing…", "Installing…"]);
     assert!(!has(cx, r.win, "settings.meetingDownload"));
     let r = rig(cx, "all-installed", |_| {});
-    assert_saw(&["Meetings · Ready", "Ready", "Ready"]);
+    assert_saw(&["Meetings", "Ready"]);
+    assert!(!saw("Meetings · Ready") && !saw("Active"), "installed isn't in use");
     assert!(has(cx, r.win, "settings.test.meeting") && has(cx, r.win, "settings.test.speaker"));
+    use crate::shell::{MeetingState, MeetingStatus, Session, update_session};
+    cx.update(|cx| {
+        let session = Session::new(cx.global::<Core>());
+        cx.set_global(session);
+        update_session(cx, |s| s.meeting = Some(MeetingStatus { id: "m".into(), title: None, state: MeetingState::Recording, elapsed_ms: 0 }));
+    });
+    cx.run_until_parked();
+    assert_saw(&["Meetings · Active", "Active"]);
+    cx.update(|cx| update_session(cx, |s| s.meeting = None));
+    cx.run_until_parked();
     assert!(!has(cx, r.win, "settings.boostDownload"));
     click(cx, r.win, "settings.keepModelReady");
     assert!(logged(&r, "action load"), "installed: loads now");

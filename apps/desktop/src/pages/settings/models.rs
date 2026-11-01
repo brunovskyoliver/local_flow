@@ -3,10 +3,15 @@
 use super::*;
 use flow_core::settings::Service;
 
+pub(super) fn in_meeting(cx: &App) -> bool {
+    cx.try_global::<crate::shell::Session>().and_then(|s| s.meeting.as_ref()).is_some_and(|m| m.state.is_active())
+}
+
 impl SettingsPage {
     /// The optional role, where the work runs once routing applies, and the state.
-    fn detail(&self, role: Option<&str>, service: Service, state: &str, cx: &App) -> String {
-        role.into_iter().chain(core::routing(prefs(cx)).model_place(service)).chain([state]).collect::<Vec<_>>().join(" · ")
+    fn detail(&self, role: Option<&str>, service: Service, state: &str, cx: &App) -> Option<String> {
+        let parts = role.into_iter().chain(core::routing(prefs(cx)).model_place(service)).chain([state]).filter(|p| !p.is_empty()).collect::<Vec<_>>();
+        (!parts.is_empty()).then(|| parts.join(" · "))
     }
 
     pub(super) fn controls_available(&self) -> bool {
@@ -67,7 +72,7 @@ impl SettingsPage {
         }
         let speech_state = s.model_install_error.as_deref().filter(|_| !s.model_installed && !s.installing).unwrap_or(s.model_readiness());
         let speech_detail = self.detail(Some("Dictation"), Service::Dictation, &self.status("speech", speech_state), cx);
-        let mut body = group(cx).child(row(name, Some(speech_detail), controls, cx));
+        let mut body = group(cx).child(row(name, speech_detail, controls, cx));
         if s.installing {
             let label = if s.verifying { "Verifying…" } else { "Downloading…" };
             body = body.child(
@@ -79,7 +84,8 @@ impl SettingsPage {
                     .child(h_flex().w_full().justify_between().child(t(label).size(12.)).child(Self::action("settings.installCancel", "Cancel", "cancelInstall", false, cx))),
             );
         }
-        let whisper_status = self.detail(Some("Meetings"), Service::FinalTranscript, &self.status("meeting", s.meeting_readiness()), cx);
+        let in_meeting = in_meeting(cx);
+        let whisper_status = self.detail(Some("Meetings"), Service::FinalTranscript, &self.status("meeting", s.meeting_readiness(in_meeting)), cx);
         let mut whisper = h_flex().gap(px(8.));
         if !s.meeting_installed && !s.meeting_installing {
             whisper = whisper.child(Self::action("settings.meetingDownload", "Download", "downloadMeetingModel", false, cx)).child(Self::action("settings.meetingImport", "Import…", "importMeetingModel", false, cx));
@@ -87,7 +93,7 @@ impl SettingsPage {
         if s.meeting_installed {
             whisper = whisper.child(self.test_button("meeting", "Whisper Turbo", cx));
         }
-        let speaker_status = self.detail(None, Service::Diarization, &self.status("speaker", s.speaker_readiness()), cx);
+        let speaker_status = self.detail(None, Service::Diarization, &self.status("speaker", s.speaker_readiness(in_meeting)), cx);
         let mut speaker = h_flex().gap(px(8.));
         if !s.speaker_installed && !s.speaker_installing {
             speaker = speaker.child(Self::action("settings.speakerDownload", "Download", "downloadSpeakerModel", false, cx)).child(Self::action("settings.speakerImport", "Import…", "importSpeakerModel", false, cx));
@@ -100,13 +106,13 @@ impl SettingsPage {
         let keep_on = s.keep_model_ready;
         body = body
             .child(hairline(cx))
-            .child(div().id("settings.meetingModel").w_full().child(row("Whisper Turbo", Some(whisper_status), whisper, cx)))
+            .child(div().id("settings.meetingModel").w_full().child(row("Whisper Turbo", whisper_status, whisper, cx)))
             .child(hairline(cx))
-            .child(div().id("settings.speakerModel").w_full().child(row("Speaker labels", Some(speaker_status), speaker, cx)))
+            .child(div().id("settings.speakerModel").w_full().child(row("Speaker labels", speaker_status, speaker, cx)))
             .child(hairline(cx))
             .child(div().id("settings.boostModel").w_full().child(row(
                 "Term booster",
-                Some(booster_detail),
+                booster_detail,
                 div().when(!s.boost_installed && !s.boost_installing, |d| d.child(Self::action("settings.boostDownload", "Download", "downloadBoostModel", false, cx))),
                 cx,
             )))
