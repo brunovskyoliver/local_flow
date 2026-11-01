@@ -20,6 +20,22 @@ ditto build/SpeechWorker/Release/FluidAudio_FluidAudio.bundle "$staging/Contents
 mkdir -p "$staging/Contents/Resources/Models"
 install -m 644 apps/macos/LocalFlow/Resources/Models/parakeet-v3.json apps/macos/LocalFlow/Resources/Models/parakeet-ctc-110m.json \
   apps/macos/LocalFlow/Resources/Models/whisper-large-v3-turbo.json apps/macos/LocalFlow/Resources/Models/speaker-diarization-offline.json "$staging/Contents/Resources/Models/"
+# The on-device AI services, under the labels, folder and ports the Swift app uses: where Swift has set
+# them up the app reuses them, and otherwise it registers these.
+ai="apps/macos/LocalFlow/Resources/LocalAI"
+mkdir -p "$staging/Contents/Resources/LocalAI" "$staging/Contents/Library/LaunchAgents"
+(cd server && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -buildvcs=false -ldflags=-s -o "../$staging/Contents/Helpers/flowd" ./cmd/flowd)
+render() {
+  sed -e "s|@BUNDLE_ID@|org.localflow.LocalFlow|g" -e "s|@DIRECTORY@|LocalFlow|g" -e "s|@EXECUTABLE@|LocalFlow|g" \
+    -e "s|@MTPLX_PORT@|8000|g" -e "s|@FLOWD_PORT@|8080|g" \
+    -e "/AssociatedBundleIdentifiers/,/<\/array>/s|org.localflow.LocalFlow|org.localflow.LocalFlow.rust-dev|" "$1" >"$2"
+  chmod "$3" "$2"
+}
+render "$ai/localflow-mtplx" "$staging/Contents/Resources/LocalAI/localflow-mtplx" 755
+render "$ai/localflow-flowd" "$staging/Contents/Resources/LocalAI/localflow-flowd" 755
+install -m 644 "$ai/mtplx-requirements.txt" "$staging/Contents/Resources/LocalAI/"
+render "$ai/flowd.plist.template" "$staging/Contents/Library/LaunchAgents/org.localflow.LocalFlow.flowd.plist" 644
+render "$ai/mtplx.plist.template" "$staging/Contents/Library/LaunchAgents/org.localflow.LocalFlow.mtplx.plist" 644
 sha="$(git rev-parse --short HEAD)"
 cat > "$staging/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -38,7 +54,7 @@ cat > "$staging/Contents/Info.plist" <<PLIST
 <key>NSMicrophoneUsageDescription</key><string>LocalFlow Dev uses the microphone for local dictation.</string>
 </dict></plist>
 PLIST
-codesign --force --sign - "$staging/Contents/Helpers/flowd-speech" "$staging/Contents/Helpers/FluidAudio_FluidAudio.bundle"
+codesign --force --sign - "$staging/Contents/Helpers/flowd" "$staging/Contents/Helpers/flowd-speech" "$staging/Contents/Helpers/FluidAudio_FluidAudio.bundle"
 codesign --force --sign - "$staging"
 rm -rf "$target"
 ditto "$staging" "$target"

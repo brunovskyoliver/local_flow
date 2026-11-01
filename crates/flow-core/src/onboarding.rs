@@ -927,6 +927,7 @@ pub fn local_ai_ready(prefs: &mut Prefs) {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct LocalAiModel {
     pub id: &'static str,
+    pub revision: &'static str,
     pub name: &'static str,
     pub detail: &'static str,
     pub download_bytes: i64,
@@ -956,11 +957,11 @@ impl LocalAiModel {
 }
 
 pub const CATALOG: [LocalAiModel; 5] = [
-    LocalAiModel { id: "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed", name: "Qwen 3.5 4B Speed", detail: "Fastest rewrites. The model LocalFlow's timeouts are tuned for.", download_bytes: 2_567_456_768, peak_gb: 2.9, minimum_gb: 8 },
-    LocalAiModel { id: "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Quality", name: "Qwen 3.5 4B Quality", detail: "8-bit weights. A little slower, closer to your wording.", download_bytes: 4_576_426_393, peak_gb: 4.8, minimum_gb: 16 },
-    LocalAiModel { id: "Youssofal/Qwen3.5-9B-MTPLX-Optimized-Speed", name: "Qwen 3.5 9B Speed", detail: "Better meeting notes. Rewrites take longer.", download_bytes: 8_695_118_965, peak_gb: 10., minimum_gb: 24 },
-    LocalAiModel { id: "Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed", name: "Bonsai 2 27B", detail: "A 27B model in about 12 GB. Strong notes on mid-size Macs.", download_bytes: 8_847_918_956, peak_gb: 11.8, minimum_gb: 32 },
-    LocalAiModel { id: "Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed", name: "Qwen 3.8 27B Speed", detail: "Highest quality. For Macs with plenty of memory.", download_bytes: 20_703_486_926, peak_gb: 25., minimum_gb: 48 },
+    LocalAiModel { id: "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed", revision: "550153beba237bb1f2f6ccba31ccedfe48ff78ec", name: "Qwen 3.5 4B Speed", detail: "Fastest rewrites. The model LocalFlow's timeouts are tuned for.", download_bytes: 2_567_456_768, peak_gb: 2.9, minimum_gb: 8 },
+    LocalAiModel { id: "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Quality", revision: "a8751cb77ff566ac0eed7620dc9662f581232b84", name: "Qwen 3.5 4B Quality", detail: "8-bit weights. A little slower, closer to your wording.", download_bytes: 4_576_426_393, peak_gb: 4.8, minimum_gb: 16 },
+    LocalAiModel { id: "Youssofal/Qwen3.5-9B-MTPLX-Optimized-Speed", revision: "86c7eb1b9155a45dd70a898743d7acfc13e12b25", name: "Qwen 3.5 9B Speed", detail: "Better meeting notes. Rewrites take longer.", download_bytes: 8_695_118_965, peak_gb: 10., minimum_gb: 24 },
+    LocalAiModel { id: "Youssofal/Ternary-Bonsai-2-27B-MTPLX-Optimized-Speed", revision: "03bd60bb82755f2446f5083426dca9708eb8e0fe", name: "Bonsai 2 27B", detail: "A 27B model in about 12 GB. Strong notes on mid-size Macs.", download_bytes: 8_847_918_956, peak_gb: 11.8, minimum_gb: 32 },
+    LocalAiModel { id: "Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed", revision: "1d5087d2062c02b279180a53e4016cf9cd7a3d7e", name: "Qwen 3.8 27B Speed", detail: "Highest quality. For Macs with plenty of memory.", download_bytes: 20_703_486_926, peak_gb: 25., minimum_gb: 48 },
 ];
 
 /// Default model index: first downloaded and fitting, otherwise the recommended one.

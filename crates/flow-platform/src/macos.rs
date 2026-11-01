@@ -46,6 +46,89 @@ struct Rect {
 
 type Id = *mut std::ffi::c_void;
 
+fn launchctl(args: &[&str]) -> bool {
+    std::process::Command::new("/bin/launchctl").args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
+}
+fn launchd_target(label: &str) -> String {
+    unsafe extern "C" {
+        safe fn getuid() -> u32;
+    }
+    format!("gui/{}/{label}", getuid())
+}
+
+struct LaunchAgents;
+
+impl crate::local_ai::Agents for LaunchAgents {
+    fn loaded(&self, label: &str) -> bool {
+        launchctl(&["print", &launchd_target(label)])
+    }
+    fn kickstart(&self, label: &str, restart: bool) -> bool {
+        let target = launchd_target(label);
+        if restart { launchctl(&["kickstart", "-k", &target]) } else { launchctl(&["kickstart", &target]) }
+    }
+    /// `SMAppService`: the bundle's own plist. Registration isn't proof macOS approved it.
+    fn register(&self, label: &str) -> Result<(), String> {
+        use flow_core::onboarding::{AI_ERROR_APPROVAL, AI_ERROR_REGISTRATION};
+        #[link(name = "ServiceManagement", kind = "framework")]
+        unsafe extern "C" {}
+        const ENABLED: isize = 1;
+        const NEEDS_APPROVAL: isize = 2;
+        let name = std::ffi::CString::new(format!("{label}.plist")).map_err(|_| AI_ERROR_REGISTRATION)?;
+        unsafe {
+            let agent: unsafe extern "C" fn(Id, Id, Id) -> Id = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let service = agent(objc_getClass(c"SMAppService".as_ptr()), sel_registerName(c"agentServiceWithPlistName:".as_ptr()), ns_string(&name));
+            let status = || {
+                let f: unsafe extern "C" fn(Id, Id) -> isize = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+                f(service, sel_registerName(c"status".as_ptr()))
+            };
+            if status() != ENABLED && status() != NEEDS_APPROVAL {
+                let register: unsafe extern "C" fn(Id, Id, *mut Id) -> bool = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+                let mut error: Id = std::ptr::null_mut();
+                register(service, sel_registerName(c"registerAndReturnError:".as_ptr()), &mut error);
+            }
+            match status() {
+                ENABLED => Ok(()),
+                NEEDS_APPROVAL => {
+                    std::process::Command::new("/usr/bin/open").arg("x-apple.systempreferences:com.apple.LoginItems-Settings.extension").spawn().ok();
+                    Err(AI_ERROR_APPROVAL.into())
+                }
+                _ => Err(AI_ERROR_REGISTRATION.into()),
+            }
+        }
+    }
+}
+
+/// macOS's own test for Game Mode: `public.app-category.games` or a `*-games` subcategory.
+fn is_game(info_plist: &std::path::Path) -> bool {
+    plist::Value::from_file(info_plist).ok().and_then(|v| v.into_dictionary()).and_then(|d| d.get("LSApplicationCategoryType").and_then(|c| c.as_string()).map(|c| c.ends_with("games"))).unwrap_or(false)
+}
+
+static MEMORY_PRESSURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A dispatch source for the warning and critical levels, once for the app's life.
+fn watch_memory_pressure() {
+    static WATCH: std::sync::Once = std::sync::Once::new();
+    WATCH.call_once(|| unsafe {
+        unsafe extern "C" {
+            static _dispatch_source_type_memorypressure: u8;
+            fn dispatch_get_global_queue(identifier: isize, flags: usize) -> Id;
+            fn dispatch_source_create(kind: *const u8, handle: usize, mask: usize, queue: Id) -> Id;
+            fn dispatch_source_set_event_handler_f(source: Id, handler: extern "C" fn(*mut std::ffi::c_void));
+            fn dispatch_resume(source: Id);
+        }
+        extern "C" fn pressed(_: *mut std::ffi::c_void) {
+            MEMORY_PRESSURE.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        const WARN: usize = 0x2;
+        const CRITICAL: usize = 0x4;
+        let source = dispatch_source_create(&raw const _dispatch_source_type_memorypressure, 0, WARN | CRITICAL, dispatch_get_global_queue(0, 0));
+        if !source.is_null() {
+            dispatch_source_set_event_handler_f(source, pressed);
+            dispatch_resume(source);
+        }
+    });
+}
+
 #[link(name = "objc")]
 unsafe extern "C" {
     fn objc_msgSend();
@@ -78,6 +161,26 @@ unsafe fn refuse_key_and_main(class: Id) {
     unsafe {
         class_replaceMethod(class, sel_registerName(c"canBecomeKeyWindow".as_ptr()), answers_no, c"c@:".as_ptr());
         class_replaceMethod(class, sel_registerName(c"canBecomeMainWindow".as_ptr()), answers_no, c"c@:".as_ptr());
+    }
+}
+
+#[cfg(test)]
+mod game_tests {
+    #[test]
+    fn a_games_category_counts() {
+        let dir = std::env::temp_dir().join(format!("flow-game-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let info = dir.join("Info.plist");
+        let write = |category: &str| std::fs::write(&info, format!(r#"<?xml version="1.0"?><plist version="1.0"><dict><key>LSApplicationCategoryType</key><string>{category}</string></dict></plist>"#)).unwrap();
+        write("public.app-category.games");
+        assert!(super::is_game(&info));
+        write("public.app-category.action-games");
+        assert!(super::is_game(&info));
+        write("public.app-category.productivity");
+        assert!(!super::is_game(&info));
+        std::fs::remove_file(&info).unwrap();
+        assert!(!super::is_game(&info), "no plist");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
 
@@ -289,14 +392,19 @@ impl Services for Mac {
     fn install_meeting_models(&self) -> Result<(), Unavailable> {
         crate::speech::install(crate::ModelPack::Meeting)
     }
-    /// The installer's first check, `LocalAIRuntime.install`: this app's bundle carries no MTPLX
-    /// requirements or service plists until packaging adds them, so setup ends there, as Swift does.
-    /// Nothing is downloaded and no service is registered. Left: tasks.md T019.
-    fn install_local_ai(&self, _model_id: &str) -> Result<(), Unavailable> {
+    fn install_local_ai(&self, model_id: &str) -> Result<(), Unavailable> {
+        let model = *flow_core::onboarding::CATALOG.iter().find(|m| m.id == model_id).ok_or(Unavailable("this model"))?;
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+        let resources = std::env::current_exe().ok().and_then(|e| Some(e.parent()?.parent()?.join("Resources/LocalAI"))).unwrap_or_default();
+        crate::local_ai::start(crate::local_ai::Install { root: self.app_data_dir().join("LocalFlow/LocalAI"), resources, log: home.join("Library/Logs/LocalFlow/local-ai-setup.log"), model }, LaunchAgents);
         Ok(())
     }
     fn local_ai_phase(&self) -> Option<flow_core::onboarding::AiPhase> {
-        Some(flow_core::onboarding::AiPhase::Failed(flow_core::onboarding::AI_ERROR_MISSING.into()))
+        crate::local_ai::phase()
+    }
+    fn background_services_enabled(&self) -> bool {
+        use crate::local_ai::{Agents, FLOWD_LABEL, MTPLX_LABEL};
+        LaunchAgents.loaded(MTPLX_LABEL) && LaunchAgents.loaded(FLOWD_LABEL)
     }
     fn name(&self) -> &'static str {
         "macos"
@@ -317,11 +425,7 @@ impl Services for Mac {
     fn set_local_model_running(&self, running: bool) {
         let state = self.app_data_dir().join("LocalFlow/LocalAI");
         std::thread::spawn(move || {
-            unsafe extern "C" {
-                safe fn getuid() -> u32;
-            }
-            let target = format!("gui/{}/org.localflow.LocalFlow.mtplx", getuid());
-            let launchctl = |args: &[&str]| std::process::Command::new("/bin/launchctl").args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
+            let target = launchd_target(crate::local_ai::MTPLX_LABEL);
             if !launchctl(&["print", &target]) {
                 return;
             }
@@ -333,6 +437,36 @@ impl Services for Mac {
                 launchctl(&["kill", "SIGTERM", &target]);
             }
         });
+    }
+    fn frontmost_game(&self) -> Option<i32> {
+        let (pid, bundle) = unsafe {
+            let app = send(send(objc_getClass(c"NSWorkspace".as_ptr()), c"sharedWorkspace"), c"frontmostApplication");
+            if app.is_null() {
+                return None;
+            }
+            let pid: unsafe extern "C" fn(Id, Id) -> i32 = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let path = send(send(app, c"bundleURL"), c"path");
+            let text: unsafe extern "C" fn(Id, Id) -> *const std::ffi::c_char = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let bundle = if path.is_null() { None } else { Some(std::ffi::CStr::from_ptr(text(path, sel_registerName(c"UTF8String".as_ptr()))).to_string_lossy().into_owned()) };
+            (pid(app, sel_registerName(c"processIdentifier".as_ptr())), bundle)
+        };
+        // One plist read per app activation, not per tick.
+        static SEEN: std::sync::Mutex<(i32, bool)> = std::sync::Mutex::new((0, false));
+        let mut seen = SEEN.lock().unwrap();
+        if seen.0 != pid {
+            *seen = (pid, bundle.is_some_and(|b| is_game(&PathBuf::from(b).join("Contents/Info.plist"))));
+        }
+        seen.1.then_some(pid)
+    }
+    fn take_memory_pressure(&self) -> bool {
+        watch_memory_pressure();
+        MEMORY_PRESSURE.swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+    fn process_running(&self, pid: i32) -> bool {
+        unsafe extern "C" {
+            safe fn kill(pid: i32, signal: i32) -> i32;
+        }
+        kill(pid, 0) == 0
     }
     fn swift_prefs(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
         let out = std::process::Command::new("/usr/bin/defaults").args(["export", "org.localflow.LocalFlow", "-"]).output().ok().filter(|o| o.status.success())?;

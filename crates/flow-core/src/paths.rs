@@ -9,11 +9,13 @@ pub struct Paths {
     pub root: PathBuf,
     /// The Swift app's data folder when it's on this machine and data isn't redirected.
     pub swift_root: Option<PathBuf>,
+    /// Data isn't redirected, so this app may run the login services. Tests and scenarios may not.
+    pub live: bool,
 }
 
 impl Paths {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Paths { root: root.into(), swift_root: None }
+        Paths { root: root.into(), swift_root: None, live: false }
     }
     /// `LOCALFLOW_DATA_ROOT`, otherwise `folder` in the platform's app data folder.
     pub fn resolve(platform_app_data: PathBuf, folder: &str) -> Self {
@@ -24,6 +26,7 @@ impl Paths {
     }
     /// Finds the Swift app's folder. A redirected data root (tests, scenarios) never touches it.
     pub fn adopt_swift(&mut self, platform_app_data: &Path, folder: Option<&str>, redirected: bool) {
+        self.live = !redirected;
         self.swift_root = folder.filter(|_| !redirected).map(|f| platform_app_data.join(f)).filter(|d| d.is_dir());
     }
     pub fn database(&self) -> PathBuf {

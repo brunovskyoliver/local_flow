@@ -275,18 +275,24 @@ fn poll_forever(cx: &mut App) {
 
 /// The local rewrite model, beside the Swift app only: its service and files live there.
 fn follow_local_model(cx: &mut App) {
-    use flow_core::local_model::{take_wake, wanted};
+    use flow_core::local_model::{take_wake, wanted, Signals};
     let core = cx.global::<Core>();
-    let wanted = core.paths.swift_root.is_some() && wanted(&core.prefs);
     let idle = match server::local_model_idle_unload(&core.prefs) {
         0 => None,
         seconds => Some(Duration::from_secs(seconds as u64)),
     };
-    let busy = cx.global::<Driver>().running.load(SeqCst);
+    let signals = Signals {
+        wanted: core.paths.live && wanted(&core.prefs),
+        idle,
+        game: core.services.frontmost_game().filter(|_| server::bool_pref(&core.prefs, "unloadLocalModelDuringGames")),
+        pressure: core.services.take_memory_pressure(),
+        busy: cx.global::<Driver>().running.load(SeqCst),
+    };
     let now = std::time::Instant::now();
     let woken = take_wake();
+    let game_alive = cx.global::<Driver>().local_model.unloaded_game().is_some_and(|pid| cx.global::<Core>().services.process_running(pid));
     let residency = &mut cx.global_mut::<Driver>().local_model;
-    let change = if woken { residency.wake(wanted, now) } else { residency.tick(wanted, busy, idle, now) };
+    let change = if woken { residency.wake(signals.wanted, now) } else { residency.tick(signals, |_| game_alive, now) };
     if let Some(running) = change {
         cx.global::<Core>().services.set_local_model_running(running);
     }

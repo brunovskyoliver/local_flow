@@ -342,6 +342,17 @@ pub trait Services: 'static {
     }
     /// Starts or stops the Swift app's local rewrite model service, if setup registered it there.
     fn set_local_model_running(&self, _running: bool) {}
+    /// The frontmost app's process, when the app declares a games category.
+    fn frontmost_game(&self) -> Option<i32> {
+        None
+    }
+    /// Memory pressure since the last call.
+    fn take_memory_pressure(&self) -> bool {
+        false
+    }
+    fn process_running(&self, _pid: i32) -> bool {
+        false
+    }
     /// A panel that floats and never becomes key or main, Swift's `level = .floating` and `canBecomeKey` false.
     fn pin_panel(&self, _window: &dyn HasWindowHandle) -> Result<(), Unavailable> {
         Err(Unavailable("panel window traits"))
@@ -412,6 +423,8 @@ pub enum InstallState {
 }
 
 pub mod speech;
+#[cfg(target_os = "macos")]
+mod local_ai;
 #[cfg(target_os = "macos")]
 mod swift_prefs;
 #[cfg(target_os = "macos")]
