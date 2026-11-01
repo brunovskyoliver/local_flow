@@ -295,7 +295,8 @@ fn poll_forever(cx: &mut App) {
             }
             if !event_driven || now < active_until {
                 idle = false;
-                cx.background_executor().timer(POLL).await;
+                // A key event doesn't wait for the tick: on release, the recording stops now.
+                let _ = select(woken.next(), cx.background_executor().timer(POLL)).await;
             } else {
                 if !idle {
                     idle = true;

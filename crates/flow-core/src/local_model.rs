@@ -26,18 +26,24 @@ pub fn wait_until_ready(origin: &str, secret: Option<&str>, limit: Duration, can
     if origin != loopback_endpoint() {
         return;
     }
+    let ready = || rewrite_health(origin, secret).is_ok_and(|h| h.backend.is_some_and(|b| b.state == "ready"));
+    wait_for(ready, wake, limit, cancel);
+}
+
+/// `ready` comes first, so a serving model costs one check and no start request.
+fn wait_for(ready: impl Fn() -> bool, wake: impl Fn(), limit: Duration, cancel: &AtomicBool) {
     let end = Instant::now() + limit;
     let mut polls = 0u32;
     while Instant::now() < end && !cancel.load(SeqCst) {
+        if ready() {
+            return;
+        }
         // launchd ignores a start while the job is still stopping (up to 5 s after SIGTERM), so keep asking.
-        if polls % 4 == 0 {
+        if polls % 20 == 0 {
             wake();
         }
         polls += 1;
-        if rewrite_health(origin, secret).is_ok_and(|h| h.backend.is_some_and(|b| b.state == "ready")) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -130,6 +136,20 @@ mod tests {
         Signals { wanted: true, idle: idle.map(Duration::from_secs), ..Signals::default() }
     }
     const ALIVE: fn(i32) -> bool = |_| true;
+
+    #[test]
+    fn a_ready_model_is_not_woken_and_a_loading_one_is_seen_quickly() {
+        use std::cell::Cell;
+        let (checks, wakes, stop) = (Cell::new(0), Cell::new(0), AtomicBool::new(false));
+        let limit = Duration::from_secs(5);
+        wait_for(|| { checks.set(checks.get() + 1); true }, || wakes.set(wakes.get() + 1), limit, &stop);
+        assert_eq!((checks.get(), wakes.get()), (1, 0));
+        checks.set(0);
+        let began = Instant::now();
+        wait_for(|| { checks.set(checks.get() + 1); checks.get() == 3 }, || wakes.set(wakes.get() + 1), limit, &stop);
+        assert_eq!(wakes.get(), 1, "a model that isn't up is asked for");
+        assert!(began.elapsed() < Duration::from_secs(1), "polled, not slept through");
+    }
 
     #[test]
     fn starts_once_unloads_when_idle_and_a_wake_brings_it_back() {

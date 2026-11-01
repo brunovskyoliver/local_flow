@@ -13,7 +13,7 @@ use crate::settings::InputEntry;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::*};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// Contiguous production windows; `ChunkPlanner`'s other profile is benchmark only.
@@ -326,6 +326,8 @@ pub struct Control {
     cancel: AtomicBool,
     cancel_rewrite: Arc<AtomicBool>,
     rewriting: AtomicBool,
+    /// Wakes capture from its wait the moment the key comes up.
+    stop: (Mutex<()>, Condvar),
 }
 
 impl Control {
@@ -334,6 +336,19 @@ impl Control {
             self.bypass.store(true, SeqCst);
         }
         self.release.store(true, SeqCst);
+        self.notify_stop();
+    }
+    fn notify_stop(&self) {
+        // Taking the lock means a waiter is either past its check or already waiting; none can miss this.
+        drop(self.stop.0.lock().unwrap());
+        self.stop.1.notify_all();
+    }
+    /// Sleeps up to `limit`, or until released or cancelled.
+    fn wait_for_stop(&self, limit: Duration) {
+        let guard = self.stop.0.lock().unwrap();
+        if !self.stopped() {
+            drop(self.stop.1.wait_timeout(guard, limit).unwrap());
+        }
     }
     /// Escape: during a rewrite it stops the rewrite only, and the original text goes in.
     pub fn cancel(&self) {
@@ -341,6 +356,7 @@ impl Control {
             self.cancel_rewrite.store(true, SeqCst);
         } else {
             self.cancel.store(true, SeqCst);
+            self.notify_stop();
         }
     }
     pub fn cancel_rewrite(&self) {
@@ -522,7 +538,7 @@ fn recognize_loop(recognizer: &mut dyn Recognizer, vocabulary: &Vocabulary, mut 
         }
         let waiting_to_retry = retried && !ended;
         if waiting_to_retry || (!ended && recorded < start + WINDOW) {
-            std::thread::sleep(poll);
+            std::thread::park_timeout(poll);
             continue;
         }
         let count = WINDOW.min(recorded - start);
@@ -964,7 +980,11 @@ impl Coordinator {
         let spool_ref = &mut spool;
         let mic = d.mic;
         let (captured, recognition) = std::thread::scope(|scope| {
-            let helper = scope.spawn(move || recognize_loop(recognizer, vocabulary_ref, reader, shared_ref, c, poll));
+            let (finished, helper_done) = std::sync::mpsc::channel::<()>();
+            let helper = scope.spawn(move || {
+                let _finished = finished;
+                recognize_loop(recognizer, vocabulary_ref, reader, shared_ref, c, poll)
+            });
             let captured = self.capture(c, mic, &candidates, spool_ref, shared_ref, stage);
             match &captured {
                 Ok(captured) if !c.cancelled() => {
@@ -974,6 +994,7 @@ impl Coordinator {
                 _ => shared_ref.discard.store(true, SeqCst),
             }
             shared_ref.ended.store(true, SeqCst);
+            helper.thread().unpark();
             let on_server = |shared: &Shared| shared.streaming.load(SeqCst);
             let transcribing = |shared: &Shared| if on_server(shared) { "Transcribing on your server…" } else { "Transcribing locally…" };
             if captured.is_ok() {
@@ -981,12 +1002,12 @@ impl Coordinator {
             }
             // A cancel from here on keeps the windows done so far: the loop reads it between jobs.
             let mut was_on_server = on_server(shared_ref);
-            while !helper.is_finished() {
+            // The sender drops as the helper ends, so this wakes at once.
+            while matches!(helper_done.recv_timeout(poll), Err(std::sync::mpsc::RecvTimeoutError::Timeout)) {
                 if captured.is_ok() && !c.cancelled() && was_on_server != on_server(shared_ref) {
                     was_on_server = on_server(shared_ref);
                     self.set(State::Transcribing, transcribing(shared_ref));
                 }
-                std::thread::sleep(poll);
             }
             (captured, helper.join().expect("the recognition loop doesn't panic"))
         });
@@ -1099,7 +1120,7 @@ impl Coordinator {
                 None
             };
             if reason.is_none() {
-                std::thread::sleep(self.timing.poll);
+                c.wait_for_stop(self.timing.poll);
             }
         }
         let reason = reason.expect("the loop's condition");
@@ -1706,6 +1727,27 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    /// The release path wakes threads rather than waiting out polls: three polls would be 600 ms here.
+    #[test]
+    fn a_release_is_not_held_by_the_poll_interval() {
+        let mut r = rig(vec![Ok(Some(speak(32_000, Then::Idle)))]);
+        r.coordinator.timing.poll = Duration::from_millis(200);
+        let (events, control) = (r.events.clone(), r.control.clone());
+        let releasing = thread::spawn(move || {
+            while !events.lock().unwrap().iter().any(|e| matches!(e, Event::Changed(s) if s.state == State::Recording)) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            thread::sleep(Duration::from_millis(50));
+            control.release(false);
+            Instant::now()
+        });
+        r.run();
+        let done = Instant::now();
+        let released = releasing.join().unwrap();
+        assert_eq!(r.inserter.inserted.lock().unwrap().len(), 1);
+        assert!(done.duration_since(released) < Duration::from_millis(150), "{:?}", done.duration_since(released));
     }
 
     #[test]

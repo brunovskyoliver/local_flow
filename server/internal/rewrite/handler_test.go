@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -244,6 +245,38 @@ func TestProgressThrottled(t *testing.T) {
 		if w.progress[i].Sub(w.progress[i-1]) < 248*time.Millisecond {
 			t.Fatal("progress exceeded rate limit")
 		}
+	}
+}
+
+func TestHealthDoesNotCacheAModelThatIsNotReady(t *testing.T) {
+	var loading atomic.Bool
+	loading.Store(true)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if loading.Load() {
+			w.WriteHeader(503)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"test"}]}`))
+	}))
+	defer upstream.Close()
+	a, err := backend.New(backend.Config{BaseURL: upstream.URL, Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(HandlerConfig{Backend: a})
+	state := func() string {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "/v1/rewrite/health", nil))
+		var v Health
+		_ = json.Unmarshal(w.Body.Bytes(), &v)
+		return v.Backend.State
+	}
+	if got := state(); got != "loading" {
+		t.Fatal(got)
+	}
+	loading.Store(false)
+	if got := state(); got != "ready" {
+		t.Fatal(got)
 	}
 }
 

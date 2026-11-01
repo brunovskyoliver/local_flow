@@ -68,7 +68,8 @@ func (h *Handler) OutputTooLargeCount() uint64 { return h.outputTooLarge.Load() 
 func (h *Handler) backendInfo(ctx context.Context) backend.Info {
 	h.probeMu.Lock()
 	defer h.probeMu.Unlock()
-	if h.probedAt.IsZero() || time.Since(h.probedAt) >= ProbeInterval {
+	// Only a ready answer is cached: a model coming up must be seen as soon as it serves.
+	if h.probe.State != "ready" || time.Since(h.probedAt) >= ProbeInterval {
 		h.probe = h.config.Backend.Probe(ctx)
 		h.probe.Model = BoundIdentity(h.probe.Model)
 		h.probedAt = time.Now()
