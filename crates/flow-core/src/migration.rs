@@ -47,6 +47,18 @@ pub fn import(db: &Db, swift_root: &Path, own_root: &Path) -> Result<Imported, S
     Ok(counts)
 }
 
+/// The single-row totals this database keeps alongside its rows. Copying rows leaves them behind, and
+/// each app's new database already has its own row, so they're counted again.
+const RECOUNT: &str = "UPDATE main.history_usage SET row_count=(SELECT count(*) FROM main.transcriptions),
+    payload_bytes=(SELECT coalesce(sum(length(cast(text AS blob))),0) FROM main.transcriptions)
+     +(SELECT coalesce(sum(length(cast(detail_json AS blob))),0) FROM main.transcription_quality)
+     +(SELECT coalesce(sum(length(cast(input_text AS blob))+length(cast(coalesce(output_text,'') AS blob))),0) FROM main.rewrite_attempts)
+     +(SELECT coalesce(sum(coalesce(length(cast(snapshot_json AS blob)),0)+coalesce(length(cast(pre_spelling_text AS blob)),0)+coalesce(length(cast(spelling_changes_json AS blob)),0)),0) FROM main.dictation_contexts)
+    WHERE id=1;
+  UPDATE main.transcript_usage SET text_bytes=(SELECT coalesce(sum(text_bytes),0) FROM main.meeting_transcriptions),
+    segment_rows=(SELECT count(*) FROM main.transcript_segments) WHERE id=1;
+  UPDATE main.dictionary_usage_state SET revision=revision+1 WHERE id=1;";
+
 /// `file:` URI for a read-only attach; a plain path has no way to say read-only.
 fn read_only_uri(path: &Path) -> String {
     let mut uri = String::from("file:");
@@ -79,6 +91,8 @@ fn merge_rows(db: &Db, source: &Path) -> rusqlite::Result<Imported> {
                 let (quoted, columns) = (format!("\"{}\"", table.replace('"', "\"\"")), shared.join(","));
                 conn.execute(&format!("INSERT OR IGNORE INTO main.{quoted} ({columns}) SELECT {columns} FROM swift.{quoted}"), [])?;
             }
+            conn.execute_batch(RECOUNT)?;
+            crate::dictionary::reseal(db)?;
             let count = |table: &str| conn.query_row(&format!("SELECT count(*) FROM main.{table}"), [], |r| r.get(0));
             Ok(Imported { transcriptions: count("transcriptions")?, meetings: count("meetings")?, files: 0 })
         })();
@@ -215,6 +229,26 @@ mod tests {
         assert_eq!(import(&db, &swift, &own).unwrap().transcriptions, 2, "committed rows, including those still in the WAL");
         drop(source);
         std::fs::remove_dir_all(swift.parent().unwrap()).unwrap();
+    }
+
+    // The real failure: copied spellings under the new database's empty state read as damaged.
+    #[test]
+    fn copied_spellings_load_and_the_totals_match_the_copied_rows() {
+        let (swift, own) = dirs("totals");
+        let source = swift_db(&swift);
+        let entry = crate::dictionary::Entry { id: "e1".into(), canonical: "LocalFlow".into(), aliases: vec!["local flow".into()], enabled: true, learned_at: None };
+        crate::dictionary::save(&source, &entry, None, "established").unwrap();
+        let hash = crate::dictionary::load(&source).unwrap().state.content_hash;
+        drop(source);
+        let db = Db::open_or_create(&own.join("history.sqlite")).unwrap();
+        import(&db, &swift, &own).unwrap();
+        let loaded = crate::dictionary::load(&db).unwrap();
+        assert_eq!((loaded.entries.len(), loaded.state.content_hash.as_str()), (1, hash.as_str()));
+        let rows: i64 = db.conn.query_row("SELECT row_count FROM history_usage", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 1);
+        // A second copy changes nothing in the spellings.
+        import(&db, &swift, &own).unwrap();
+        assert_eq!(crate::dictionary::load(&db).unwrap().state.revision, loaded.state.revision);
     }
 
     #[test]

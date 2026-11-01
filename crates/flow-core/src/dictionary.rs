@@ -454,6 +454,23 @@ fn load_with_table(db: &Db) -> Result<(Contents, KeyTable), VocabError> {
     Ok((Contents { state, entries }, table))
 }
 
+/// Makes the state row describe the rows, after a copy added some. Entries that can't be decoded
+/// leave it alone, so they still read as damaged.
+pub(crate) fn reseal(db: &Db) -> rusqlite::Result<()> {
+    let mut stmt = db.conn.prepare("SELECT id, canonical_text, aliases_json, enabled, learned_at FROM vocabulary_entries")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, bool>(3)?, r.get::<_, Option<i64>>(4)?)))?;
+    let mut entries = vec![];
+    for row in rows {
+        let (id, canonical, aliases, enabled, learned_at) = row?;
+        let Some(aliases) = decode_aliases(&aliases) else { return Ok(()) };
+        entries.push(Entry { id, canonical, aliases, enabled, learned_at });
+    }
+    let bytes = serialize(&entries);
+    let hash = sha256_hex(&bytes);
+    db.conn.execute("UPDATE vocabulary_state SET revision=revision+1, content_hash=?1, payload_bytes=?2 WHERE id=1 AND content_hash<>?1", params![hash, payload_bytes(&bytes)])?;
+    Ok(())
+}
+
 pub fn load(db: &Db) -> Result<Contents, VocabError> {
     load_with_table(db).map(|l| l.0)
 }
