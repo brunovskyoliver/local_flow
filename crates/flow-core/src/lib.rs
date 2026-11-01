@@ -2,6 +2,7 @@
 pub mod capture;
 pub mod db;
 pub mod dictation;
+pub mod local_model;
 pub mod dictionary;
 pub mod history;
 pub mod insights;

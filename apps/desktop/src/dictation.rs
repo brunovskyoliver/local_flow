@@ -65,6 +65,10 @@ fn with_key(plan: &mut Plan, credentials: &dyn Credentials) {
 impl Rewriter for KeyedRewrite {
     fn rewrite(&mut self, id: &str, text: &str, started: &mut dyn FnMut(), cancel: &Arc<AtomicBool>) -> Rewritten {
         with_key(&mut self.live.plan, &*self.credentials);
+        let plan = &self.live.plan;
+        if plan.enabled && plan.channel.is_none() {
+            flow_core::local_model::wait_until_ready(&plan.settings.origin, plan.secret.as_deref(), plan.timeout, cancel);
+        }
         self.live.rewrite(id, text, started, cancel)
     }
 }
@@ -111,6 +115,7 @@ pub struct Driver {
     control: Option<Arc<Control>>,
     model_installed: bool,
     keep_loaded: bool,
+    local_model: flow_core::local_model::Residency,
 }
 impl Global for Driver {}
 
@@ -122,7 +127,7 @@ impl Driver {
         let (mic, flag, sender) = (parts.mic.clone(), running.clone(), publish.clone());
         let (database, pending_dir, credentials, inserter) = (parts.database.clone(), parts.pending_dir.clone(), parts.credentials.clone(), parts.inserter.clone());
         std::thread::Builder::new().name("dictation".into()).spawn(move || serve(parts, keep_loaded, inbox, publish, flag)).expect("the dictation thread starts");
-        Driver { commands, publish: sender, events: Mutex::new(events), database, pending_dir, credentials, inserter, observing: None, learn_corrections: Arc::default(), dictation_served: Arc::default(), note: None, notes: Default::default(), action: None, retrier_started: false, offered: None, installing: false, mic, running, control: None, model_installed: false, keep_loaded }
+        Driver { commands, publish: sender, events: Mutex::new(events), database, pending_dir, credentials, inserter, observing: None, learn_corrections: Arc::default(), dictation_served: Arc::default(), note: None, notes: Default::default(), action: None, retrier_started: false, offered: None, installing: false, mic, running, control: None, model_installed: false, keep_loaded, local_model: Default::default() }
     }
 
     fn ask(&self, command: impl FnOnce(Sender<bool>) -> Command, limit: Duration) -> bool {
@@ -268,7 +273,34 @@ fn poll_forever(cx: &mut App) {
     .detach();
 }
 
+/// The local rewrite model, beside the Swift app only: its service and files live there.
+fn follow_local_model(cx: &mut App) {
+    use flow_core::local_model::{take_wake, wanted};
+    let core = cx.global::<Core>();
+    let wanted = core.paths.swift_root.is_some() && wanted(&core.prefs);
+    let idle = match server::local_model_idle_unload(&core.prefs) {
+        0 => None,
+        seconds => Some(Duration::from_secs(seconds as u64)),
+    };
+    let busy = cx.global::<Driver>().running.load(SeqCst);
+    let now = std::time::Instant::now();
+    let woken = take_wake();
+    let residency = &mut cx.global_mut::<Driver>().local_model;
+    let change = if woken { residency.wake(wanted, now) } else { residency.tick(wanted, busy, idle, now) };
+    if let Some(running) = change {
+        cx.global::<Core>().services.set_local_model_running(running);
+    }
+}
+
+/// `applicationWillTerminate`: the model runs only while the app does.
+pub fn stop_local_model(cx: &mut App) {
+    if cx.has_global::<Driver>() && cx.global_mut::<Driver>().local_model.stop() {
+        cx.global::<Core>().services.set_local_model_running(false);
+    }
+}
+
 fn poll(cx: &mut App) {
+    follow_local_model(cx);
     for event in cx.global::<Core>().services.take_shortcut_events() {
         shortcut(event, cx);
     }
@@ -379,6 +411,8 @@ fn press(cx: &mut App) {
     if driver.running.load(SeqCst) || !may_begin(session.installing, session.model_command, session.model_installed, server_only, driver.mic.authorize()) {
         return;
     }
+    // Recording never waits for it; the rewrite after it does.
+    flow_core::local_model::wake();
     let entries = server::load_inputs(&core.prefs);
     crate::remote::refresh_if_pending(cx);
     let route = route(cx);

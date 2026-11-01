@@ -340,6 +340,8 @@ pub trait Services: 'static {
     fn set_window_identifier(&self, _window: &dyn HasWindowHandle, _identifier: &str) -> Result<(), Unavailable> {
         Err(Unavailable("window identifiers"))
     }
+    /// Starts or stops the Swift app's local rewrite model service, if setup registered it there.
+    fn set_local_model_running(&self, _running: bool) {}
     /// A panel that floats and never becomes key or main, Swift's `level = .floating` and `canBecomeKey` false.
     fn pin_panel(&self, _window: &dyn HasWindowHandle) -> Result<(), Unavailable> {
         Err(Unavailable("panel window traits"))

@@ -123,6 +123,7 @@ pub fn quit(cx: &mut App) {
 
 /// The teardown, in Swift's order. Capture and shortcuts don't exist yet; the services answer for models and the recorder.
 pub fn finish_quit(cx: &mut App) {
+    crate::dictation::stop_local_model(cx);
     update_session(cx, |s| s.quitting = true);
     // Deferred: a Cmd-Q runs inside the window's own dispatch, and the flush needs that window.
     cx.defer(|cx| {

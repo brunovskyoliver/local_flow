@@ -311,6 +311,29 @@ impl Services for Mac {
     fn swift_data_folder(&self) -> Option<&'static str> {
         Some("LocalFlow")
     }
+    /// `LocalAIRuntime.setModelRunning`. The service is the Swift app's: it stops the model once
+    /// `app-pid` isn't a running binary named `LocalFlow`, which is why the Dev bundle's is.
+    /// On its own thread: `launchctl` shouldn't hold up a dictation press.
+    fn set_local_model_running(&self, running: bool) {
+        let state = self.app_data_dir().join("LocalFlow/LocalAI");
+        std::thread::spawn(move || {
+            unsafe extern "C" {
+                safe fn getuid() -> u32;
+            }
+            let target = format!("gui/{}/org.localflow.LocalFlow.mtplx", getuid());
+            let launchctl = |args: &[&str]| std::process::Command::new("/bin/launchctl").args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
+            if !launchctl(&["print", &target]) {
+                return;
+            }
+            if running {
+                if std::fs::write(state.join("app-pid"), std::process::id().to_string()).is_ok() {
+                    launchctl(&["kickstart", &target]);
+                }
+            } else {
+                launchctl(&["kill", "SIGTERM", &target]);
+            }
+        });
+    }
     fn swift_prefs(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
         let out = std::process::Command::new("/usr/bin/defaults").args(["export", "org.localflow.LocalFlow", "-"]).output().ok().filter(|o| o.status.success())?;
         crate::swift_prefs::from_plist(&out.stdout)

@@ -373,6 +373,7 @@ impl HistoryPage {
             self.model.end_rewriting(&dictation);
             return;
         };
+        let origin = settings.origin.clone();
         let cancel = Arc::new(AtomicBool::new(false));
         self.rewrite_cancels.insert(request.attempt.clone(), cancel.clone());
         let channel = settings.via_channel.then(|| cx.global_mut::<Core>().remote().pool.clone());
@@ -383,7 +384,10 @@ impl HistoryPage {
                 .background_spawn(async move {
                     match channel {
                         Some(pool) => flow_core::history::send_rewrite_over_channel(&pool, &sent, timeout, &cancel),
-                        None => send_rewrite(&sent, secret.as_deref(), timeout, cancel),
+                        None => {
+                            flow_core::local_model::wait_until_ready(&origin, secret.as_deref(), timeout, &cancel);
+                            send_rewrite(&sent, secret.as_deref(), timeout, cancel)
+                        }
                     }
                 })
                 .await;

@@ -22,6 +22,7 @@ The owner dropped provider sign-in: a client needs a pairing token and a URL it 
 - `http://` stays limited to private and Tailscale addresses (FR-012a). A public address needs `https://`.
 - After a copy, each app has its own data; a change in one reaches the other only through another copy, and only from Swift to Rust.
 - Removing a model in one app doesn't remove it from the other, and the disk space comes back only once both have removed it. A model the Rust client removes returns at its next launch while Swift still has it. A model the Rust client downloads isn't visible to Swift.
+- The Rust client starts and stops the Swift app's local rewrite model service (`org.localflow.LocalFlow.mtplx`) as Swift does, and writes Swift's `LocalAI/app-pid`, the one write into that folder. Its binary is named `LocalFlow` so the service's check accepts it. With both apps open, whichever stops the model last wins until the other's next dictation. It doesn't yet follow games or memory pressure, or install the model.
 - Both apps must not listen to one shortcut at once.
 - The `plist` crate (MIT) joins the Mac build, to read the settings export.
 

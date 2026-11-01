@@ -13,7 +13,7 @@ xcodebuild -quiet -project apps/macos/LocalFlow.xcodeproj -target flowd-speech -
 
 rm -rf "$staging"
 mkdir -p "$staging/Contents/MacOS" "$staging/Contents/Helpers"
-install -m 755 build/rust/release/localflow "$staging/Contents/MacOS/LocalFlow Dev"
+install -m 755 build/rust/release/localflow "$staging/Contents/MacOS/LocalFlow"
 install -m 755 build/SpeechWorker/Release/flowd-speech "$staging/Contents/Helpers/flowd-speech"
 ditto build/SpeechWorker/Release/FluidAudio_FluidAudio.bundle "$staging/Contents/Helpers/FluidAudio_FluidAudio.bundle"
 # The pinned descriptors the worker is pointed at. Code signing refuses them in Helpers.
@@ -27,7 +27,7 @@ cat > "$staging/Contents/Info.plist" <<PLIST
 <plist version="1.0"><dict>
 <key>CFBundleName</key><string>LocalFlow Dev</string>
 <key>CFBundleDisplayName</key><string>LocalFlow Dev</string>
-<key>CFBundleExecutable</key><string>LocalFlow Dev</string>
+<key>CFBundleExecutable</key><string>LocalFlow</string>
 <key>CFBundleIdentifier</key><string>org.localflow.LocalFlow.rust-dev</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.0.0-dev</string>
