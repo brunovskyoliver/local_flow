@@ -63,11 +63,8 @@ Not run, needs the owner or hardware:
 - A real pill and insertion panel on screen: non-key behaviour, level, clicks and hover (PILL-011, 012, SHELL-157)
 - Tiling on the final commit
 
-Needs later features, so it doesn't work yet:
-- Model lifecycle (SET-243, 250, 251, 255, 259, 265, 268, 281, 286)
-- Keychain removal and the channel pool (ONB-107): the Turn Off path makes the calls, but on a real Mac nothing is deleted yet
-- Shortcut capture, dictation sessions and installer outcomes, so a real onboarding test run can't succeed yet
-- The capture worker behind live meetings
-- Token pairing and server mode (Feature 027), Swift only so far: the Rust client gets pairing after 025 and 026
+Update 2026-11-01: Features 025 and 026 built Keychain removal, the channel pool, enrollment and token pairing, shortcut capture, dictation sessions and model install outcomes, in code and tests, not on real hardware. See `specs/025-windows-meeting-notes/progress.md` and `specs/026-dictation-both-platforms/progress.md`.
+
+Still needs later features: Mac meeting capture and playback, Sparkle, on-device AI install, server mode in Rust (Feature 028), and local meetings on Windows (Feature 029). The status files name the owner of each row.
 
 Owner decision: Rust keeps showing the review straight away from the History detail sheet, where Swift holds it until the sheet closes (HIST-184).
