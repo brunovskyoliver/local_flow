@@ -98,6 +98,28 @@ fn merge_rows(db: &Db, source: &Path) -> rusqlite::Result<Imported> {
     merged
 }
 
+/// Adds each model the Swift app has and this folder lacks, under a temporary name until it's whole.
+/// APFS clones share their blocks, so this takes no second copy of the space. Dot-names are locks,
+/// fingerprints and the Swift app's unfinished downloads. The worker still hashes what lands here.
+pub fn clone_models(from: &Path, to: &Path) -> std::io::Result<u64> {
+    let Ok(entries) = std::fs::read_dir(from) else { return Ok(0) };
+    let mut cloned = 0;
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let target = to.join(&name);
+        if !entry.file_type()?.is_dir() || name.to_string_lossy().starts_with('.') || target.exists() {
+            continue;
+        }
+        let stage = to.join(format!(".{}.cloning", name.to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&stage);
+        copy_files(&entry.path(), &stage)?;
+        std::fs::rename(&stage, &target)?;
+        cloned += 1;
+    }
+    Ok(cloned)
+}
+
 /// `fs::copy` clones on APFS, so meeting audio takes no second copy of its space on the Mac's own disk.
 fn copy_files(from: &Path, to: &Path) -> std::io::Result<u64> {
     let Ok(entries) = std::fs::read_dir(from) else { return Ok(0) };
@@ -192,6 +214,28 @@ mod tests {
         assert_eq!(import(&db, &swift, &own).unwrap().transcriptions, 2, "committed rows, including those still in the WAL");
         drop(source);
         std::fs::remove_dir_all(swift.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn clone_models_adds_finished_models_and_leaves_the_source() {
+        let (swift, own) = dirs("clone");
+        let (from, to) = (swift.join("Models"), own.join("Models"));
+        std::fs::create_dir_all(from.join("m/Inner.mlmodelc")).unwrap();
+        std::fs::create_dir_all(from.join(".m2.staging")).unwrap();
+        std::fs::write(from.join("m/Inner.mlmodelc/weights"), b"abc").unwrap();
+        std::fs::write(from.join(".m.import.lock"), b"").unwrap();
+        // A crash left half a clone; the next launch starts it over.
+        std::fs::create_dir_all(to.join(".m.cloning")).unwrap();
+        std::fs::write(to.join(".m.cloning/stale"), b"x").unwrap();
+        assert_eq!(clone_models(&from, &to).unwrap(), 1);
+        assert_eq!(std::fs::read(to.join("m/Inner.mlmodelc/weights")).unwrap(), b"abc");
+        let names: Vec<_> = std::fs::read_dir(&to).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, ["m"]);
+        // What this app already has stays as it is.
+        std::fs::write(to.join("m/own"), b"y").unwrap();
+        assert_eq!(clone_models(&from, &to).unwrap(), 0);
+        assert!(to.join("m/own").exists());
+        assert!(from.join("m/Inner.mlmodelc/weights").exists());
     }
 
     #[test]

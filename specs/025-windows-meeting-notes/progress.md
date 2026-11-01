@@ -59,5 +59,5 @@ All made by the agent under the owner's standing instruction: no gates, nothing 
 - **Sign-in removed** from the Rust client (ADR 0038, constitution 6.0.0). A device joins with a pairing token and one or more URLs. Inventory rows for the removed UI are `recorded` with a `removed:` note.
 - **Several addresses:** tried last-working first; failover only when an address can't be reached.
 - **Listener:** the install script binds `0.0.0.0:8090`. No running server was changed.
-- **Swift coexistence:** first-launch copy from the Swift app, `Copy Again` in Settings, shared `Models`. Tested on fixture databases and temporary folders, never on the owner's data. `scripts/run-rust-desktop.sh` builds and runs; T025 is met only for that script, not for a packaged bundle.
+- **Swift coexistence:** first-launch copy from the Swift app, `Copy Again` in Settings, cloned `Models`. The copy was tested read-only on the owner's data into a temporary folder. `scripts/install-rust-dev-app.sh` builds an ad-hoc signed `/Applications/LocalFlow Dev.app`; T025 is met only for that local build, not for a distributed one.
 - Implementation: committed locally. Merge and deployment: not done.

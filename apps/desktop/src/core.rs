@@ -44,6 +44,10 @@ impl Core {
             (Ok(db), Some(swift)) => flow_core::migration::first_launch(db, &mut prefs, swift, &paths.root, services.swift_prefs()).map(|r| r.map(|i| i.summary())),
             _ => None,
         };
+        if let (Some(_), Some(swift)) = (&instance_lock, &paths.swift_root) {
+            // On failure the model reads as not installed and the app offers its download.
+            let _ = flow_core::migration::clone_models(&swift.join("Models"), &paths.models());
+        }
         let (db, db_error) = match stores {
             Ok(db) => (Some(db), None),
             Err(e) => (None, Some(e)),

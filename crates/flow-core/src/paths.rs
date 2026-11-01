@@ -38,10 +38,10 @@ impl Paths {
     pub fn temporary_audio(&self) -> PathBuf {
         self.root.join("TemporaryAudio")
     }
-    /// One copy per machine: beside the Swift app, its folder serves both. Same layout, same pinned
-    /// hashes, and whatever either app downloads the other finds.
+    /// This app's own, always: the running Swift app holds each model's import lock in its folder
+    /// for its whole life. `migration::clone_models` fills this one without a second copy on disk.
     pub fn models(&self) -> PathBuf {
-        self.swift_root.as_ref().unwrap_or(&self.root).join("Models")
+        self.root.join("Models")
     }
 }
 
@@ -143,17 +143,13 @@ mod tests {
     }
 
     #[test]
-    fn models_are_shared_only_with_a_swift_folder() {
+    fn models_stay_in_this_apps_folder_beside_swift() {
         let app_data = temp("share");
         std::fs::create_dir_all(app_data.join("LocalFlow")).unwrap();
         let mut p = Paths::new("/r");
         p.adopt_swift(&app_data, Some("LocalFlow"), false);
-        assert_eq!(p.models(), app_data.join("LocalFlow/Models"));
-        for (folder, redirected) in [(Some("Missing"), false), (None, false), (Some("LocalFlow"), true)] {
-            let mut p = Paths::new("/r");
-            p.adopt_swift(&app_data, folder, redirected);
-            assert_eq!(p.models(), PathBuf::from("/r/Models"));
-        }
+        assert_eq!(p.swift_root, Some(app_data.join("LocalFlow")));
+        assert_eq!(p.models(), PathBuf::from("/r/Models"));
         std::fs::remove_dir_all(app_data).unwrap();
     }
 

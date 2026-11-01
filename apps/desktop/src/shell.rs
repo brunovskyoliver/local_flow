@@ -331,7 +331,7 @@ pub fn start(cx: &mut App) {
     cx.global_mut::<Core>().reconcile_meetings();
     let models = cx.global::<Core>().paths.models();
     flow_platform::speech::set_models_dir(models.clone());
-    // Models the Swift app downloaded have no marker yet. Rehashing them downloads only what's missing.
+    // Models cloned from the Swift app have no marker yet. Rehashing them downloads only what's missing.
     if cx.global::<Core>().paths.swift_root.is_some() {
         for (pack, folder) in [(flow_platform::ModelPack::Speech, "parakeet-v3"), (flow_platform::ModelPack::Meeting, "whisper-large-v3-turbo")] {
             if models.join(folder).is_dir() && cx.global::<Core>().services.install_state(pack) == flow_platform::InstallState::Idle {
