@@ -333,11 +333,19 @@ pub fn start(cx: &mut App) {
     flow_platform::speech::set_models_dir(models.clone());
     // Models cloned from the Swift app have no marker yet. Rehashing them downloads only what's missing.
     if cx.global::<Core>().paths.swift_root.is_some() {
-        for (pack, folder) in [(flow_platform::ModelPack::Speech, "parakeet-v3"), (flow_platform::ModelPack::Meeting, "whisper-large-v3-turbo")] {
-            if models.join(folder).is_dir() && cx.global::<Core>().services.install_state(pack) == flow_platform::InstallState::Idle {
-                let _ = flow_platform::speech::install(pack);
+        let models = models.clone();
+        // One at a time: both packs take parakeet-v3's lock, and the loser fails.
+        std::thread::spawn(move || {
+            use flow_platform::{InstallState, ModelPack, speech};
+            for (pack, folder) in [(ModelPack::Speech, "parakeet-v3"), (ModelPack::Meeting, "whisper-large-v3-turbo")] {
+                if models.join(folder).is_dir() && speech::install_state(pack) == InstallState::Idle {
+                    let _ = speech::install(pack);
+                    while matches!(speech::install_state(pack), InstallState::Running(..)) {
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    }
+                }
             }
-        }
+        });
     }
     let verified = cx.global::<Core>().services.speech_model_verified();
     let (reconciled, stores) = (cx.global::<Core>().reconciled, cx.global::<Core>().db.is_some());
