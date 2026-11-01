@@ -284,7 +284,7 @@ fn follow_local_model(cx: &mut App) {
     let signals = Signals {
         wanted: core.paths.live && wanted(&core.prefs),
         idle,
-        game: core.services.frontmost_game().filter(|_| server::bool_pref(&core.prefs, "unloadLocalModelDuringGames")),
+        game: frontmost_game_throttled(cx).filter(|_| server::bool_pref(&core.prefs, "unloadLocalModelDuringGames")),
         pressure: core.services.take_memory_pressure(),
         busy: cx.global::<Driver>().running.load(SeqCst) || core.analysis.as_ref().is_some_and(|a| a.busy()),
     };
@@ -296,6 +296,19 @@ fn follow_local_model(cx: &mut App) {
     if let Some(running) = change {
         cx.global::<Core>().services.set_local_model_running(running);
     }
+}
+
+/// The frontmost-app lookup is a LaunchServices round trip; at the 25 Hz poll it cost about 1% CPU at idle.
+fn frontmost_game_throttled(cx: &App) -> Option<i32> {
+    use std::{cell::Cell, time::Instant};
+    thread_local!(static LAST: Cell<Option<(Instant, Option<i32>)>> = const { Cell::new(None) });
+    let now = Instant::now();
+    if let Some((_, game)) = LAST.get().filter(|(at, _)| now.duration_since(*at) < Duration::from_secs(1)) {
+        return game;
+    }
+    let game = cx.global::<Core>().services.frontmost_game();
+    LAST.set(Some((now, game)));
+    game
 }
 
 /// `applicationWillTerminate`: the model runs only while the app does.
