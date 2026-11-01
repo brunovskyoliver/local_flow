@@ -1,6 +1,7 @@
 //! `TextInsertionService` and `UnicodeTextDelivery`: the decisions of one insertion attempt, over a
 //! target only the platform can touch. Field text passes through here and is never logged.
 use super::session::InsertOutcome;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub const MAX_TEXT_BYTES: usize = 64 * 1024;
@@ -40,6 +41,72 @@ pub trait Target {
     fn post(&self, chunk: &str) -> bool;
     /// One read of what the caret says was just delivered, `len` UTF-16 units.
     fn read_back(&self, units: i64) -> Result<String, Issue>;
+}
+
+/// The clipboard from before a paste until it's put back, one at a time. A second paste before the
+/// first's restore keeps the original, since the clipboard then holds only the first transcript.
+/// The closures run under the lock, so a restore and a new paste can't overlap. `count` is the
+/// pasteboard change count or clipboard sequence number.
+pub struct PendingRestore<S>(Mutex<RestoreState<S>>);
+
+struct RestoreState<S> {
+    snapshot: Option<S>,
+    written: i64,
+    /// Bumped by each paste, so only the newest paste's timer restores.
+    generation: u64,
+}
+
+impl<S> PendingRestore<S> {
+    pub const fn new() -> PendingRestore<S> {
+        PendingRestore(Mutex::new(RestoreState { snapshot: None, written: 0, generation: 0 }))
+    }
+    /// Before writing a transcript. False: there's no snapshot, so skip the paste. A clipboard that
+    /// changed since the last transcript is the user's own copy and replaces the older snapshot.
+    pub fn prepare(&self, count: i64, take: impl FnOnce() -> Option<S>) -> bool {
+        let mut state = self.0.lock().unwrap();
+        state.generation += 1;
+        if state.snapshot.is_none() || state.written != count {
+            state.snapshot = take();
+        }
+        state.snapshot.is_some()
+    }
+    /// After writing. Returns what to hand `settle` when the delay ends.
+    pub fn written(&self, count: i64) -> u64 {
+        let mut state = self.0.lock().unwrap();
+        state.written = count;
+        state.generation += 1;
+        state.generation
+    }
+    /// The paste didn't happen: put it back now.
+    pub fn undo(&self, restore: impl FnOnce(S)) {
+        if let Some(snapshot) = self.0.lock().unwrap().snapshot.take() {
+            restore(snapshot);
+        }
+    }
+    /// The delay ended. A later paste owns the snapshot by then; a later copy by the user wins.
+    pub fn settle(&self, generation: u64, count: i64, restore: impl FnOnce(S)) {
+        let mut state = self.0.lock().unwrap();
+        if state.generation == generation {
+            let written = state.written;
+            if let Some(snapshot) = state.snapshot.take().filter(|_| written == count) {
+                restore(snapshot);
+            }
+        }
+    }
+    /// Quit: nothing runs later, so whatever is pending goes back now.
+    pub fn flush(&self, count: i64, restore: impl FnOnce(S)) {
+        let generation = self.0.lock().unwrap().generation;
+        self.settle(generation, count, restore);
+    }
+}
+
+/// `CapturedTarget.readText`'s guard, for the correction learner. Never a password field, and a stale
+/// element falls back to what has focus only inside the captured window.
+pub fn read_guarded<E>(held: &E, focused: impl FnOnce() -> Option<E>, secure: impl Fn(&E) -> bool, in_window: impl FnOnce(&E) -> bool, read: impl Fn(&E) -> Option<String>) -> Option<String> {
+    if secure(held) {
+        return None;
+    }
+    read(held).or_else(|| focused().filter(|e| !secure(e) && in_window(e)).and_then(|e| read(&e)))
 }
 
 /// A range in UTF-16 units.
@@ -330,6 +397,61 @@ mod tests {
         assert_eq!(parts.concat(), text);
         assert_eq!(parts.len(), 3);
         assert!(chunks("").is_empty() && chunks(&"x".repeat(MAX_TEXT_BYTES + 1)).is_empty());
+    }
+
+    #[test]
+    fn a_second_paste_keeps_the_original_clipboard() {
+        let pending = PendingRestore::new();
+        assert!(pending.prepare(10, || Some("the user's")));
+        let first = pending.written(11);
+        assert!(pending.prepare(11, || panic!("that's only the first transcript")));
+        let second = pending.written(12);
+        let mut restored = vec![];
+        pending.settle(first, 12, |_| panic!("the second paste owns the delay now"));
+        pending.settle(second, 12, |s| restored.push(s));
+        assert_eq!(restored, ["the user's"]);
+        pending.settle(second, 12, |_| panic!("once"));
+    }
+
+    #[test]
+    fn a_users_copy_wins_over_a_pending_restore() {
+        let pending = PendingRestore::new();
+        assert!(pending.prepare(10, || Some("old")));
+        let first = pending.written(11);
+        pending.settle(first, 12, |_| panic!("they copied after the paste"));
+        assert!(pending.prepare(1, || Some("old")));
+        pending.written(2);
+        assert!(pending.prepare(3, || Some("copied between pastes")), "not the transcript, so it's snapped");
+        let mut restored = vec![];
+        pending.undo(|s| restored.push(s));
+        assert_eq!(restored, ["copied between pastes"]);
+        assert!(!pending.prepare(4, || None), "too large to snapshot: no paste");
+    }
+
+    #[test]
+    fn quit_flushes_a_pending_restore_unless_the_user_copied() {
+        let pending = PendingRestore::new();
+        pending.flush(0, |_: &str| panic!("nothing pending"));
+        assert!(pending.prepare(10, || Some("kept")));
+        pending.written(11);
+        let mut restored = vec![];
+        pending.flush(11, |s| restored.push(s));
+        assert_eq!(restored, ["kept"]);
+        assert!(pending.prepare(10, || Some("kept")));
+        pending.written(11);
+        pending.flush(12, |_| panic!("the user copied"));
+    }
+
+    #[test]
+    fn the_learners_read_refuses_password_fields_and_other_windows() {
+        let read = |e: &&str| Some(format!("text of {e}"));
+        let none = || -> Option<&str> { panic!("no fallback") };
+        assert_eq!(read_guarded(&"held", none, |_| false, |_| true, read).as_deref(), Some("text of held"));
+        assert_eq!(read_guarded(&"held", none, |e| *e == "held", |_| true, read), None, "the held field became secure");
+        let stale = |e: &&str| (*e != "held").then(|| format!("text of {e}"));
+        assert_eq!(read_guarded(&"held", || Some("focused"), |_| false, |e| *e == "focused", stale).as_deref(), Some("text of focused"));
+        assert_eq!(read_guarded(&"held", || Some("focused"), |_| false, |_| false, stale), None, "focus left the window");
+        assert_eq!(read_guarded(&"held", || Some("focused"), |e| *e == "focused", |_| true, stale), None, "focus is on a password field");
     }
 
     #[test]

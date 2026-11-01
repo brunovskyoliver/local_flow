@@ -1,7 +1,7 @@
 //! `SystemTextAccessibilityAdapter` over ApplicationServices. The decisions are in
 //! `flow_core::dictation::insert`; this file only touches AX, CGEvent and the pasteboard. Field text
 //! stays in memory for the attempt and nothing here logs.
-use flow_core::dictation::insert::{self, Dispatch, Issue, Span, Target};
+use flow_core::dictation::insert::{self, Dispatch, Issue, PendingRestore, Span, Target};
 use flow_core::dictation::session::{CapturedTarget, InsertDelivery, InsertOutcome, Inserter};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString, c_char, c_void};
@@ -366,6 +366,9 @@ impl Snapshot {
     }
 }
 
+/// The pasteboard waiting to go back. One app, one pasteboard, so one of these.
+static PENDING: PendingRestore<Snapshot> = PendingRestore::new();
+
 unsafe fn new_item() -> Id {
     // SAFETY: alloc, init, autorelease is the ordinary new object.
     unsafe { send(send(send(class(c"NSPasteboardItem"), c"alloc"), c"init"), c"autorelease") }
@@ -564,16 +567,18 @@ impl Target for Attempt<'_> {
         self.0.paste
     }
     fn paste(&self, text: &str) -> Dispatch {
-        let Some(saved) = Snapshot::take() else { return Dispatch::NoMutation };
-        if !write_text(text, true) {
-            saved.restore();
+        if !PENDING.prepare(change_count(), Snapshot::take) {
             return Dispatch::NoMutation;
         }
-        let written = change_count();
+        if !write_text(text, true) {
+            PENDING.undo(|saved| saved.restore());
+            return Dispatch::NoMutation;
+        }
+        let generation = PENDING.written(change_count());
         // No wait between validation and the process-targeted events.
         let keys = if self.rejected().is_none() { key_pair(VK_V) } else { None };
         let Some((down, up)) = keys else {
-            saved.restore();
+            PENDING.undo(|saved| saved.restore());
             return Dispatch::NoMutation;
         };
         // Only the flag: Terminal beeps at a Command-V that also carries a Unicode string.
@@ -586,11 +591,7 @@ impl Target for Attempt<'_> {
         }
         std::thread::spawn(move || {
             std::thread::sleep(RESTORE_DELAY);
-            pooled(|| {
-                if change_count() == written {
-                    saved.restore();
-                }
-            });
+            pooled(|| PENDING.settle(generation, change_count(), |saved| saved.restore()));
         });
         Dispatch::Pasted
     }
@@ -683,13 +684,17 @@ impl Inserter for MacInserter {
                 let clamped = total.map_or(length as i64, |t| (length as i64).min(t - location as i64));
                 string_for_range(element, Span { location: location as i64, length: clamped }).filter(|v| v.len() <= 64 * 1024)
             };
-            read(&held.element).or_else(|| focused_element().as_ref().and_then(read)).ok_or(())
+            let in_window = |element: &Owned| ax_element(element, c"AXWindow").is_some_and(|w| w.same(&held.window));
+            insert::read_guarded(&held.element, focused_element, subrole_is_secure, in_window, read).ok_or(())
         })
     }
     fn copy(&self, text: &str) {
         pooled(|| {
             write_text(text, false);
         });
+    }
+    fn flush(&self) {
+        pooled(|| PENDING.flush(change_count(), |saved| saved.restore()));
     }
 }
 

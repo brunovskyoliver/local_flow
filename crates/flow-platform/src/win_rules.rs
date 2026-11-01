@@ -23,6 +23,13 @@ pub fn run_value(exe: &str) -> String {
     format!("\"{exe}\"")
 }
 
+/// Whether a clipboard format's handle is a global block that can be copied as bytes. Not the GDI
+/// and display formats (`CF_BITMAP` 2, `CF_METAFILEPICT` 3, `CF_PALETTE` 9, `CF_ENHMETAFILE` 14,
+/// `CF_OWNERDISPLAY` 0x80, `CF_DSP*`), nor the private and GDI object ranges.
+pub fn clipboard_format_copyable(format: u32) -> bool {
+    !matches!(format, 2 | 3 | 9 | 14 | 0x80 | 0x82 | 0x83 | 0x8E | 0x200..=0x3FF)
+}
+
 /// Process loopback arrived in this build.
 pub const PROCESS_LOOPBACK_BUILD: u32 = 20348;
 pub fn process_loopback_supported(current_build: Option<&str>) -> bool {
@@ -182,6 +189,16 @@ mod keyboard_tests {
         }
         assert_eq!(vk_for(mac_key(0x41).unwrap()), Some(0x41));
         assert_eq!(mac_key(0xFF), None);
+    }
+
+    #[test]
+    fn only_global_block_clipboard_formats_are_copied() {
+        for copied in [1, 8, 13, 17, 0xC000] {
+            assert!(clipboard_format_copyable(copied), "{copied}");
+        }
+        for handle in [2, 3, 9, 14, 0x80, 0x82, 0x83, 0x8E, 0x200, 0x2FF, 0x300, 0x3FF] {
+            assert!(!clipboard_format_copyable(handle), "{handle}");
+        }
     }
 
     #[test]

@@ -109,6 +109,7 @@ fn processor(queue: mpsc::Receiver<RawKey>, engine: Arc<Mutex<Engine>>) {
             Ok(raw) => {
                 if let Some((kind, key, flags, repeat)) = tracker.receive(raw.vk, raw.scan, raw.flags, raw.up) {
                     let mut engine = lock(&engine);
+                    engine.end_recorder_unless(app_in_front);
                     if key != UNMAPPED || !engine.recorder.is_running() {
                         // The return value is for a tap that can consume; this hook can't.
                         engine.receive(kind, key, flags, repeat);
@@ -131,9 +132,7 @@ fn processor(queue: mpsc::Receiver<RawKey>, engine: Arc<Mutex<Engine>>) {
         }
         last_wall = wall;
         engine.recorder.tick(Instant::now());
-        if engine.recorder.is_running() && !app_in_front() {
-            engine.recorder.finish(None);
-        }
+        engine.end_recorder_unless(app_in_front);
         // Only during a hold: an idle sync could race a press that's still in the queue.
         if engine.is_held() {
             let flags = tracker.sync(pressed);

@@ -38,8 +38,10 @@ mod dl {
         fn LoadLibraryExW(path: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
         fn GetProcAddress(module: *mut c_void, name: *const c_char) -> *mut c_void;
     }
-    /// `onnxruntime.dll` resolves from the library's own folder, not the current directory.
-    const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x8;
+    /// `onnxruntime.dll` resolves from the library's own folder and System32 only: never the current
+    /// directory, the application folder or PATH.
+    const LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR: u32 = 0x100;
+    const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x800;
     pub fn open(path: &Path) -> Option<*mut c_void> {
         let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
         // SAFETY: a NUL-terminated absolute path; the caller verified the file.
@@ -47,7 +49,7 @@ mod dl {
             LoadLibraryExW(
                 wide.as_ptr(),
                 std::ptr::null_mut(),
-                LOAD_WITH_ALTERED_SEARCH_PATH,
+                LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
             )
         })
         .filter(|h| !h.is_null())

@@ -196,6 +196,10 @@ fn attempt(link: &Link, enrollment: &Enrollment, reader: &mut Reader, boost: Opt
             }
             return Attempt::Abandoned;
         }
+        // Turned off: not one more frame, whether a dictation or a retry is listening for the result.
+        if enrollment.settings().origin.is_none() {
+            return Attempt::Final("unreachable");
+        }
         if link.released() && link.total.load(SeqCst) == 0 {
             return Attempt::Final("protocol_error");
         }
@@ -210,7 +214,7 @@ fn attempt(link: &Link, enrollment: &Enrollment, reader: &mut Reader, boost: Opt
             Ok(None) => {}
             Err(e) => return Attempt::Channel(channel_reason(&e)),
         }
-        match turn.pump(link, reader) {
+        match turn.pump(link, enrollment, reader) {
             Ok(()) => {}
             Err(end) => return end,
         }
@@ -234,7 +238,7 @@ impl Turn {
     }
 
     /// Every recorded sample not yet sent, each 200 ms while recording, then `dictation_end`.
-    fn pump(&mut self, link: &Link, reader: &mut Reader) -> Result<(), Attempt> {
+    fn pump(&mut self, link: &Link, enrollment: &Enrollment, reader: &mut Reader) -> Result<(), Attempt> {
         let released = link.released();
         if self.model.is_none() || self.end_sent || (!released && self.last_pump.is_some_and(|at| at.elapsed() < PUMP)) {
             return Ok(());
@@ -244,6 +248,13 @@ impl Turn {
         while self.sent < limit {
             if link.abandoned.load(SeqCst) {
                 return Err(Attempt::Abandoned);
+            }
+            // The attempt's loop tells the server, once the turn is back there.
+            if link.cancelled.load(SeqCst) {
+                return Ok(());
+            }
+            if enrollment.settings().origin.is_none() {
+                return Err(Attempt::Final("unreachable"));
             }
             let count = FRAME_SAMPLES.min(limit - self.sent);
             // The spool couldn't be read: the server's copy wouldn't be whole.
@@ -321,11 +332,14 @@ pub struct Served<'a> {
     model: Option<ModelIdentity>,
     using_local: bool,
     switched_off: bool,
+    /// The server at the press: a waiting recording goes back only to this one.
+    origin: Option<String>,
 }
 
 impl<'a> Served<'a> {
     pub fn new(enrollment: Arc<Enrollment>, pool: Arc<Pool>, threshold: Duration, local: &'a mut dyn Recognizer, local_allowed: bool) -> Served<'a> {
-        Served { enrollment, pool, threshold, local, local_allowed, failure: None, model: None, using_local: false, switched_off: false }
+        let origin = enrollment.settings().origin;
+        Served { enrollment, pool, threshold, local, local_allowed, failure: None, model: None, using_local: false, switched_off: false, origin }
     }
 
     fn turned_off(&self) -> bool {
@@ -382,7 +396,7 @@ impl Recognizer for Served<'_> {
                     feed.set_streaming(false);
                     return Streamed::Windows(completed.windows, completed.recognition_seconds);
                 }
-                // Turning off ends the channel too: that isn't the server failing.
+                // Turning off makes the stream stop itself as unreachable: that isn't the server failing.
                 Some(Err(_)) if self.turned_off() && self.local_allowed => {
                     self.switched_off = true;
                     feed.set_streaming(false);
@@ -420,6 +434,10 @@ impl Recognizer for Served<'_> {
     fn server_failure(&self) -> Option<&'static str> {
         self.failure
     }
+    /// None once switched off: consent ended during this recording, so it doesn't retry by itself.
+    fn server_origin(&self) -> Option<String> {
+        self.origin.clone().filter(|_| !self.switched_off && !self.turned_off())
+    }
 }
 
 /// `ServerOnlyFailure.serverUnavailable`'s words.
@@ -439,4 +457,107 @@ impl Recognizer for NoServer {
         None
     }
     fn finish(&mut self) {}
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+    use crate::remote::enrollment::{IdentityProvider, Parts, RemoteSettings, SignIn, system_now};
+    use crate::remote::scripted::{Counters, Reply, Script};
+    use crate::remote::{DeviceKeys, MemoryDeviceKeys, MemorySecrets, Secrets, Unavailable};
+
+    struct NoSignIn;
+    impl SignIn for NoSignIn {
+        fn sign_in(&self, _: IdentityProvider, _: &str) -> Result<String, Unavailable> {
+            Err(Unavailable("no"))
+        }
+    }
+
+    /// An approved device on a scripted server.
+    pub(in crate::dictation) fn enrolled(replies: Vec<Reply>) -> (Arc<Enrollment>, Counters) {
+        let script = Script::new(replies);
+        let (counters, key) = (script.counters(), script.public_key());
+        let secrets = Arc::new(MemorySecrets::default());
+        secrets.write("server-key", &key).unwrap();
+        secrets.write("refresh-token", b"refresh").unwrap();
+        let keys = Arc::new(MemoryDeviceKeys::default());
+        let (handle, _) = keys.create().unwrap();
+        secrets.write("device-key", &handle).unwrap();
+        let e = Enrollment::new(Parts { secrets, keys, sign_in: Arc::new(NoSignIn), identity: Arc::new(crate::remote::enrollment::HttpIdentity), transports: Arc::new(script), now: Box::new(system_now), device_name: "T".into() });
+        e.load(RemoteSettings { origin: Some("http://127.0.0.1:9".into()), state: "approved".into(), notice: None });
+        (Arc::new(e), counters)
+    }
+
+    fn sent(counters: &Counters) -> u64 {
+        counters.messages().iter().filter_map(|m| m["audio_samples"].as_u64()).sum()
+    }
+
+    fn spool(name: &str, samples: usize) -> (std::path::PathBuf, Reader) {
+        let path = std::env::temp_dir().join(format!("flow-remote-{name}-{}.f32", std::process::id()));
+        std::fs::write(&path, vec![0u8; samples * 4]).unwrap();
+        let reader = Reader::open(&path).unwrap();
+        (path, reader)
+    }
+
+    /// A turn the server has accepted, with the whole recording released and unsent.
+    fn accepted_turn(e: &Enrollment) -> (Turn, Link) {
+        let model = ModelIdentity { engine: "e".into(), model_id: "m".into(), model_revision: "1".into(), manifest_hash: "h".into(), sdk: "s".into(), booster: None, worker_build: "b".into() };
+        let turn = Turn { channel: Some(e.session_channel().unwrap()), model: Some(model), windows: vec![], seconds: 0., sent: 0, end_sent: false, last_pump: None };
+        let link = Link::default();
+        link.total.store(40_000, SeqCst);
+        link.released.store(true, SeqCst);
+        (turn, link)
+    }
+
+    const OPENS: fn() -> Vec<Reply> = || vec![Reply::ready(), Reply::tokens("a", "r"), Reply::ready()];
+
+    #[test]
+    fn queued_audio_stops_at_a_cancel_and_at_turning_off() {
+        let (path, mut reader) = spool("pump", 40_000);
+
+        let (e, counters) = enrolled(OPENS());
+        let (mut turn, link) = accepted_turn(&e);
+        assert!(turn.pump(&link, &e, &mut reader).is_ok());
+        assert_eq!(sent(&counters), 40_000, "nothing in the way: all of it, then the end");
+        assert!(counters.messages().iter().any(|m| m["type"] == "dictation_end"));
+
+        let (e, counters) = enrolled(OPENS());
+        let (mut turn, link) = accepted_turn(&e);
+        link.cancelled.store(true, SeqCst);
+        assert!(turn.pump(&link, &e, &mut reader).is_ok());
+        assert_eq!(sent(&counters), 0, "Escape: nothing more goes out");
+        assert!(!counters.messages().iter().any(|m| m["type"] == "dictation_end"));
+
+        let (e, counters) = enrolled(OPENS());
+        let (mut turn, link) = accepted_turn(&e);
+        e.turn_off();
+        assert!(matches!(turn.pump(&link, &e, &mut reader), Err(Attempt::Final("unreachable"))));
+        assert_eq!(sent(&counters), 0, "turned off: nothing more goes out");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_recording_stops_sending_when_turned_off_before_release() {
+        let accepted = Reply::Json(json!({"schema_version": 1, "type": "dictation_accepted", "op": 1, "window_samples": WINDOW, "model": {"engine": "e", "model_id": "m", "model_revision": "1", "manifest_hash": "h", "sdk": "s", "worker_build": "b"}}));
+        let (e, counters) = enrolled([OPENS(), vec![accepted, Reply::Silent]].concat());
+        let (path, reader) = spool("live", 40_000);
+        let stream = Stream::start(e.clone(), reader, None, Duration::from_secs(30));
+        stream.recorded(20_000);
+        let began = Instant::now();
+        while sent(&counters) < 20_000 {
+            assert!(began.elapsed() < Duration::from_secs(10));
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        // Nothing queued, so only the attempt's own check can end it.
+        e.turn_off();
+        let result = loop {
+            assert!(began.elapsed() < Duration::from_secs(10), "still streaming after turn-off");
+            if let Some(result) = stream.poll(Duration::from_millis(10)) {
+                break result;
+            }
+        };
+        assert!(matches!(result, Err("unreachable")));
+        assert_eq!(sent(&counters), 20_000, "nothing after the turn-off");
+        std::fs::remove_file(path).unwrap();
+    }
 }

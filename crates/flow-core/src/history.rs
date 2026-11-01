@@ -1557,6 +1557,8 @@ pub fn commit_dictation(db: &Db, d: &crate::dictation::session::NewDictation) ->
 
 const PENDING_MAX_ROWS: i64 = 20;
 const PENDING_FIRST_RETRY_MS: i64 = 10_000;
+/// `<id>.origin` beside `<id>.f32`: the server a recording was made for, without a schema change.
+const ORIGIN_EXTENSION: &str = "origin";
 
 /// `PendingRemoteDictationStore.add`: the audio moves in the same step as its row.
 pub fn keep_waiting(db: &Db, dir: &Path, w: &crate::dictation::session::Waiting) -> Result<(), StoreError> {
@@ -1577,6 +1579,10 @@ pub fn keep_waiting(db: &Db, dir: &Path, w: &crate::dictation::session::Waiting)
         // The row did not commit: give the audio back to its owner.
         let _ = std::fs::rename(&destination, w.audio);
         return Err(e.into());
+    }
+    // A failed write leaves no origin, and the row then waits for the user: nothing is sent or lost.
+    if let Some(origin) = w.origin {
+        let _ = std::fs::write(destination.with_extension(ORIGIN_EXTENSION), origin);
     }
     Ok(())
 }
@@ -1625,6 +1631,11 @@ pub fn pending_audio_path(dir: &Path, item: &PendingItem) -> Option<std::path::P
     plain_file_name(&item.audio_file).then(|| dir.join(&item.audio_file))
 }
 
+/// The server this row may go to. None for a row recorded for no server, or by an older build.
+pub fn pending_origin(dir: &Path, item: &PendingItem) -> Option<String> {
+    std::fs::read_to_string(pending_audio_path(dir, item)?.with_extension(ORIGIN_EXTENSION)).ok()
+}
+
 fn plain_file_name(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\\') && name.len() <= 255
 }
@@ -1634,6 +1645,7 @@ pub fn remove_pending(db: &Db, dir: &Path, id: &str) -> Result<(), StoreError> {
     db.conn.execute("DELETE FROM pending_remote_dictations WHERE id=?", [id])?;
     if let Some(i) = item.filter(|i| plain_file_name(&i.audio_file)) {
         let path = dir.join(i.audio_file);
+        let _ = std::fs::remove_file(path.with_extension(ORIGIN_EXTENSION));
         if path.exists() {
             std::fs::remove_file(path).map_err(|e| StoreError::Sql(e.to_string()))?;
         }

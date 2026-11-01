@@ -305,6 +305,13 @@ impl Engine {
     pub fn polled_key(&self) -> Option<u32> {
         self.machine.as_ref().filter(|m| m.is_held() && m.shortcut.kind == "key_combination").map(|m| m.shortcut.key_code)
     }
+    /// Before a key reaches `receive` from a source that sees every app's keys: a recorder running
+    /// behind another app ends empty, so it can't capture what's typed there.
+    pub fn end_recorder_unless(&mut self, app_in_front: impl FnOnce() -> bool) {
+        if self.recorder.is_running() && !app_in_front() {
+            self.recorder.finish(None);
+        }
+    }
     /// Returns whether to consume the event. While the recorder runs, keys go only to it.
     pub fn receive(&mut self, kind: KeyEvent, key: u32, flags: u64, autorepeat: bool) -> bool {
         if self.recorder.is_running() {
@@ -360,6 +367,19 @@ mod tests {
     const LEFT_CONTROL: u64 = FLAG_CONTROL | 0x1;
     const RELEASED: Event = Event::Released { bypass_rewrite: false };
     const CMD_MODIFIER: u32 = 1 << 8;
+
+    #[test]
+    fn a_recorder_behind_another_app_ends_before_it_sees_that_apps_key() {
+        let mut engine = Engine::default();
+        engine.set_shortcut(Some(combo()));
+        assert!(engine.recorder.start(Instant::now()));
+        engine.end_recorder_unless(|| true);
+        assert!(engine.recorder.is_running(), "in front: it keeps listening");
+        engine.end_recorder_unless(|| false);
+        assert!(!engine.receive(Down, 0, FLAG_COMMAND, false), "the key isn't the recorder's now");
+        assert_eq!(engine.recorder.take(), Some(None), "ended empty, nothing captured");
+        engine.end_recorder_unless(|| panic!("no recorder, so no check"));
+    }
 
     fn combo() -> Shortcut {
         Shortcut { kind: "key_combination".into(), key_code: 49, modifiers: CMD_MODIFIER, ..Default::default() }

@@ -70,7 +70,8 @@ fn pinned(file: &PinnedFile) -> bool {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         && file.size > 0
-        && !file.name.contains(['/', '\\'])
+        // `:` would name an alternate data stream on NTFS.
+        && !file.name.contains(['/', '\\', ':'])
         && !file.name.starts_with('.')
 }
 
@@ -83,7 +84,7 @@ impl Manifest {
     pub fn embedded() -> Manifest {
         Manifest::parse(EMBEDDED).expect("the embedded manifest parses")
     }
-    /// This build's runtime, only if every file of it is pinned.
+    /// This build's runtime, only if every file of it is pinned, the library it loads included.
     pub fn runtime_here(&self) -> Option<&Runtime> {
         self.runtime
             .get(&format!(
@@ -91,7 +92,7 @@ impl Manifest {
                 std::env::consts::OS,
                 std::env::consts::ARCH
             ))
-            .filter(|r| !r.files.is_empty() && r.files.iter().all(pinned))
+            .filter(|r| r.files.iter().all(pinned) && r.files.iter().any(|f| f.name == r.library))
     }
     fn model_pinned(&self) -> bool {
         !self.files.is_empty() && self.files.iter().all(pinned)
@@ -312,6 +313,27 @@ mod tests {
         assert!(manifest.runtime["windows-x86_64"].files.iter().all(pinned));
         assert!(manifest.runtime["macos-aarch64"].files.iter().all(pinned));
         assert_eq!(manifest.hash, hash_bytes(EMBEDDED.as_bytes()));
+        for runtime in manifest.runtime.values() {
+            assert!(runtime.files.iter().any(|f| f.name == runtime.library), "{}", runtime.library);
+        }
+    }
+
+    #[test]
+    fn a_runtime_library_outside_its_pinned_files_is_no_runtime() {
+        let here = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+        let file = |name: &str| PinnedFile { name: name.into(), size: 1, sha256: hash_bytes(b"x") };
+        let with = |library: &str, name: &str| {
+            let mut m = manifest("https://example.invalid", &[("a", b"x")]);
+            m.runtime.insert(here.clone(), Runtime { library: library.into(), files: vec![file(name)] });
+            m
+        };
+        assert!(with("lib", "lib").runtime_here().is_some());
+        assert!(with("../evil", "lib").runtime_here().is_none(), "a library nothing pins");
+        assert!(with("lib", "lib:stream").runtime_here().is_none(), "an alternate data stream");
+        assert!(with("lib:stream", "lib:stream").runtime_here().is_none());
+        let models = temp("colon");
+        assert_eq!(provision(&models, &manifest("https://example.invalid", &[("a:b", b"x")])), Err(Failure::Unpinned));
+        fs::remove_dir_all(models).unwrap();
     }
 
     #[test]

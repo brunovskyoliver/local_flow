@@ -142,6 +142,9 @@ pub fn finish_quit(cx: &mut App) {
         if !cx.global::<Core>().services.close_recorder() {
             update_session(cx, |s| s.setup_status = "Measurement export is incomplete. Its completion record contains the loss status.".into());
         }
+        if let Some(inserter) = cx.global::<Core>().services.inserter() {
+            inserter.flush();
+        }
         update_session(cx, |s| s.ready_to_terminate = true);
         cx.quit();
     });
@@ -236,6 +239,33 @@ mod tests {
         cx.update_window(window.into(), |_, w, cx| w.press("cmd-,", cx)).unwrap();
         cx.run_until_parked();
         cx.update(|cx| assert_eq!(cx.global::<Session>().selection, Page::Settings));
+    }
+
+    #[flow_ui::gpui::test]
+    async fn quit_puts_back_a_clipboard_still_waiting(cx: &mut TestAppContext) {
+        use flow_core::dictation::session::{CapturedTarget, InsertOutcome, Inserter};
+        use std::sync::{Arc, atomic::{AtomicBool, Ordering::SeqCst}};
+        #[derive(Default)]
+        struct Flushes(AtomicBool);
+        impl Inserter for Flushes {
+            fn capture_target(&self) -> Option<CapturedTarget> {
+                None
+            }
+            fn insert_once(&self, _: &CapturedTarget, _: &str) -> InsertOutcome {
+                InsertOutcome::NotInserted
+            }
+            fn copy(&self, _: &str) {}
+            fn flush(&self) {
+                self.0.store(true, SeqCst);
+            }
+        }
+        boot(cx, Mode::Light);
+        let inserter = Arc::new(Flushes::default());
+        cx.update(|cx| cx.global_mut::<Core>().services = Box::new(flow_platform::Fake { inserter: Some(inserter.clone()), ..Default::default() }));
+        let _window = open_shell(cx);
+        cx.update(quit);
+        cx.run_until_parked();
+        assert!(inserter.0.load(SeqCst));
     }
 
     // parity: SHELL-128

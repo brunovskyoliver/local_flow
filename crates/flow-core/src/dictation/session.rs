@@ -198,6 +198,10 @@ pub trait Recognizer: Send {
     fn server_failure(&self) -> Option<&'static str> {
         None
     }
+    /// The server this recording may be retried on. None keeps it from every server.
+    fn server_origin(&self) -> Option<String> {
+        None
+    }
 }
 
 pub enum Rewritten {
@@ -215,6 +219,8 @@ pub trait Inserter: Send + Sync {
     fn capture_target(&self) -> Option<CapturedTarget>;
     fn insert_once(&self, target: &CapturedTarget, text: &str) -> InsertOutcome;
     fn copy(&self, text: &str);
+    /// At quit: a clipboard restore still waiting happens now.
+    fn flush(&self) {}
     /// The field's text in a UTF-16 range, for the correction learner. `Err` is a failed read.
     fn read_text(&self, _target: &CapturedTarget, _location: usize, _length: usize) -> Result<String, ()> {
         Err(())
@@ -245,6 +251,7 @@ pub struct Waiting<'a> {
     pub audio: &'a Path,
     pub samples: usize,
     pub failure: &'static str,
+    pub origin: Option<&'a str>,
     pub target_bundle_id: Option<&'a str>,
     pub device_name: Option<&'a str>,
     pub device_kind: Option<&'a str>,
@@ -992,7 +999,9 @@ impl Coordinator {
             }
         };
         let spool = spool_slot.as_ref().expect("just set");
-        if recognition.lost {
+        // Escape during the recording leaves nothing, however far recognition had got.
+        let recognition = if shared.discard.load(SeqCst) { Recognition::default() } else { recognition };
+        if recognition.lost && !c.cancelled() {
             self.keep_waiting(d, id, spool, &captured, target.as_ref());
             return Ok(());
         }
@@ -1118,7 +1127,8 @@ impl Coordinator {
         self.set_state(State::Persisting);
         let device = captured.device.as_ref();
         let server_failure = d.recognizer.server_failure();
-        let waiting = Waiting { id, audio: spool.path(), samples: captured.samples, failure: server_failure.unwrap_or("worker_unavailable"), target_bundle_id: target.map(|t| t.bundle_id.as_str()), device_name: device.map(|x| x.0.as_str()), device_kind: device.map(|x| x.1.as_str()) };
+        let origin = d.recognizer.server_origin();
+        let waiting = Waiting { id, audio: spool.path(), samples: captured.samples, failure: server_failure.unwrap_or("worker_unavailable"), origin: origin.as_deref(), target_bundle_id: target.map(|t| t.bundle_id.as_str()), device_name: device.map(|x| x.0.as_str()), device_kind: device.map(|x| x.1.as_str()) };
         let kept = captured.samples > 0 && d.history.keep_waiting(&waiting).is_ok();
         let status = match (captured.samples == 0, kept, server_failure.is_some()) {
             (true, ..) => "No speech detected.",
@@ -1890,6 +1900,33 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!((items[0].sample_count, items[0].last_failure.as_deref()), (16_000, Some("worker_unavailable")));
         assert_eq!(std::fs::metadata(r.root.join("PendingAudio").join(&items[0].audio_file)).unwrap().len(), 64_000);
+        assert_eq!(history::pending_origin(&r.root.join("PendingAudio"), &items[0]), None, "recorded for no server: it never goes to one");
+        assert!(r.spool_clean());
+    }
+
+    #[test]
+    fn a_cancel_as_the_worker_dies_keeps_no_recording() {
+        let mut r = rig(vec![Ok(Some(speak(16_000, Then::Release)))]);
+        r.recognizer.answers = vec![Err(RecognizeFailure::Lost)];
+        r.recognizer.cancel_after_capture = Some((r.control.clone(), r.events.clone()));
+        let end = r.run();
+        assert_eq!((end.state, end.status.as_str()), (State::Idle, "Cancelled"));
+        assert_eq!(r.rows(), 0);
+        assert!(history::pending_items(&r.history.db).is_empty());
+        assert_eq!(std::fs::read_dir(r.root.join("PendingAudio")).map_or(0, |d| d.count()), 0);
+        assert!(r.spool_clean());
+    }
+
+    #[test]
+    fn a_cancel_during_the_recording_drops_windows_a_lost_worker_left() {
+        let mut r = rig(vec![Ok(Some(speak(2 * WINDOW + 16_000, Then::Cancel)))]);
+        r.recognizer.answers = vec![Ok("said before escape"), Err(RecognizeFailure::Lost)];
+        r.mic.then_gate.store(false, SeqCst);
+        r.recognizer.first_job_opens = Some(r.mic.then_gate.clone());
+        let end = r.run();
+        assert_eq!((end.state, end.status.as_str()), (State::Idle, "Cancelled"));
+        assert_eq!(r.rows(), 0);
+        assert!(history::pending_items(&r.history.db).is_empty());
         assert!(r.spool_clean());
     }
 
@@ -2342,9 +2379,39 @@ mod tests {
 
         // ---- The retrier ----
 
+        // parity: HIST-075
+        #[test]
+        fn the_retrier_sends_only_while_routed_and_only_to_the_server_it_was_recorded_for() {
+            let s = server();
+            let clock = Arc::new(std::sync::atomic::AtomicI64::new(0));
+            let r = kept(&s, &clock);
+            let item = waiting(&r)[0].clone();
+            let dir = r.root.join("PendingAudio");
+            let sidecar = dir.join(&item.audio_file).with_extension("origin");
+            assert_eq!(history::pending_origin(&dir, &item), s.enrollment.settings().origin, "recorded for this server");
+            let mut retry = retrier(&r, &s, clock.clone());
+
+            retry.served.store(false, SeqCst);
+            assert_eq!(retry.run_due(), 0, "dictation runs on this Mac now");
+            retry.served.store(true, SeqCst);
+
+            std::fs::write(&sidecar, "https://another.example.com").unwrap();
+            assert_eq!(retry.run_due(), 0, "another server");
+            std::fs::remove_file(&sidecar).unwrap();
+            assert_eq!(retry.run_due(), 0, "no server on record");
+
+            let row = &waiting(&r)[0];
+            assert_eq!((row.attempts, row.next_attempt_at), (item.attempts, item.next_attempt_at), "untouched, so it isn't counted or stopped");
+            assert_eq!(std::fs::metadata(dir.join(&item.audio_file)).unwrap().len(), 80_000, "the audio stays");
+
+            std::fs::write(&sidecar, s.enrollment.settings().origin.unwrap()).unwrap();
+            assert_eq!(retry.run_due(), 1, "the same server again");
+            assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "audio and origin go with the row");
+        }
+
         fn retrier(r: &Rig, s: &Server, clock: Arc<std::sync::atomic::AtomicI64>) -> Retrier {
             let db = Db::open_or_create(&r.root.join("h.sqlite")).unwrap();
-            let mut retrier = Retrier::new(db, r.root.join("PendingAudio"), s.enrollment.clone(), Arc::new(AtomicBool::new(false)));
+            let mut retrier = Retrier::new(db, r.root.join("PendingAudio"), s.enrollment.clone(), Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(true)));
             retrier.now = Box::new(move || clock.load(SeqCst));
             retrier.threshold = SETTLE;
             retrier
@@ -2573,30 +2640,12 @@ mod tests {
         /// What a scripted server does around the restart rules.
         #[test]
         fn a_lost_channel_restarts_once_from_sample_zero_and_a_stall_times_out() {
-            use crate::remote::enrollment::{IdentityProvider, Parts, SignIn, system_now};
-            use crate::remote::scripted::{Reply, Script};
-            use crate::remote::{MemoryDeviceKeys, MemorySecrets, Secrets, Unavailable};
-            struct NoSignIn;
-            impl SignIn for NoSignIn {
-                fn sign_in(&self, _: IdentityProvider, _: &str) -> Result<String, Unavailable> {
-                    Err(Unavailable("no"))
-                }
-            }
+            use crate::remote::scripted::Reply;
             let accepted = Reply::Json(json!({"schema_version": 1, "type": "dictation_accepted", "op": 1, "window_samples": WINDOW, "model": {"engine": "e", "model_id": "m", "model_revision": "1", "manifest_hash": "h", "sdk": "s", "worker_build": "b"}}));
             let window = Reply::Json(json!({"schema_version": 1, "type": "window_result", "op": 1, "index": 0, "sample_start": 0, "sample_count": 20_000, "text": "from the second try", "tokens": [], "boost_hints": [], "recognition_ms": 1}));
             let complete = Reply::Json(json!({"schema_version": 1, "type": "dictation_complete", "op": 1, "windows": 1}));
             let enrolled = |replies: Vec<Reply>| {
-                let script = Script::new(replies);
-                let (counters, key) = (script.counters(), script.public_key());
-                let secrets = Arc::new(MemorySecrets::default());
-                secrets.write("server-key", &key).unwrap();
-                secrets.write("refresh-token", b"refresh").unwrap();
-                let keys = Arc::new(MemoryDeviceKeys::default());
-                let (handle, _) = crate::remote::DeviceKeys::create(&*keys).unwrap();
-                secrets.write("device-key", &handle).unwrap();
-                let e = Enrollment::new(Parts { secrets, keys, sign_in: Arc::new(NoSignIn), identity: Arc::new(crate::remote::enrollment::HttpIdentity), transports: Arc::new(script), now: Box::new(system_now), device_name: "T".into() });
-                e.load(crate::remote::enrollment::RemoteSettings { origin: Some("http://127.0.0.1:9".into()), state: "approved".into(), notice: None });
-                let e = Arc::new(e);
+                let (e, counters) = super::super::super::remote::tests::enrolled(replies);
                 (Server { flowd: None, pool: Arc::new(Enrollment::pool(&e)), enrollment: e }, counters)
             };
             // Lost before key release: it reconnects once and sends everything again from sample 0.

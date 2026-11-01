@@ -1,17 +1,18 @@
 //! Insertion on Windows: UI Automation says which field has focus and refuses password fields, and
 //! the text arrives by clipboard and a `SendInput` Ctrl-V. A target running elevated above this
 //! process can't receive input (UIPI), so it counts as no target and the session's copy path runs.
-use flow_core::dictation::insert::{self, Dispatch, Issue, Target};
+use flow_core::dictation::insert::{self, Dispatch, Issue, PendingRestore, Target};
 use flow_core::dictation::session::{CapturedTarget, InsertDelivery, InsertOutcome, Inserter};
 use std::collections::{HashMap, VecDeque};
+use crate::win_rules;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering::*};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
-use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, HGLOBAL, HWND};
+use windows::Win32::Foundation::{CloseHandle, FILETIME, GlobalFree, HANDLE, HGLOBAL, HWND};
 use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize};
-use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
+use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId, GetProcessTimes, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
@@ -151,6 +152,48 @@ fn capture() -> Option<Held> {
     Some(Held { pid, window: window.0 as isize, created: created(process.0)?, bundle: image_name(process.0)?, element: runtime_id(&element)? })
 }
 
+/// The clipboard's formats, as (format, bytes). Formats held as GDI or private handles aren't kept:
+/// a bitmap comes back through its `CF_DIB`.
+// ponytail: an enhanced metafile with no other format doesn't come back. A GDI copy if that's seen.
+type Saved = Vec<(u32, Vec<u8>)>;
+
+/// The clipboard waiting to go back.
+static PENDING: PendingRestore<Saved> = PendingRestore::new();
+
+fn sequence() -> i64 {
+    // SAFETY: no arguments.
+    unsafe { GetClipboardSequenceNumber() as i64 }
+}
+
+/// One format, copied into a block the system owns on success.
+fn put(format: u32, bytes: &[u8]) -> bool {
+    // SAFETY: the block is at least as large as the copy; a block the system didn't take is freed.
+    unsafe {
+        let Ok(global) = GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1)) else { return false };
+        let data = GlobalLock(global) as *mut u8;
+        if data.is_null() {
+            let _ = GlobalFree(Some(global));
+            return false;
+        }
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), data, bytes.len());
+        let _ = GlobalUnlock(global);
+        if SetClipboardData(format, Some(HANDLE(global.0))).is_err() {
+            let _ = GlobalFree(Some(global));
+            return false;
+        }
+    }
+    true
+}
+
+/// Keeps what's on the clipboard out of Win+V history, cloud sync and clipboard managers, as the Mac's
+/// transient type does. A DWORD of 0 is what the two `Can…` formats read as no.
+fn exclude_from_history() {
+    for name in [w!("ExcludeClipboardContentFromMonitorProcessing"), w!("CanIncludeInClipboardHistory"), w!("CanUploadToCloudClipboard")] {
+        // SAFETY: a valid wide string.
+        put(unsafe { RegisterClipboardFormatW(name) }, &0u32.to_ne_bytes());
+    }
+}
+
 struct Clipboard;
 impl Clipboard {
     fn open() -> Option<Clipboard> {
@@ -164,49 +207,56 @@ impl Clipboard {
         }
         None
     }
-    fn text(&self) -> Option<Vec<u16>> {
+    /// Everything it can copy, empty for an empty clipboard. None past the limit; the paste is then skipped.
+    fn snapshot(&self) -> Option<Saved> {
+        let (mut saved, mut total, mut format) = (vec![], 0, 0);
         // SAFETY: the clipboard is open; the lock is paired and the size is the block's own.
         unsafe {
-            let handle = GetClipboardData(CF_UNICODETEXT.0 as u32).ok()?;
-            let global = HGLOBAL(handle.0);
-            let size = GlobalSize(global);
-            if size > CLIPBOARD_LIMIT {
-                return None;
+            loop {
+                format = EnumClipboardFormats(format);
+                if format == 0 {
+                    return Some(saved);
+                }
+                if !win_rules::clipboard_format_copyable(format) {
+                    continue;
+                }
+                let Ok(handle) = GetClipboardData(format) else { continue };
+                let global = HGLOBAL(handle.0);
+                let size = GlobalSize(global);
+                total += size;
+                if total > CLIPBOARD_LIMIT {
+                    return None;
+                }
+                if size == 0 {
+                    continue;
+                }
+                let data = GlobalLock(global) as *const u8;
+                if data.is_null() {
+                    continue;
+                }
+                saved.push((format, std::slice::from_raw_parts(data, size).to_vec()));
+                let _ = GlobalUnlock(global);
             }
-            let data = GlobalLock(global) as *const u16;
-            if data.is_null() {
-                return None;
-            }
-            let out = std::slice::from_raw_parts(data, size / 2).to_vec();
-            let _ = GlobalUnlock(global);
-            Some(out)
         }
     }
-    /// `exclude` keeps it out of clipboard history and managers, as the Mac's transient type does.
-    fn set(&self, wide: &[u16], exclude: bool) -> bool {
-        let terminated = wide.last() == Some(&0);
-        // SAFETY: the block is large enough for the copy and the terminator; on success the system owns it.
-        unsafe {
-            let _ = EmptyClipboard();
-            let Ok(global) = GlobalAlloc(GMEM_MOVEABLE, (wide.len() + 1) * 2) else { return false };
-            let data = GlobalLock(global) as *mut u16;
-            if data.is_null() {
-                return false;
-            }
-            std::ptr::copy_nonoverlapping(wide.as_ptr(), data, wide.len());
-            if !terminated {
-                *data.add(wide.len()) = 0;
-            }
-            let _ = GlobalUnlock(global);
-            if SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(global.0))).is_err() {
-                return false;
-            }
-            if exclude {
-                let format = RegisterClipboardFormatW(w!("ExcludeClipboardContentFromMonitorProcessing"));
-                let _ = SetClipboardData(format, None);
-            }
+    /// Empties it even when nothing was saved, so a transcript never stays behind.
+    fn restore(&self, saved: &Saved) {
+        // SAFETY: the clipboard is open.
+        let _ = unsafe { EmptyClipboard() };
+        for (format, bytes) in saved {
+            put(*format, bytes);
         }
-        true
+        exclude_from_history();
+    }
+    fn set(&self, text: &str, exclude: bool) -> bool {
+        let bytes: Vec<u8> = text.encode_utf16().chain([0]).flat_map(u16::to_ne_bytes).collect();
+        // SAFETY: the clipboard is open.
+        let _ = unsafe { EmptyClipboard() };
+        let written = put(CF_UNICODETEXT.0 as u32, &bytes);
+        if written && exclude {
+            exclude_from_history();
+        }
+        written
     }
 }
 impl Drop for Clipboard {
@@ -219,6 +269,12 @@ impl Drop for Clipboard {
 fn key(key: VIRTUAL_KEY, up: bool) -> INPUT {
     let flags = if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) };
     INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: key, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } }
+}
+
+fn put_back(saved: Saved) {
+    if let Some(clipboard) = Clipboard::open() {
+        clipboard.restore(&saved);
+    }
 }
 
 struct Attempt<'a>(&'a Held);
@@ -250,38 +306,28 @@ impl Target for Attempt<'_> {
         true
     }
     fn paste(&self, text: &str) -> Dispatch {
-        let wide: Vec<u16> = text.encode_utf16().collect();
-        let saved = {
+        {
             let Some(clipboard) = Clipboard::open() else { return Dispatch::NoMutation };
-            let saved = clipboard.text();
-            if !clipboard.set(&wide, true) {
+            if !PENDING.prepare(sequence(), || clipboard.snapshot()) {
                 return Dispatch::NoMutation;
             }
-            saved
-        };
-        // SAFETY: no arguments.
-        let written = unsafe { GetClipboardSequenceNumber() };
-        let restore = move |clipboard: &Clipboard| if let Some(saved) = &saved { clipboard.set(saved, false); };
+            if !clipboard.set(text, true) {
+                PENDING.undo(|saved| clipboard.restore(&saved));
+                return Dispatch::NoMutation;
+            }
+        }
+        let generation = PENDING.written(sequence());
         // No wait between validation and the keys.
         let inputs = [key(VK_CONTROL, false), key(VK_V, false), key(VK_V, true), key(VK_CONTROL, true)];
         // SAFETY: the inputs are valid for the length and size passed. UIPI makes this return 0.
         let sent = if self.rejected().is_none() { unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) } } else { 0 };
         if sent != inputs.len() as u32 {
-            if let Some(clipboard) = Clipboard::open() {
-                restore(&clipboard);
-            }
+            PENDING.undo(put_back);
             return Dispatch::NoMutation;
         }
-        // ponytail: restores plain text only; other formats and an empty clipboard aren't put back.
-        // Enumerating formats, as the Mac snapshot does, is the upgrade.
         std::thread::spawn(move || {
             std::thread::sleep(RESTORE_DELAY);
-            // SAFETY: no arguments.
-            if unsafe { GetClipboardSequenceNumber() } == written {
-                if let Some(clipboard) = Clipboard::open() {
-                    restore(&clipboard);
-                }
-            }
+            PENDING.settle(generation, sequence(), put_back);
         });
         Dispatch::Pasted
     }
@@ -331,8 +377,10 @@ impl Inserter for WinInserter {
     }
     fn copy(&self, text: &str) {
         if let Some(clipboard) = Clipboard::open() {
-            let wide: Vec<u16> = text.encode_utf16().collect();
-            clipboard.set(&wide, false);
+            clipboard.set(text, false);
         }
+    }
+    fn flush(&self) {
+        PENDING.flush(sequence(), put_back);
     }
 }

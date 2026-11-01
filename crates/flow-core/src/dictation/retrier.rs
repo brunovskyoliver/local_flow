@@ -59,6 +59,8 @@ pub struct Retrier {
     pub enrollment: Arc<Enrollment>,
     /// A live dictation is running: the retry stops and the row stays due, uncounted.
     pub live: Arc<AtomicBool>,
+    /// `routing.served(Dictation)`, kept current by the app. Off, nothing is sent and rows stay due.
+    pub served: Arc<AtomicBool>,
     pub now: Box<dyn Fn() -> i64 + Send>,
     pub threshold: Duration,
     /// Each row a retry saved, and each that came to need the user.
@@ -67,8 +69,12 @@ pub struct Retrier {
 }
 
 impl Retrier {
-    pub fn new(db: Db, dir: PathBuf, enrollment: Arc<Enrollment>, live: Arc<AtomicBool>) -> Retrier {
-        Retrier { db, dir, enrollment, live, now: Box::new(crate::history::now_ms), threshold: RETRY_THRESHOLD, recovered: Box::new(|_| {}), decision_needed: Box::new(|_| {}) }
+    pub fn new(db: Db, dir: PathBuf, enrollment: Arc<Enrollment>, live: Arc<AtomicBool>, served: Arc<AtomicBool>) -> Retrier {
+        Retrier { db, dir, enrollment, live, served, now: Box::new(crate::history::now_ms), threshold: RETRY_THRESHOLD, recovered: Box::new(|_| {}), decision_needed: Box::new(|_| {}) }
+    }
+
+    fn held_back(&self) -> bool {
+        self.live.load(SeqCst) || !self.served.load(SeqCst)
     }
 
     /// `runDue`: every due row once, oldest first. Returns how many were recovered.
@@ -87,8 +93,14 @@ impl Retrier {
                 continue;
             }
             // The row stays due; the next poll checks again.
-            if self.live.load(SeqCst) {
+            if self.held_back() {
                 break;
+            }
+            // Recorded for another server, or for none: it waits, untouched, for that server or the
+            // user. swift-note: Swift's retrier sends to whichever server is set now.
+            // ponytail: the origin alone; the same address re-paired to a new server key still counts as the same server.
+            if self.enrollment.settings().origin.is_none() || history::pending_origin(&self.dir, &item) != self.enrollment.settings().origin {
+                continue;
             }
             if self.retry(&item) {
                 recovered += 1;
@@ -119,7 +131,7 @@ impl Retrier {
         stream.recorded(samples);
         stream.release(samples);
         let result = loop {
-            if self.live.load(SeqCst) {
+            if self.held_back() {
                 stream.cancel();
                 return false;
             }
@@ -136,7 +148,7 @@ impl Retrier {
             }
             Err(reason) => reason,
         };
-        if self.live.load(SeqCst) {
+        if self.held_back() {
             return false;
         }
         let attempts = item.attempts + 1;

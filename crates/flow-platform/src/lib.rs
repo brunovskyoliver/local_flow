@@ -551,12 +551,13 @@ pub struct Fake {
     pub export_incomplete: std::cell::Cell<bool>,
     pub identifiers: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     pub appearances: std::rc::Rc<std::cell::RefCell<Vec<Option<bool>>>>,
+    pub inserter: Option<std::sync::Arc<dyn flow_core::dictation::session::Inserter>>,
 }
 
 impl Default for Fake {
     fn default() -> Self {
         Fake {
-            audio: None, app_names: Default::default(), secrets: Default::default(), secrets_fail: Default::default(), device_keys: Default::default(), live_device_keys: Default::default(), device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), install_states: Default::default(), ai_phase: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default() }
+            audio: None, app_names: Default::default(), secrets: Default::default(), secrets_fail: Default::default(), device_keys: Default::default(), live_device_keys: Default::default(), device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), install_states: Default::default(), ai_phase: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), inserter: None }
     }
 }
 
@@ -675,6 +676,9 @@ impl Services for Fake {
     }
     fn capture_insertion_target(&self) -> Result<Option<CapturedTarget>, Unavailable> {
         Ok(self.target.borrow().clone())
+    }
+    fn inserter(&self) -> Option<std::sync::Arc<dyn flow_core::dictation::session::Inserter>> {
+        self.inserter.clone()
     }
     fn insert_once(&self, _: &CapturedTarget, _: &str) -> Result<InsertOutcome, Unavailable> {
         self.insert_outcome.get().ok_or(Unavailable("text insertion"))

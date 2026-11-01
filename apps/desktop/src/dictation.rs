@@ -95,6 +95,8 @@ pub struct Driver {
     /// The running observation's cancel; the setting, read live by its thread.
     observing: Option<Arc<AtomicBool>>,
     learn_corrections: Arc<AtomicBool>,
+    /// `routing.served(Dictation)` for the retrier's thread, which has no preferences.
+    dictation_served: Arc<AtomicBool>,
     /// The bubble showing, and those waiting for it to end.
     note: Option<Note>,
     notes: std::collections::VecDeque<Note>,
@@ -120,7 +122,7 @@ impl Driver {
         let (mic, flag, sender) = (parts.mic.clone(), running.clone(), publish.clone());
         let (database, pending_dir, credentials, inserter) = (parts.database.clone(), parts.pending_dir.clone(), parts.credentials.clone(), parts.inserter.clone());
         std::thread::Builder::new().name("dictation".into()).spawn(move || serve(parts, keep_loaded, inbox, publish, flag)).expect("the dictation thread starts");
-        Driver { commands, publish: sender, events: Mutex::new(events), database, pending_dir, credentials, inserter, observing: None, learn_corrections: Arc::default(), note: None, notes: Default::default(), action: None, retrier_started: false, offered: None, installing: false, mic, running, control: None, model_installed: false, keep_loaded }
+        Driver { commands, publish: sender, events: Mutex::new(events), database, pending_dir, credentials, inserter, observing: None, learn_corrections: Arc::default(), dictation_served: Arc::default(), note: None, notes: Default::default(), action: None, retrier_started: false, offered: None, installing: false, mic, running, control: None, model_installed: false, keep_loaded }
     }
 
     fn ask(&self, command: impl FnOnce(Sender<bool>) -> Command, limit: Duration) -> bool {
@@ -288,6 +290,7 @@ fn poll(cx: &mut App) {
     if cx.global::<Session>().shortcut_available != available {
         update_session(cx, |s| s.shortcut_available = available);
     }
+    publish_routing(cx);
     start_retrier(cx);
     let learn = cx.global::<Core>().prefs.bool_or("learnCorrections", false);
     cx.global::<Driver>().learn_corrections.store(learn, SeqCst);
@@ -319,6 +322,11 @@ fn release_for_install(cx: &mut App) {
     driver.installing = any;
 }
 
+fn publish_routing(cx: &App) {
+    let served = server::routing(&cx.global::<Core>().prefs).served(server::Service::Dictation);
+    cx.global::<Driver>().dictation_served.store(served, SeqCst);
+}
+
 /// `PendingRemoteRetrier`, from the first time this device is approved. A live dictation goes first.
 fn start_retrier(cx: &mut App) {
     if cx.global::<Driver>().retrier_started || server::remote_state(&cx.global::<Core>().prefs) != "approved" {
@@ -328,7 +336,7 @@ fn start_retrier(cx: &mut App) {
     let driver = cx.global_mut::<Driver>();
     driver.retrier_started = true;
     let Ok(db) = Db::open_or_create(&driver.database) else { return };
-    let mut retrier = Retrier::new(db, driver.pending_dir.clone(), enrollment.clone(), driver.running.clone());
+    let mut retrier = Retrier::new(db, driver.pending_dir.clone(), enrollment.clone(), driver.running.clone(), driver.dictation_served.clone());
     let (recovered, needed) = (driver.publish.clone(), driver.publish.clone());
     retrier.recovered = Box::new(move |_| drop(recovered.send(Event::HistoryChanged)));
     retrier.decision_needed = Box::new(move |_| drop(needed.send(Event::HistoryChanged)));
@@ -837,6 +845,27 @@ pub(crate) mod tests {
             assert_eq!(cx.global::<Driver>().action.as_deref(), Some("d1"));
             assert!(cx.global::<Session>().pill.action.is_some());
             assert!(session_command(SessionCommand::RetryRewrite, cx).is_ok());
+        });
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[flow_ui::gpui::test]
+    async fn the_retriers_gate_follows_routing(cx: &mut TestAppContext) {
+        boot(cx, Mode::Light);
+        let root = std::env::temp_dir().join(format!("flow-driver-served-{}", std::process::id()));
+        cx.update(|cx| {
+            ensure_session(cx);
+            cx.set_global(Driver::spawn(doubles(&root), false));
+            let core = cx.global_mut::<Core>();
+            core.prefs.set("remote.enabled", true);
+            core.prefs.set("remote.consentVersion", 99_i64);
+            core.prefs.set("remote.serverURL", "https://flow.example.com");
+            core.prefs.set("remote.state", "approved");
+            publish_routing(cx);
+            assert!(cx.global::<Driver>().dictation_served.load(SeqCst));
+            cx.global_mut::<Core>().prefs.set("server.override.dictation", "thisMac");
+            publish_routing(cx);
+            assert!(!cx.global::<Driver>().dictation_served.load(SeqCst), "this Mac: nothing retries on the server");
         });
         let _ = std::fs::remove_dir_all(&root);
     }
