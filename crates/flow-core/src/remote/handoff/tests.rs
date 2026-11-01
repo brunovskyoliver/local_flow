@@ -142,9 +142,49 @@ fn stored_paths_stay_inside_the_root() {
     let root = Path::new("/r");
     assert_eq!(resolve(root, "a/b.aac"), Some(PathBuf::from("/r/a/b.aac")));
     let long = "a".repeat(256);
-    for bad in ["", "/etc/passwd", "../x", "a/../b", "a/./b", "a//b", "a\0b", "a\\b", long.as_str()] {
+    for bad in ["", "/etc/passwd", "../x", "a/../b", "a/./b", "a//b", "a\0b", "a\\b", long.as_str(), "C:/x", "a/mic.aac:stream", "NUL", "a/con.aac", "a/Com1", "lpt9.txt", "a/aux .x", "a/b.", "a/b ", "a./b", "CONOUT$"] {
         assert_eq!(resolve(root, bad), None, "{bad:?}");
     }
+    for fine in ["a/COM10", "a/console.aac", "a/nullable", "a/COM0"] {
+        assert!(resolve(root, fine).is_some(), "{fine:?}");
+    }
+}
+
+/// A processed result whose schema or rows `change` makes hostile.
+fn hostile_result(r: &Rig, change: &str) -> PathBuf {
+    let result = r.dir.join("result.sqlite");
+    let conn = Connection::open(&result).unwrap();
+    conn.execute_batch(&format!("PRAGMA foreign_keys=OFF;{SWIFT_BUNDLE}{}{change}", sql(PROCESSED, ID))).unwrap();
+    result
+}
+
+#[test]
+fn a_result_with_a_view_or_trigger_is_refused_before_it_runs() {
+    for change in ["CREATE VIEW hang AS WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n) SELECT i FROM n;", "CREATE TRIGGER t AFTER INSERT ON meetings BEGIN SELECT 1; END;"] {
+        let r = rig("active");
+        let result = hostile_result(&r, change);
+        let before = dump(&r.db().conn);
+        assert_eq!(r.handoff(|_| Err(Failure::Refused)).merge(ID, &result), Err(Failure::Refused));
+        assert_eq!(dump(&r.db().conn), before);
+    }
+}
+
+#[test]
+fn a_query_past_the_work_limit_is_interrupted() {
+    let conn = Connection::open_in_memory().unwrap();
+    limit_work(&conn, 10);
+    let endless = conn.query_row("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n) SELECT max(i) FROM n", [], |r| r.get::<_, i64>(0));
+    assert!(matches!(endless, Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::OperationInterrupted), "{endless:?}");
+}
+
+#[test]
+fn a_citation_of_another_meetings_segment_merges_nothing() {
+    let r = rig("citation");
+    r.db().conn.execute_batch(&sql("CREATE TEMP TABLE c AS SELECT * FROM transcript_segments WHERE meeting_id='{ID}' LIMIT 1; UPDATE c SET id='foreign', meeting_id='{OTHER}'; INSERT INTO transcript_segments SELECT * FROM c;", ID)).unwrap();
+    let result = hostile_result(&r, &sql("INSERT INTO analysis_sources(run_id,meeting_id,target_kind,target_id,ordinal,source_kind,segment_id) VALUES('{ID}-an','{ID}','summary','{ID}-an',0,'segment','foreign');", ID));
+    let before = dump(&r.db().conn);
+    assert_eq!(r.handoff(|_| Err(Failure::Refused)).merge(ID, &result), Err(Failure::Refused));
+    assert_eq!(dump(&r.db().conn), before);
 }
 
 #[test]
@@ -284,6 +324,40 @@ fn run_locally_and_a_deleted_meeting_abandon_the_server_copy() {
     assert!(!r.staged(ID));
     h.meeting_will_delete(ID);
     assert_eq!(fake.did(Action::Delete), 2, "nothing staged: nothing to delete");
+}
+
+#[test]
+fn a_delete_that_didnt_reach_the_server_is_repeated() {
+    let r = rig("deleteoffline");
+    let fake = Arc::new(Fake::default());
+    let h = r.handoff(fake.call());
+    h.step(ID, true, "automatic");
+    *fake.error.lock().unwrap() = Some(Failure::Waiting("unreachable".into()));
+    h.meeting_will_delete(ID);
+    assert!(r.staged(ID), "still owes the server a delete");
+    r.db().conn.execute("DELETE FROM meetings WHERE id=?1", [ID]).unwrap();
+    assert_eq!(h.step(ID, false, "automatic"), Step::Waiting("unreachable".into()));
+    assert!(r.staged(ID));
+    *fake.error.lock().unwrap() = None;
+    let deletes = fake.did(Action::Delete);
+    assert_eq!(h.step(ID, false, "automatic"), Step::NotHandedOff);
+    assert_eq!(fake.did(Action::Delete), deletes + 1);
+    assert!(!r.staged(ID));
+}
+
+#[test]
+fn turning_off_forgets_staged_bundles_and_the_meeting_exports_again() {
+    let r = rig("forget");
+    let fake = Arc::new(Fake::default());
+    let h = r.handoff(fake.call());
+    h.step(ID, true, "automatic");
+    assert!(r.staged(ID));
+    forget_staged(&r.root);
+    assert!(h.in_flight().is_empty());
+    assert!(r.audio_intact(ID), "recordings are never touched");
+    assert_eq!(pending(&r.db()).unwrap(), [ID.to_string()]);
+    assert_eq!(h.step(ID, true, "automatic"), Step::Waiting("queued".into()));
+    assert!(r.staged(ID), "staged again under the current route");
 }
 
 fn plan(route: Route) -> Plan {
@@ -512,6 +586,31 @@ mod flowd {
         h.meeting_will_delete(ID);
         assert!(server_list(&pool).is_empty());
         assert!(!r.staged(ID));
+    }
+
+    #[test]
+    fn an_import_with_any_bad_segment_path_places_nothing() {
+        let f = Arc::new(Flowd::start());
+        let (_e, pool) = paired(&f);
+        let phone = rig("badpath");
+        let inner = call(&pool);
+        let h = phone.handoff(move |r: &Request| {
+            let mut r = r.clone();
+            r.copy = matches!(r.action, Action::Put | Action::Start);
+            if r.action == Action::Delete {
+                return Ok(Reply { state: Some(State::Missing), ..Reply::default() });
+            }
+            inner(&r)
+        });
+        // The failed row carries the path, so no file would come with it.
+        phone.db().conn.execute("UPDATE meeting_segments SET relative_path='../../evil.aac' WHERE state<>'finalized'", []).unwrap();
+        assert_eq!(run(&h, ID).0, Step::Merged { labeled: true });
+        assert!(exchange(&pool, &Request::new(Action::Release, Some(ID))).is_ok());
+        let mac = rig_for("badmac", "2C3D4E5F-0000-4000-8000-000000000002");
+        f.hand_to_another_device(ID);
+        assert!(mac.handoff(call(&pool)).import_phone_meetings().is_empty());
+        assert!(!mac.audio_intact(ID), "nothing placed");
+        assert_eq!(server_list(&pool).len(), 1, "the server copy stays for a later try");
     }
 
     #[test]

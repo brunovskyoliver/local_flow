@@ -51,7 +51,7 @@ impl Core {
 
     /// `turnOffRemoteDictation()`: enrollment `turnOff()` removes the device key, the four Keychain
     /// items and the remote settings, history stays, parked channels close and whatever is running
-    /// stores nothing. Failures are ignored as Swift's `try?` and detached task ignore them.
+    /// stores nothing, and staged handoff bundles go, recordings stay. Failures are ignored as Swift's `try?` and detached task ignore them.
     pub fn turn_off_remote(&mut self) {
         if let Some(remote) = &self.remote {
             remote.enrollment.cancel();
@@ -65,6 +65,7 @@ impl Core {
             let _ = self.services.remove_secret(&flow_core::settings::remote_keychain(account));
         }
         flow_core::settings::reset_remote(&mut self.prefs);
+        flow_core::remote::handoff::forget_staged(&self.paths.root.join("Meetings"));
     }
 
     /// In-memory database with the seed, memory preferences and fake services.
@@ -95,5 +96,27 @@ impl Core {
         }
         // Swift completes recovery even when a reconciler throws, so New note unlocks.
         self.reconciled = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn turning_off_removes_staged_bundles_and_keeps_recordings() {
+        let id = "6f3a1c52-8d47-4e19-9b21-0c7e5a2d4f10";
+        let root = std::env::temp_dir().join(format!("flow-turn-off-{}", std::process::id()));
+        let (bundle, recording) = (root.join("Handoff").join(id).join("bundle.sqlite"), root.join("Meetings").join(id).join("mic-0001.aac"));
+        std::fs::create_dir_all(bundle.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(recording.parent().unwrap()).unwrap();
+        std::fs::write(&bundle, b"x").unwrap();
+        std::fs::write(&recording, b"x").unwrap();
+        let mut core = Core::for_test();
+        core.paths = Paths::new(root.clone());
+        core.turn_off_remote();
+        let (gone, kept) = (!bundle.parent().unwrap().exists(), recording.exists());
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(gone && kept);
     }
 }

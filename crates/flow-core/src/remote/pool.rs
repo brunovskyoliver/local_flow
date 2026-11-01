@@ -29,6 +29,8 @@ struct Parked {
 struct State {
     parked: BTreeMap<Role, Parked>,
     leased: BTreeSet<Role>,
+    /// Leased when `close_parked` ran: these close on release instead of parking.
+    closing: BTreeSet<Role>,
 }
 
 pub type Opener = Box<dyn Fn() -> Result<Channel, ChannelError> + Send + Sync>;
@@ -60,7 +62,10 @@ impl Pool {
     }
 
     fn hand_off(&self, role: Role) {
-        self.state().leased.remove(&role);
+        let mut state = self.state();
+        state.leased.remove(&role);
+        state.closing.remove(&role);
+        drop(state);
         self.freed.notify_all();
     }
 
@@ -83,10 +88,12 @@ impl Pool {
 
     /// Ends the lease. A channel whose op finished cleanly is kept for the next op; any other closes.
     pub fn release(&self, role: Role, channel: Channel, next_op: Option<i64>) {
-        if let Some(next_op) = next_op {
-            let at = (self.now)();
-            self.state().parked.insert(role, Parked { channel, next_op, at });
+        let at = (self.now)();
+        let mut state = self.state();
+        if let Some(next_op) = next_op.filter(|_| !state.closing.contains(&role)) {
+            state.parked.insert(role, Parked { channel, next_op, at });
         }
+        drop(state);
         self.hand_off(role);
     }
 
@@ -106,9 +113,11 @@ impl Pool {
         (self.open)()
     }
 
-    /// Closes every idle channel.
+    /// Closes every idle channel, and every leased one as its op ends.
     pub fn close_parked(&self) {
-        self.state().parked.clear();
+        let mut state = self.state();
+        state.parked.clear();
+        state.closing = state.leased.clone();
     }
 }
 
@@ -175,6 +184,17 @@ mod tests {
         pool.close_parked();
         assert_eq!(counters.closed(), 2);
         drop(leased);
+    }
+
+    #[test]
+    fn a_channel_leased_during_close_parked_closes_on_release() {
+        let (pool, counters, _) = pool(2);
+        let (leased, _) = pool.lease(Role::Background).unwrap();
+        pool.close_parked();
+        pool.release(Role::Background, leased, Some(2));
+        assert_eq!(counters.closed(), 1);
+        let (_, op) = pool.lease(Role::Background).unwrap();
+        assert_eq!(op, 1, "a fresh channel, and only this lease was marked");
     }
 
     #[test]

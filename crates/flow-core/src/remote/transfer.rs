@@ -584,6 +584,43 @@ mod tests {
         }
     }
 
+    /// A turn off during a chunk: the channel it used closes, and no next chunk leaves.
+    #[test]
+    fn turning_off_mid_chunk_stops_the_upload() {
+        use super::super::channel::{Channel, Purpose, Transports};
+        use super::super::scripted::{Reply as Script_, Script};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+        let d = dir("off");
+        let file = d.join("f");
+        std::fs::write(&file, vec![7; CHUNK_BYTES * 4]).unwrap();
+        let script = Script::new(vec![Script_::ready(); 3]);
+        let off = Arc::new(AtomicBool::new(false));
+        let gone = off.clone();
+        let opener: super::super::pool::Opener = Box::new(move || {
+            if gone.load(Ordering::SeqCst) {
+                return Err(ChannelError::Closed);
+            }
+            let mut channel = Channel::new(script.open("ws://x").map_err(|_| ChannelError::Unreachable)?, &script.public_key())?;
+            channel.open(Purpose::Session, Some("token"))?;
+            Ok(channel)
+        });
+        let pool = Pool::new(opener, Box::new(|| Duration::ZERO));
+        let calls = AtomicU32::new(0);
+        let call = |r: &Request| {
+            let (channel, op) = pool.lease(Role::Background).map_err(mapped)?;
+            if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                off.store(true, Ordering::SeqCst);
+                pool.close_parked();
+            }
+            pool.release(Role::Background, channel, Some(op + 1));
+            Ok(Reply { state: Some(State::Receiving), offset: Some(r.offset.unwrap() + r.data.as_ref().map_or(0, |b| b.len() as u64)), ..Reply::default() })
+        };
+        assert_eq!(put("6F3A1C52-8D47-4E19-9B21-0C7E5A2D4F10", "f", &file, Duration::ZERO, &call), Err(Failure::Waiting("unreachable".into())));
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "the size question and one chunk");
+        let _ = std::fs::remove_dir_all(d);
+    }
+
     #[test]
     fn errors_map_like_remote_meeting_jobs() {
         let s = |c: &str| mapped(ChannelError::Server(c.into()));

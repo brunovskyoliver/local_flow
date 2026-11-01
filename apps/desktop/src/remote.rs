@@ -155,6 +155,9 @@ pub fn start_handoffs(cx: &mut App) {
                 }
                 if remote.enrollment.generation() == generation {
                     after.store(&mut cx.global_mut::<Core>().prefs);
+                } else {
+                    // Turned off during this tick, which may have staged a bundle after the sweep.
+                    handoff::forget_staged(&cx.global::<Core>().paths.root.join("Meetings"));
                 }
                 let Ok(tick) = tick else { return };
                 crate::shell::ensure_session(cx);

@@ -157,11 +157,13 @@ pub struct Enrollment {
     refreshes: AtomicU64,
     /// Bumped on turn off. Whatever started earlier stores nothing.
     generation: AtomicU64,
+    /// Bumped on turn off and on every pin: a refresh already running holds the old credentials.
+    credentials: AtomicU64,
 }
 
 impl Enrollment {
     pub fn new(parts: Parts) -> Enrollment {
-        Enrollment { parts, inner: Mutex::default(), refreshing: Mutex::new(None), refreshes: AtomicU64::new(0), generation: AtomicU64::new(0) }
+        Enrollment { parts, inner: Mutex::default(), refreshing: Mutex::new(None), refreshes: AtomicU64::new(0), generation: AtomicU64::new(0), credentials: AtomicU64::new(0) }
     }
 
     /// Session channels for `Pool`, each with a live token.
@@ -221,11 +223,15 @@ impl Enrollment {
 
     /// Pins the key the user saw. Only enrollment pins; a later mismatch never re-pins.
     pub fn pin(&self, identity: &Identity) -> Result<(), EnrollError> {
-        let mut inner = self.inner();
+        self.pin_locked(&mut self.inner(), identity)
+    }
+
+    fn pin_locked(&self, inner: &mut Inner, identity: &Identity) -> Result<(), EnrollError> {
         if inner.settings.origin.is_none() {
             return Err(EnrollError::NotConfigured);
         }
         let key = identity.validated_key().ok_or(EnrollError::InvalidIdentity)?;
+        self.credentials.fetch_add(1, Ordering::SeqCst);
         self.drop_device_key();
         self.parts.secrets.remove_all()?;
         inner.access_issued_at = None;
@@ -408,11 +414,12 @@ impl Enrollment {
         channel.send(json!({"type": "pair", "op": 1, "pairing_token": token.value, "device_name": device_name(&self.parts.device_name), "device_key": base64url_encode(public), "signature": base64url_encode(&signature)}))?;
         match channel.receive()? {
             ServerMessage::Enrolled { op: 1, state, refresh_token: Some(refresh) } if state == "approved" => {
+                // One guard: a turn off comes wholly before this, or removes all of it afterwards.
+                let mut inner = self.inner();
                 if generation != self.generation() {
                     return Err(EnrollError::TurnedOff);
                 }
-                self.pin(identity)?;
-                let mut inner = self.inner();
+                self.pin_locked(&mut inner, identity)?;
                 self.parts.secrets.write("device-key", handle)?;
                 self.parts.secrets.write("refresh-token", refresh.as_bytes())?;
                 inner.pair_attempt = None;
@@ -469,7 +476,7 @@ impl Enrollment {
     }
 
     fn perform_refresh(&self) -> Option<String> {
-        let generation = self.generation();
+        let credentials = self.credentials.load(Ordering::SeqCst);
         let origin = self.origin()?;
         let key = self.pinned_key()?;
         let refresh = self.token("refresh-token")?;
@@ -494,6 +501,10 @@ impl Enrollment {
             channel.send(json!({"type": "refresh", "op": 1, "refresh_token": refresh, "signature": base64url_encode(&signature)}))?;
             channel.receive().map(Some)
         })();
+        // Pinned or turned off meanwhile: this answer is about credentials that are gone.
+        if credentials != self.credentials.load(Ordering::SeqCst) {
+            return None;
+        }
         match result {
             Ok(None) => {
                 self.device_key_lost();
@@ -501,7 +512,7 @@ impl Enrollment {
             }
             Ok(Some(ServerMessage::Tokens { op: 1, access_token, refresh_token })) => {
                 let mut inner = self.inner();
-                if generation != self.generation() {
+                if credentials != self.credentials.load(Ordering::SeqCst) {
                     return None;
                 }
                 self.parts.secrets.write("refresh-token", refresh_token.as_bytes()).ok()?;
@@ -599,6 +610,7 @@ impl Enrollment {
     pub fn cancel(&self) {
         let mut inner = self.inner();
         self.generation.fetch_add(1, Ordering::SeqCst);
+        self.credentials.fetch_add(1, Ordering::SeqCst);
         inner.settings = RemoteSettings::default();
         inner.access_issued_at = None;
         if let Some(attempt) = inner.pair_attempt.take() {
@@ -872,6 +884,116 @@ mod tests {
         let f = case("busy");
         assert_eq!(f.e.settings().state, "approved");
         assert_eq!(item(&f, "refresh-token").unwrap(), b"lfr_old");
+    }
+
+    /// Runs `during` once, as the first frame of the second reply arrives: an op caught in flight.
+    struct Midway {
+        script: Script,
+        during: Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>,
+    }
+    struct MidwayEnd(Box<dyn Transport>, Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>, u32);
+    impl Transports for Midway {
+        fn open(&self, url: &str) -> Result<Box<dyn Transport>, TransportError> {
+            Ok(Box::new(MidwayEnd(self.script.open(url)?, self.during.clone(), 0)))
+        }
+    }
+    impl Transport for MidwayEnd {
+        fn send(&mut self, frame: &[u8]) -> Result<(), TransportError> {
+            self.0.send(frame)
+        }
+        fn receive(&mut self) -> Result<Received, TransportError> {
+            self.2 += 1;
+            if self.2 == 2 {
+                if let Some(during) = self.1.lock().unwrap().take() {
+                    during();
+                }
+            }
+            self.0.receive()
+        }
+        fn close(&mut self) {
+            self.0.close();
+        }
+    }
+
+    #[test]
+    fn a_refresh_running_during_a_new_pin_stores_nothing() {
+        let script = Script::new(vec![Reply::ready(), Reply::tokens("old-access", "old-refresh")]);
+        let key = script.public_key();
+        let secrets = Arc::new(MemorySecrets::default());
+        let keys = Arc::new(MemoryDeviceKeys::default());
+        let during: Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>> = Arc::default();
+        let e = Arc::new(Enrollment::new(Parts {
+            secrets: secrets.clone(),
+            keys: keys.clone(),
+            sign_in: Arc::new(FakeSignIn::default()),
+            identity: Arc::new(FakeIdentity(Mutex::new(Ok(identity_of(&key))))),
+            transports: Arc::new(Midway { script, during: during.clone() }),
+            now: Box::new(|| Duration::from_secs(1000)),
+            device_name: "Test".into(),
+        }));
+        e.load(RemoteSettings { origin: Some("https://flow.example.com".into()), state: "approved".into(), notice: None });
+        e.pin(&identity_of(&key)).unwrap();
+        e.load(RemoteSettings { state: "approved".into(), ..e.settings() });
+        let (handle, _) = keys.create().unwrap();
+        secrets.write("device-key", &handle).unwrap();
+        secrets.write("refresh-token", b"lfr_old").unwrap();
+        let (again, store, pinned) = (e.clone(), secrets.clone(), key.clone());
+        *during.lock().unwrap() = Some(Box::new(move || {
+            again.pin(&identity_of(&pinned)).unwrap();
+            store.write("refresh-token", b"lfr_new").unwrap();
+        }));
+        assert_eq!(e.refresh_now(), None);
+        assert_eq!(secrets.read("refresh-token").unwrap().unwrap(), b"lfr_new");
+        assert_eq!(secrets.read("access-token").unwrap(), None);
+    }
+
+    /// A turn off on another thread while pairing stores its credentials ends with none of them.
+    #[test]
+    fn a_turn_off_racing_a_pair_leaves_no_credentials() {
+        struct Racing(MemorySecrets, Mutex<Option<Box<dyn FnOnce() + Send>>>);
+        impl Secrets for Racing {
+            fn read(&self, account: &str) -> Result<Option<Vec<u8>>, Unavailable> {
+                self.0.read(account)
+            }
+            fn write(&self, account: &str, value: &[u8]) -> Result<(), Unavailable> {
+                if account == "server-key" {
+                    if let Some(off) = self.1.lock().unwrap().take() {
+                        std::thread::spawn(off);
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                }
+                self.0.write(account, value)
+            }
+            fn remove(&self, account: &str) -> Result<(), Unavailable> {
+                self.0.remove(account)
+            }
+        }
+        let script = Script::new(vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1"))]);
+        let key = script.public_key();
+        let secrets = Arc::new(Racing(MemorySecrets::default(), Mutex::new(None)));
+        let e = Arc::new(Enrollment::new(Parts {
+            secrets: secrets.clone(),
+            keys: Arc::new(MemoryDeviceKeys::default()),
+            sign_in: Arc::new(FakeSignIn::default()),
+            identity: Arc::new(FakeIdentity(Mutex::new(Ok(identity_of(&key))))),
+            transports: Arc::new(script),
+            now: Box::new(|| Duration::from_secs(1000)),
+            device_name: "Test".into(),
+        }));
+        e.load(RemoteSettings { origin: Some("https://flow.example.com".into()), state: "off".into(), notice: None });
+        let (off, done) = (e.clone(), Arc::new(AtomicBool::new(false)));
+        let finished = done.clone();
+        *secrets.1.lock().unwrap() = Some(Box::new(move || {
+            off.turn_off();
+            finished.store(true, Ordering::SeqCst);
+        }));
+        let _ = e.pair(&pair_token(&key));
+        while !done.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        for account in ["server-key", "device-key", "refresh-token", "access-token"] {
+            assert_eq!(secrets.read(account).unwrap(), None, "{account}");
+        }
     }
 
     #[test]

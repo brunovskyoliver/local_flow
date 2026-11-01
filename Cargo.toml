@@ -13,7 +13,7 @@ gpui-kit = "=0.8.1"
 flow-ui = { path = "crates/flow-ui" }
 flow-core = { path = "crates/flow-core" }
 flow-platform = { path = "crates/flow-platform" }
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled", "hooks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "3", default-features = false, features = ["rustls"] }

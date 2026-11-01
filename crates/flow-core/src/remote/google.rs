@@ -215,12 +215,16 @@ mod tests {
         let seen: Arc<Mutex<Vec<String>>> = Arc::default();
         let log = seen.clone();
         std::thread::spawn(move || {
-            for stream in listener.incoming() {
+            'connections: for stream in listener.incoming() {
                 let mut stream = stream.unwrap();
                 let mut request = vec![];
                 let mut chunk = [0; 4096];
                 loop {
-                    let n = stream.read(&mut chunk).unwrap();
+                    // A port probe connects and goes without a request.
+                    let n = stream.read(&mut chunk).unwrap_or(0);
+                    if n == 0 {
+                        continue 'connections;
+                    }
                     request.extend_from_slice(&chunk[..n]);
                     let text = String::from_utf8_lossy(&request).to_string();
                     let Some((head, rest)) = text.split_once("\r\n\r\n") else { continue };

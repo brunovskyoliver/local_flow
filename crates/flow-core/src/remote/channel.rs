@@ -197,13 +197,15 @@ pub struct Channel {
     crypto: Crypto,
     failure: Option<ChannelError>,
     closed: bool,
+    /// `ready` opened, so the server holds the pinned key: a later 4001 isn't a mismatch.
+    ready: bool,
     /// What the server offered in `ready`.
     pub capabilities: Option<Capabilities>,
 }
 
 impl Channel {
     pub fn new(transport: Box<dyn Transport>, server_key: &[u8]) -> Result<Channel, ChannelError> {
-        Ok(Channel { transport, crypto: Crypto::new(server_key)?, failure: None, closed: false, capabilities: None })
+        Ok(Channel { transport, crypto: Crypto::new(server_key)?, failure: None, closed: false, ready: false, capabilities: None })
     }
 
     /// The exporter value that binds signatures and the OIDC nonce to this channel.
@@ -221,6 +223,7 @@ impl Channel {
         self.send_frame(&frame)?;
         match self.receive()? {
             ServerMessage::Ready(offered) => {
+                self.ready = true;
                 self.capabilities = offered;
                 Ok(())
             }
@@ -251,6 +254,8 @@ impl Channel {
         let frame = match self.transport.receive() {
             Ok(Received::Binary(frame)) => frame,
             Ok(Received::Text) => return Err(self.fail(ChannelError::Protocol)),
+            // A close code is unauthenticated: anyone on the path can send one.
+            Err(TransportError::Closed(4001)) if self.ready => return Err(self.fail(ChannelError::Closed)),
             Err(TransportError::Closed(4001)) => return Err(self.fail(ChannelError::PinMismatch)),
             Err(TransportError::Timeout) => return Err(self.fail(ChannelError::Timeout)),
             Err(_) => return Err(self.fail(ChannelError::Unreachable)),
@@ -516,6 +521,13 @@ mod tests {
         assert_eq!(error(Script::new(vec![Reply::error("busy")])), Err(ChannelError::Server("busy".into())));
         assert_eq!(error(Script::new(vec![Reply::Json(serde_json::json!({"schema_version": 2, "type": "ready"}))])), Err(ChannelError::Server("unsupported_version".into())));
         assert_eq!(error(Script::new(vec![Reply::Json(serde_json::json!({"schema_version": 1, "type": "tokens"}))])), Err(ChannelError::Protocol));
+    }
+
+    #[test]
+    fn a_4001_after_ready_is_a_plain_close() {
+        let (result, mut channel) = opened(Script::new(vec![Reply::ready(), Reply::Close(4001)]), Purpose::Session);
+        assert_eq!(result, Ok(()));
+        assert_eq!(channel.receive(), Err(ChannelError::Closed));
     }
 
     #[test]

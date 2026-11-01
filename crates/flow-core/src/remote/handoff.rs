@@ -57,6 +57,16 @@ const RECORDING_ROWS: [(&str, &str); 5] = [
 ];
 const INFERENCE_TABLES: [&str; 3] = ["meeting_transcriptions", "diarization_runs", "analysis_runs"];
 const MAX_RELATIVE_PATH: usize = 255;
+/// Progress handler ticks a bundle's queries may run, 10,000 VM steps each: seconds of work, far
+/// beyond any real meeting's rows.
+const BUNDLE_TICKS: u32 = 100_000;
+/// A row citing a segment outside its meeting: a foreign key alone would let one meeting's analysis
+/// quote another's transcript.
+const OUTSIDE_CITATIONS: [&str; 3] = [
+    "SELECT EXISTS(SELECT 1 FROM main.analysis_sources WHERE meeting_id=?1 AND segment_id NOT IN (SELECT id FROM main.transcript_segments WHERE meeting_id=?1))",
+    "SELECT EXISTS(SELECT 1 FROM main.analysis_items WHERE meeting_id=?1 AND due_source_segment_id NOT IN (SELECT id FROM main.transcript_segments WHERE meeting_id=?1))",
+    "SELECT EXISTS(SELECT 1 FROM main.speaker_assignments WHERE run_id IN (SELECT id FROM main.diarization_runs WHERE meeting_id=?1) AND segment_id NOT IN (SELECT id FROM main.transcript_segments WHERE meeting_id=?1))",
+];
 /// `serverProgressInterval`: a processing meeting is asked this often.
 pub const PROGRESS_EVERY: Duration = Duration::from_secs(10);
 /// `phoneImportInterval`.
@@ -86,8 +96,60 @@ impl From<crate::db::DbError> for Failure {
 
 /// `MeetingStorageRoot.resolve`: a stored path stays inside the root. A bundle's path is server data.
 fn resolve(root: &Path, relative: &str) -> Option<PathBuf> {
-    let safe = !relative.is_empty() && relative.len() <= MAX_RELATIVE_PATH && !relative.starts_with('/') && !relative.contains(['\0', '\\']) && relative.split('/').all(|p| !p.is_empty() && p != "." && p != "..");
+    let safe = !relative.is_empty() && relative.len() <= MAX_RELATIVE_PATH && !relative.starts_with('/') && !relative.contains(['\0', '\\', ':']) && relative.split('/').all(|p| !p.is_empty() && p != "." && p != ".." && !windows_special(p));
     safe.then(|| root.join(relative))
+}
+
+/// Windows strips a trailing dot or space and opens a device for a reserved name, with any extension.
+/// Refused on every platform: a bundle is the same data wherever it lands.
+fn windows_special(part: &str) -> bool {
+    if part.ends_with(['.', ' ']) {
+        return true;
+    }
+    let stem = part.split('.').next().unwrap_or(part).trim_end_matches(' ').to_ascii_uppercase();
+    let numbered = (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.chars().count() == 4 && stem.chars().last().is_some_and(|c| matches!(c, '1'..='9' | '¹' | '²' | '³'));
+    numbered || ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&stem.as_str())
+}
+
+/// Attaches a server's database as `result` with nothing in it able to run: no view or trigger, no
+/// untrusted schema function, and a limit on the work its queries do.
+fn attach_result(conn: &Connection, url: &Path) -> Result<(), Failure> {
+    limit_work(conn, BUNDLE_TICKS);
+    conn.execute_batch("PRAGMA trusted_schema=OFF")?;
+    conn.execute("ATTACH DATABASE ?1 AS result", [url.to_string_lossy()])?;
+    let active: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM result.sqlite_master WHERE type IN ('view','trigger') OR sql LIKE 'CREATE VIRTUAL%')", [], |r| r.get(0))?;
+    if active { Err(Failure::Refused) } else { Ok(()) }
+}
+
+fn limit_work(conn: &Connection, ticks: u32) {
+    let mut left = ticks;
+    conn.progress_handler(10_000, Some(move || {
+        left = left.saturating_sub(1);
+        left == 0
+    }));
+}
+
+fn refuse_outside_citations(conn: &Connection, id: &str) -> Result<(), Failure> {
+    for query in OUTSIDE_CITATIONS {
+        if conn.query_row(query, [id], |r| r.get(0))? {
+            return Err(Failure::Refused);
+        }
+    }
+    Ok(())
+}
+
+/// `<data>/Handoff/<id>` folders with a staged bundle.
+fn staged_in(directory: &Path) -> Vec<String> {
+    std::fs::read_dir(directory).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).filter(|n| valid_id(n) && directory.join(n).join("bundle.sqlite").exists()).collect()
+}
+
+/// Turning off: every staged bundle goes, so none reaches the next server paired. The recordings stay
+/// under `root`, and `pending` exports the meeting again under whatever route comes next.
+pub fn forget_staged(root: &Path) {
+    let directory = root.parent().unwrap_or(root).join("Handoff");
+    for id in staged_in(&directory) {
+        let _ = std::fs::remove_dir_all(directory.join(id));
+    }
 }
 
 /// Comma-joined quoted columns both schemas have: `trigger` is a keyword.
@@ -151,7 +213,7 @@ impl Handoff {
 
     /// Meetings with a staged bundle: their handoff continues across launches and route changes.
     pub fn in_flight(&self) -> Vec<String> {
-        std::fs::read_dir(&self.directory).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).filter(|n| valid_id(n) && self.dir(n).join("bundle.sqlite").exists()).collect()
+        staged_in(&self.directory)
     }
 
     /// One pass of the meeting's handoff.
@@ -183,8 +245,10 @@ impl Handoff {
             let db = Db::open(&self.database)?;
             let local: Option<bool> = db.conn.query_row("SELECT run_locally FROM meetings WHERE id=?1", [id], |r| r.get(0)).optional()?;
             // Moved to this device, or deleted while the delete couldn't reach the server.
+            // The bundle goes only once the server answered, so a later step repeats the delete.
             if local != Some(false) {
-                self.abandon(id);
+                self.request(Request::new(Action::Delete, Some(id)))?;
+                self.forget(id);
                 return Ok(Step::NotHandedOff);
             }
         }
@@ -274,7 +338,7 @@ impl Handoff {
     pub fn merge(&self, id: &str, url: &Path) -> Result<bool, Failure> {
         let db = Db::open(&self.database)?;
         let conn = &db.conn;
-        conn.execute("ATTACH DATABASE ?1 AS result", [url.to_string_lossy()])?;
+        attach_result(conn, url)?;
         let tx = conn.unchecked_transaction()?;
         let is_final: Option<bool> = conn.query_row("SELECT state='final' FROM result.meeting_transcriptions WHERE meeting_id=?1", [id], |r| r.get(0)).optional()?;
         let present = conn.query_row("SELECT 1 FROM main.meetings WHERE id=?1", [id], |_| Ok(())).optional()?.is_some();
@@ -295,6 +359,7 @@ impl Handoff {
         for (table, filter) in OUTPUTS {
             insert_from_result(conn, table, filter, id)?;
         }
+        refuse_outside_citations(conn, id)?;
         let labeled = finish_merge(conn, id)?;
         tx.commit()?;
         Ok(labeled)
@@ -303,9 +368,9 @@ impl Handoff {
     /// The meeting is about to be deleted: nothing of it stays on the server.
     pub fn meeting_will_delete(&self, id: &str) {
         let _one = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        if self.dir(id).join("bundle.sqlite").exists() {
+        // On a failure the bundle stays, and the step that finds its meeting gone deletes again.
+        if self.dir(id).join("bundle.sqlite").exists() && self.request(Request::new(Action::Delete, Some(id))).is_ok() {
             self.forget(id);
-            let _ = self.request(Request::new(Action::Delete, Some(id)));
         }
     }
 
@@ -343,12 +408,19 @@ impl Handoff {
         private_dir(folder)?;
         let bundle = folder.join("bundle.sqlite");
         self.fetch(id, None, &bundle)?;
-        db.conn.execute("ATTACH DATABASE ?1 AS result", [bundle.to_string_lossy()])?;
-        let paths: Vec<String> = db.conn.prepare("SELECT s.relative_path FROM result.meeting_segments s JOIN result.meeting_tracks t ON t.id=s.track_id WHERE t.meeting_id=?1 AND s.state='finalized' ORDER BY s.relative_path")?.query_map([id], |r| r.get(0))?.collect::<Result<_, _>>()?;
+        attach_result(&db.conn, &bundle)?;
+        let rows: Vec<(String, bool)> = db.conn.prepare("SELECT s.relative_path, s.state='finalized' FROM result.meeting_segments s JOIN result.meeting_tracks t ON t.id=s.track_id WHERE t.meeting_id=?1 ORDER BY s.relative_path")?.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
         // Every file is downloaded and verified before anything is placed.
         let mut files = vec![];
-        for relative in paths {
-            let target = resolve(&self.root, &relative).filter(|t| relative.starts_with(&format!("{id}/")) && !t.exists()).ok_or(Failure::Refused)?;
+        for (relative, finalized) in rows {
+            // Every row's path is checked: these rows get stored, whether or not a file comes with them.
+            let target = resolve(&self.root, &relative).filter(|_| relative.starts_with(&format!("{id}/"))).ok_or(Failure::Refused)?;
+            if !finalized {
+                continue;
+            }
+            if target.exists() {
+                return Err(Failure::Refused);
+            }
             let name = target.file_name().and_then(|n| n.to_str()).ok_or(Failure::Refused)?.to_string();
             let download = folder.join(&name);
             self.fetch(id, Some(&name), &download)?;
@@ -392,6 +464,7 @@ fn insert_imported(conn: &Connection, id: &str) -> Result<bool, Failure> {
     for (table, filter) in RECORDING_ROWS.into_iter().chain(OUTPUTS) {
         insert_from_result(conn, table, filter, id)?;
     }
+    refuse_outside_citations(conn, id)?;
     conn.execute("UPDATE main.meetings SET origin='iphone', run_locally=0 WHERE id=?1", [id])?;
     let labeled = finish_merge(conn, id)?;
     tx.commit()?;
