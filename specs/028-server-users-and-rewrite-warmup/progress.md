@@ -32,3 +32,11 @@
 **Verified**: `make check` passed. New unit tests for the wait, the timing line and log rollover, the session state order, and the pill labels.
 
 **Left**: T015-T019 measurement and the prefix-reuse decision, T017 owner run, T020.
+
+## 2026-11-04: US1 measured
+
+- T016, 10 cold and 10 warm runs per side: port open → ready seen 547 ms median (worst 4.8 s) before, 14 ms after; spawn → rewrite result 5.76 s → 5.10 s median, and the 10.7 s worst case is gone. Warm rewrites 527 → 546 ms, within SC-002's 50 ms.
+- T018: no prefix reuse with the shipped MTPLX settings (0 cached tokens with or without a session header). T019 skipped.
+- What remains of a cold start is MTPLX itself: about 4.5 s from spawn to an open port (Python, MLX and weight load). The model starts on the key press, so speaking hides part of it.
+- T017 (owner key-release runs) needs the Rust Dev app rebuilt with this branch; not run.
+- T020: `make check` passed at 6e19dcf1; later commits add only the measurement script and documents.
