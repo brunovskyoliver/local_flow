@@ -2409,7 +2409,12 @@ async fn library_header_and_rows_have_swifts_type_symbols_and_labels(cx: &mut Te
     assert_eq!(sized("TODAY").1, 500.);
     assert_labelled(cx, &window, "notetaker.refresh", "Refresh notes");
     assert_eq!(flow_ui::probe::symbol_color("arrow.clockwise"), Some(muted));
-    let summary = read(cx, &window, |p| today_summary(None, p.lib.rows.iter().filter(|r| r.id == SEED_FULL).count()));
+    // Counted as the page counts, by local day, so a seed made before midnight isn't "today" after it.
+    let rows = read(cx, &window, |p| p.lib.rows.iter().map(|r| r.created_at).collect::<Vec<_>>());
+    let summary = cx.update(|cx| {
+        let today = local_day(now_ms(), offset_at(now_ms(), cx));
+        today_summary(None, rows.iter().filter(|&&at| local_day(at, offset_at(at, cx)) == today).count())
+    });
     assert_eq!(sized(&summary).0, 15.);
     assert!(has(cx, &window, "meeting.today.summary"));
     assert_eq!(sized("Past notes"), (15., 500., ink));

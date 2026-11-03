@@ -17,3 +17,18 @@
 **Left**
 - US1: pill "Starting AI…", cold-start timing log, measurement script and series, prefix-reuse measurement (T007-T008, T010-T020).
 - US2-US4 not started. US4 waits for the constitution 7.0.0 amendment and ADR 0039 (T050, T051).
+
+## 2026-11-04: US1 code
+
+**Changed**
+- `wait_until_ready` reports `Wait { cold, ready, waited }` and calls a `starting` callback once when the model isn't serving.
+- The session has a `StartingModel` state between saving and rewriting; the `Rewriter` callback now reports `Progress::StartingModel` or `Progress::Rewriting`.
+- The pill shows that state as the rewrite wave at rest, pulsing, with "Starting the on-device AI, microphone off", its own announcement, and "Cancel rewrite", which cancels the wait.
+- Each rewrite on this Mac's model appends one line of numbers to `~/Library/Logs/LocalFlow/rewrite-timing.log` (cold, ready, wait, rewrite and total ms, outcome), capped at 256 KB with one older file. No text.
+- Deviation from T011/T012: times are measured from the start of the rewrite step, not from key release. Transcription before it is unchanged by this feature, so the cold-start difference shows the same.
+- `MTPLX_WARMUP_LADDER=512` also in Swift server mode and `scripts/install-remote-server.sh` (T007, T008).
+- Fixed an existing test that failed after midnight: `library_header_and_rows_have_swifts_type_symbols_and_labels` counted the seed as today regardless of the date.
+
+**Verified**: `make check` passed. New unit tests for the wait, the timing line and log rollover, the session state order, and the pill labels.
+
+**Left**: T015-T019 measurement and the prefix-reuse decision, T017 owner run, T020.

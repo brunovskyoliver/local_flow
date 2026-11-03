@@ -257,14 +257,15 @@ render_plist() {
   render_agent "$label" flowd "$log_dir/flowd.stdout.log" "${arguments[@]}"
 }
 
-# The same serving flags and memory caps as the app's MTPLX agent (ADR 0026),
+# The same serving flags, memory caps and warmup class as the app's MTPLX agent (ADR 0026, Feature 028),
 # without the app-PID watch: the server's model stays loaded while the agent runs.
 # MTPLX prints a browser URL containing its API key on stdout, so stdout is discarded.
 render_mtplx_plist() {
   render_agent "$mtplx_label" mtplx /dev/null /usr/bin/env \
     MTPLX_CLEAR_CACHE_AFTER_REQUEST=always MTPLX_MLX_CACHE_LIMIT=268435456 \
     MTPLX_SESSION_BANK_MAX_ENTRIES=1 MTPLX_SESSION_BANK_MAX_BYTES=512M \
-    MTPLX_SESSION_BANK_PER_SESSION_BYTES=512M HF_HUB_DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 \
+    MTPLX_SESSION_BANK_PER_SESSION_BYTES=512M MTPLX_WARMUP_LADDER=512 \
+    HF_HUB_DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 \
     "$mtplx" serve --host 127.0.0.1 --port "$mtplx_port" \
     --model "$model" --model-id localflow --api-key-file "$api_key" \
     --scheduler-mode serial --batching-preset latency --ssd-session-cache off \

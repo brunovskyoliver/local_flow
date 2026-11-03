@@ -1,5 +1,5 @@
 //! The live rewrite: `RewriteCoordinator` for one dictation, over the channel or `POST /v1/rewrite`.
-use super::session::{Rewriter, Rewritten};
+use super::session::{Progress, Rewriter, Rewritten};
 use crate::db::Db;
 use crate::history::{Admission, RewriteRequest, admit_rewrite, live_rewrite_notice, record_rewrite_result, send_rewrite, send_rewrite_over_channel, terminate_rewrite};
 use crate::remote::pool::Pool;
@@ -76,8 +76,8 @@ pub struct Live {
 }
 
 impl Rewriter for Live {
-    fn rewrite(&mut self, id: &str, text: &str, started: &mut dyn FnMut(), cancel: &Arc<AtomicBool>) -> Rewritten {
-        outcome(run(&self.db, &self.plan, id, text, started, cancel))
+    fn rewrite(&mut self, id: &str, text: &str, progress: &mut dyn FnMut(Progress), cancel: &Arc<AtomicBool>) -> Rewritten {
+        outcome(run(&self.db, &self.plan, id, text, &mut || progress(Progress::Rewriting), cancel))
     }
 }
 

@@ -51,12 +51,13 @@ pub fn accessibility_label(s: DictState) -> &'static str {
         DictState::Connecting => "Connecting to the microphone",
         DictState::Preparing => "Preparing, microphone off",
         DictState::Rewriting => "Rewriting text, microphone off",
+        DictState::StartingModel => "Starting the on-device AI, microphone off",
         _ => "Processing, microphone off",
     }
 }
 
 pub fn cancel_label(s: DictState) -> &'static str {
-    if s == DictState::Rewriting { "Cancel rewrite" } else { "Cancel dictation" }
+    if matches!(s, DictState::Rewriting | DictState::StartingModel) { "Cancel rewrite" } else { "Cancel dictation" }
 }
 
 /// `IndicatorPanel.announcement(from:to:)`.
@@ -71,6 +72,7 @@ pub fn announcement(previous: DictState, state: DictState) -> Option<&'static st
         DictState::Transcribing => "Transcribing. Microphone off.",
         DictState::Persisting => "Saving dictation.",
         DictState::Rewriting => "Rewriting text. Microphone off.",
+        DictState::StartingModel => "Starting the on-device AI. Microphone off.",
         DictState::Inserting => "Inserting saved text.",
         DictState::Cancelling => "Cancelling dictation.",
         DictState::Recovery => "Text saved for review.",
@@ -740,6 +742,8 @@ pub fn pulse(time: f64) -> f32 {
 fn bar_target(i: usize, state: DictState, reduce: bool, time: f64) -> (f32, f32) {
     match state {
         DictState::Rewriting if !reduce => rewriting_wave(i, time),
+        // The rewrite's wave at rest, breathing: the AI is loading, not working yet.
+        DictState::StartingModel if !reduce => (rewriting_wave(i, 0.).0, pulse(time)),
         DictState::Connecting if !reduce => (4., connecting_opacity(time)),
         s if is_processing(s) && !reduce => (processing_height(i, time), 1.),
         s => (static_height(i, s), 1.),
@@ -816,7 +820,7 @@ impl PillView {
             row = row.children((0..BAR_COUNT).map(|i| {
                 let x = i as f32 * PITCH;
                 let (h, o) = bar_target(i, state, reduce, time);
-                let r = if state == DictState::Rewriting { 1. } else { reveal_at(i) };
+                let r = if matches!(state, DictState::Rewriting | DictState::StartingModel) { 1. } else { reveal_at(i) };
                 bar(i, x, h * (0.2 + 0.8 * r), o * r)
             }));
         }
@@ -1116,6 +1120,7 @@ pub fn apply_scenario(cx: &mut App) {
         "recording" => Some(DictState::Recording),
         "transcribing" => Some(DictState::Transcribing),
         "rewriting" => Some(DictState::Rewriting),
+        "starting-model" => Some(DictState::StartingModel),
         _ => None,
     };
     if let Some(d) = dict {
@@ -1684,6 +1689,9 @@ mod tests {
         assert_eq!(spoken(cx, DictState::Cancelling), "Processing, microphone off");
         assert_eq!(spoken(cx, DictState::Rewriting), "Rewriting text, microphone off");
         assert_eq!(cancel_label(DictState::Rewriting), "Cancel rewrite");
+        assert_eq!(spoken(cx, DictState::StartingModel), "Starting the on-device AI, microphone off");
+        assert_eq!(cancel_label(DictState::StartingModel), "Cancel rewrite");
+        assert_eq!(announcement(DictState::Persisting, DictState::StartingModel), Some("Starting the on-device AI. Microphone off."));
         cx.update(|cx| {
             update_session(cx, |s| s.dictation.as_mut().unwrap().busy = true);
             set_state(DictState::Recording, 0., cx);

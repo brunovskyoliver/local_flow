@@ -29,6 +29,8 @@ pub enum State {
     Recording,
     Transcribing,
     Persisting,
+    /// The text is saved and waits for this Mac's AI model to finish loading.
+    StartingModel,
     Rewriting,
     Inserting,
     Cancelling,
@@ -211,8 +213,17 @@ pub enum Rewritten {
 }
 
 /// Admits and runs one rewrite of saved text, blocking. Cancelling sets `cancel`.
+/// What a rewrite reports while it runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Progress {
+    /// Waiting for this Mac's model to load after it was unloaded.
+    StartingModel,
+    /// The request is on its way.
+    Rewriting,
+}
+
 pub trait Rewriter: Send {
-    fn rewrite(&mut self, id: &str, text: &str, started: &mut dyn FnMut(), cancel: &Arc<AtomicBool>) -> Rewritten;
+    fn rewrite(&mut self, id: &str, text: &str, progress: &mut dyn FnMut(Progress), cancel: &Arc<AtomicBool>) -> Rewritten;
 }
 
 pub trait Inserter: Send + Sync {
@@ -1261,10 +1272,12 @@ impl Coordinator {
             let publish = &mut self.publish;
             let result = {
                 let (state, status, busy, unsaved, storage, capacity, cleanup, offers) = (&mut self.state, &mut self.status, self.busy, self.unsaved.as_ref().map(|u| u.text.clone()), self.storage_blocked, self.capacity_blocked, self.cleanup_blocked, self.offers_microphones);
-                let mut on_start = || {
+                let mut on_start = |p: Progress| {
                     started = true;
-                    *state = State::Rewriting;
-                    *status = "Rewriting…".into();
+                    (*state, *status) = match p {
+                        Progress::StartingModel => (State::StartingModel, "Starting AI…".into()),
+                        Progress::Rewriting => (State::Rewriting, "Rewriting…".into()),
+                    };
                     publish(Event::Changed(Snapshot { state: *state, status: status.clone(), busy, unsaved: unsaved.clone(), storage_blocked: storage, capacity_blocked: capacity, cleanup_blocked: cleanup, offers_microphones: offers }));
                 };
                 rewriter.rewrite(id, &text, &mut on_start, &c.cancel_rewrite)
@@ -2048,9 +2061,10 @@ mod tests {
 
     struct FakeRewriter(Arc<AtomicUsize>);
     impl Rewriter for FakeRewriter {
-        fn rewrite(&mut self, _: &str, text: &str, started: &mut dyn FnMut(), _: &Arc<AtomicBool>) -> Rewritten {
+        fn rewrite(&mut self, _: &str, text: &str, progress: &mut dyn FnMut(Progress), _: &Arc<AtomicBool>) -> Rewritten {
             self.0.fetch_add(1, SeqCst);
-            started();
+            progress(Progress::StartingModel);
+            progress(Progress::Rewriting);
             Rewritten::Notice { message: format!("kept {} bytes", text.len()), can_retry: true }
         }
     }
@@ -2067,7 +2081,10 @@ mod tests {
         r.rewriter = Some(Box::new(FakeRewriter(calls.clone())));
         r.run();
         assert_eq!(calls.load(SeqCst), 1);
-        assert!(r.states().contains(&State::Rewriting));
+        let states = r.states();
+        let at = |s| states.iter().position(|x| *x == s).unwrap_or_else(|| panic!("{s:?} missing from {states:?}"));
+        assert!(at(State::Persisting) < at(State::StartingModel), "{states:?}");
+        assert!(at(State::StartingModel) < at(State::Rewriting) && at(State::Rewriting) < at(State::Inserting), "{states:?}");
         assert_eq!(*r.inserter.inserted.lock().unwrap(), ["words"]);
         assert!(r.events.lock().unwrap().contains(&Event::Action { message: "kept 5 bytes".into(), can_retry: true, dictation: r.row().id }));
     }
@@ -2654,8 +2671,8 @@ mod tests {
         fn escape_during_a_rewrite_keeps_the_dictation() {
             struct Waits;
             impl Rewriter for Waits {
-                fn rewrite(&mut self, _: &str, _: &str, started: &mut dyn FnMut(), cancel: &Arc<AtomicBool>) -> Rewritten {
-                    started();
+                fn rewrite(&mut self, _: &str, _: &str, progress: &mut dyn FnMut(Progress), cancel: &Arc<AtomicBool>) -> Rewritten {
+                    progress(Progress::Rewriting);
                     while !cancel.load(SeqCst) {
                         thread::sleep(Duration::from_millis(1));
                     }

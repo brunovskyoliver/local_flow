@@ -20,23 +20,36 @@ pub fn wanted(prefs: &Prefs) -> bool {
     !r.local_rewrite_model_unneeded() && r.rewrite_endpoint(&prefs.string("rewriteEndpoint").unwrap_or_default()) == loopback_endpoint()
 }
 
+/// How a wait for the model went: `cold` when it wasn't serving at the first check.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Wait {
+    pub cold: bool,
+    pub ready: bool,
+    pub waited: Duration,
+}
+
 /// Before a request to this Mac's flowd: wakes the model and waits, at most `limit`, until flowd
-/// reports it serving. On timeout the request goes anyway and reports its own failure.
-pub fn wait_until_ready(origin: &str, secret: Option<&str>, limit: Duration, cancel: &AtomicBool) {
+/// reports it serving. `starting` runs once, when the first check finds it not serving. On timeout
+/// the request goes anyway and reports its own failure.
+pub fn wait_until_ready(origin: &str, secret: Option<&str>, limit: Duration, cancel: &AtomicBool, starting: &mut dyn FnMut()) -> Wait {
     if origin != loopback_endpoint() {
-        return;
+        return Wait { ready: true, ..Wait::default() };
     }
     let ready = || rewrite_health(origin, secret).is_ok_and(|h| h.backend.is_some_and(|b| b.state == "ready"));
-    wait_for(ready, wake, limit, cancel);
+    wait_for(ready, wake, limit, cancel, starting)
 }
 
 /// `ready` comes first, so a serving model costs one check and no start request.
-fn wait_for(ready: impl Fn() -> bool, wake: impl Fn(), limit: Duration, cancel: &AtomicBool) {
-    let end = Instant::now() + limit;
+fn wait_for(ready: impl Fn() -> bool, wake: impl Fn(), limit: Duration, cancel: &AtomicBool, starting: &mut dyn FnMut()) -> Wait {
+    let began = Instant::now();
+    let end = began + limit;
     let mut polls = 0u32;
     while Instant::now() < end && !cancel.load(SeqCst) {
         if ready() {
-            return;
+            return Wait { cold: polls > 0, ready: true, waited: began.elapsed() };
+        }
+        if polls == 0 {
+            starting();
         }
         // launchd ignores a start while the job is still stopping (up to 5 s after SIGTERM), so keep asking.
         if polls % 20 == 0 {
@@ -45,6 +58,44 @@ fn wait_for(ready: impl Fn() -> bool, wake: impl Fn(), limit: Duration, cancel: 
         polls += 1;
         std::thread::sleep(Duration::from_millis(50));
     }
+    Wait { cold: true, ready: false, waited: began.elapsed() }
+}
+
+/// One rewrite on this Mac's model, for `rewrite-timing.log`. Never holds text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Timing {
+    pub wait: Wait,
+    /// From the end of the wait to the answer.
+    pub rewrite: Duration,
+    /// `ok`, `timeout`, `cancelled`, `failed` or `not_eligible`.
+    pub outcome: &'static str,
+}
+
+impl Timing {
+    /// One line: Unix seconds, then `key=value` fields.
+    pub fn line(&self, unix: u64) -> String {
+        format!(
+            "{unix} cold={} ready={} wait_ms={} rewrite_ms={} total_ms={} outcome={}\n",
+            self.wait.cold,
+            self.wait.ready,
+            self.wait.waited.as_millis(),
+            self.rewrite.as_millis(),
+            (self.wait.waited + self.rewrite).as_millis(),
+            self.outcome
+        )
+    }
+}
+
+/// Appends `line`; past `cap` bytes the file becomes `<name>.1` (replacing an older one) first.
+pub fn append_capped(path: &std::path::Path, line: &str, cap: u64) -> std::io::Result<()> {
+    use std::io::Write;
+    if std::fs::metadata(path).is_ok_and(|m| m.len() + line.len() as u64 > cap) {
+        std::fs::rename(path, path.with_extension("1.log"))?;
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::OpenOptions::new().create(true).append(true).open(path)?.write_all(line.as_bytes())
 }
 
 /// A game must stay in front this long before the model unloads; alt-tabbing through one doesn't count.
@@ -142,13 +193,45 @@ mod tests {
         use std::cell::Cell;
         let (checks, wakes, stop) = (Cell::new(0), Cell::new(0), AtomicBool::new(false));
         let limit = Duration::from_secs(5);
-        wait_for(|| { checks.set(checks.get() + 1); true }, || wakes.set(wakes.get() + 1), limit, &stop);
-        assert_eq!((checks.get(), wakes.get()), (1, 0));
+        let starts = Cell::new(0);
+        let warm = wait_for(|| { checks.set(checks.get() + 1); true }, || wakes.set(wakes.get() + 1), limit, &stop, &mut || starts.set(starts.get() + 1));
+        assert_eq!((checks.get(), wakes.get(), starts.get()), (1, 0, 0));
+        assert!(!warm.cold && warm.ready, "a serving model is warm");
         checks.set(0);
         let began = Instant::now();
-        wait_for(|| { checks.set(checks.get() + 1); checks.get() == 3 }, || wakes.set(wakes.get() + 1), limit, &stop);
+        let cold = wait_for(|| { checks.set(checks.get() + 1); checks.get() == 3 }, || wakes.set(wakes.get() + 1), limit, &stop, &mut || starts.set(starts.get() + 1));
         assert_eq!(wakes.get(), 1, "a model that isn't up is asked for");
+        assert_eq!(starts.get(), 1, "the starting notice runs once");
+        assert!(cold.cold && cold.ready);
         assert!(began.elapsed() < Duration::from_secs(1), "polled, not slept through");
+    }
+
+    #[test]
+    fn a_cancelled_or_timed_out_wait_ends_within_one_poll_and_is_not_ready() {
+        let stop = AtomicBool::new(true);
+        let w = wait_for(|| false, || {}, Duration::from_secs(5), &stop, &mut || {});
+        assert!(!w.ready && w.waited < Duration::from_millis(100));
+        let go = AtomicBool::new(false);
+        let w = wait_for(|| false, || {}, Duration::from_millis(120), &go, &mut || {});
+        assert!(!w.ready && w.cold && w.waited < Duration::from_millis(250));
+    }
+
+    #[test]
+    fn a_timing_line_carries_numbers_only_and_the_log_rolls_over_once() {
+        let t = Timing { wait: Wait { cold: true, ready: true, waited: Duration::from_millis(4200) }, rewrite: Duration::from_millis(810), outcome: "ok" };
+        assert_eq!(t.line(7), "7 cold=true ready=true wait_ms=4200 rewrite_ms=810 total_ms=5010 outcome=ok\n");
+        let dir = std::env::temp_dir().join(format!("lf-timing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("rewrite-timing.log");
+        let line = t.line(7);
+        for _ in 0..5 {
+            append_capped(&path, &line, line.len() as u64 * 2).unwrap();
+        }
+        let files: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        assert_eq!(files.len(), 2, "{files:?}");
+        assert!(std::fs::metadata(&path).unwrap().len() <= line.len() as u64 * 2);
+        assert!(dir.join("rewrite-timing.1.log").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

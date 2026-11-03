@@ -176,7 +176,7 @@ fn transport_failure(e: ureq::Error, cancel: &AtomicBool) -> Stop {
 fn http_analyze(deps: &Deps, endpoint: &Endpoint, body: &[u8], timeout: Duration, cancel: &Arc<AtomicBool>, sink: Sink) -> Result<(), Stop> {
     let secret = (deps.secret)(&endpoint.origin);
     // `localModel?.ready(for:)`: flowd loads a model it unloaded; only this Mac's own flowd needs it.
-    crate::local_model::wait_until_ready(&endpoint.origin, secret.as_deref(), timeout, cancel);
+    crate::local_model::wait_until_ready(&endpoint.origin, secret.as_deref(), timeout, cancel, &mut || {});
     if cancel.load(Ordering::SeqCst) {
         return Err(Stop::Cancelled);
     }

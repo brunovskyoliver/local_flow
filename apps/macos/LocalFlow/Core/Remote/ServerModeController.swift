@@ -623,12 +623,14 @@ final class ServerModeController {
       ] + (paths.dev ? ["--dev"] : [])
   }
 
-  /// The serving flags and memory caps of the installer's MTPLX agent.
+  /// The serving flags and memory caps of the installer's MTPLX agent. Warmup covers only the
+  /// 512-token class rewrites use (Feature 028).
   private func mtplxArguments(mtplx: String, model: String, key: String) -> [String] {
     [
       "/usr/bin/env", "MTPLX_CLEAR_CACHE_AFTER_REQUEST=always", "MTPLX_MLX_CACHE_LIMIT=268435456",
       "MTPLX_SESSION_BANK_MAX_ENTRIES=1", "MTPLX_SESSION_BANK_MAX_BYTES=512M",
-      "MTPLX_SESSION_BANK_PER_SESSION_BYTES=512M", "HF_HUB_DISABLE_TELEMETRY=1", "DO_NOT_TRACK=1",
+      "MTPLX_SESSION_BANK_PER_SESSION_BYTES=512M", "MTPLX_WARMUP_LADDER=512",
+      "HF_HUB_DISABLE_TELEMETRY=1", "DO_NOT_TRACK=1",
       mtplx, "serve", "--host", "127.0.0.1", "--port", String(paths.mtplxPort), "--model", model,
       "--model-id", "localflow", "--api-key-file", key, "--scheduler-mode", "serial",
       "--batching-preset", "latency", "--ssd-session-cache", "off", "--context-window", "32768",

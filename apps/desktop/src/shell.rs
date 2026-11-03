@@ -19,6 +19,8 @@ pub enum DictState {
     Recording,
     Transcribing,
     Persisting,
+    /// Waiting for this Mac's AI model to load before rewriting.
+    StartingModel,
     Rewriting,
     Inserting,
     Cancelling,
@@ -496,7 +498,7 @@ pub fn cancel_dictation(cx: &mut App) {
     }
     let Some(d) = cx.global::<Session>().dictation.clone() else { return };
     let command = match (d.state, d.busy) {
-        (DictState::Rewriting, _) => SessionCommand::CancelRewrite,
+        (DictState::Rewriting | DictState::StartingModel, _) => SessionCommand::CancelRewrite,
         (_, true) => SessionCommand::CancelDictation,
         _ => return,
     };

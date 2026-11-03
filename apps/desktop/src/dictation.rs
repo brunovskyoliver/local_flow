@@ -9,7 +9,7 @@ use flow_core::dictation::learner::{self, Note, Observation};
 use flow_core::dictation::remote::{NoServer, Served};
 use flow_core::dictation::retrier::{self, Retrier};
 use flow_core::dictation::rewrite::{self, Live, Plan};
-use flow_core::dictation::session::{Control, Coordinator, DbHistory, Deps, Event, Inserter, Local, Mic, Recognizer, Rewriter, Rewritten, Snapshot, State};
+use flow_core::dictation::session::{Control, Coordinator, DbHistory, Deps, Event, Inserter, Local, Mic, Progress, Recognizer, Rewriter, Rewritten, Snapshot, State};
 use flow_core::remote::enrollment::Enrollment;
 use flow_core::remote::pool::Pool;
 use flow_core::settings::{self as server, InputEntry, Shortcut};
@@ -65,14 +65,36 @@ fn with_key(plan: &mut Plan, credentials: &dyn Credentials) {
     }
 }
 
+/// One line per rewrite on this Mac's model in `~/Library/Logs/LocalFlow/rewrite-timing.log`,
+/// capped at 256 KB with one older file. Numbers only, never text.
+fn log_timing(timing: &flow_core::local_model::Timing) {
+    let Some(home) = std::env::var_os("HOME") else { return };
+    let path = std::path::Path::new(&home).join("Library/Logs/LocalFlow/rewrite-timing.log");
+    let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let _ = flow_core::local_model::append_capped(&path, &timing.line(unix), 256 * 1024);
+}
+
 impl Rewriter for KeyedRewrite {
-    fn rewrite(&mut self, id: &str, text: &str, started: &mut dyn FnMut(), cancel: &Arc<AtomicBool>) -> Rewritten {
+    fn rewrite(&mut self, id: &str, text: &str, progress: &mut dyn FnMut(Progress), cancel: &Arc<AtomicBool>) -> Rewritten {
+        use flow_core::local_model::{Timing, wait_until_ready};
         with_key(&mut self.live.plan, &*self.credentials);
         let plan = &self.live.plan;
-        if plan.enabled && plan.channel.is_none() {
-            flow_core::local_model::wait_until_ready(&plan.settings.origin, plan.secret.as_deref(), plan.timeout, cancel);
+        let local = plan.enabled && plan.channel.is_none() && plan.settings.origin == flow_core::settings::loopback_endpoint();
+        if !local {
+            return self.live.rewrite(id, text, progress, cancel);
         }
-        self.live.rewrite(id, text, started, cancel)
+        let wait = wait_until_ready(&plan.settings.origin, plan.secret.as_deref(), plan.timeout, cancel, &mut || progress(Progress::StartingModel));
+        let began = Instant::now();
+        let result = self.live.rewrite(id, text, progress, cancel);
+        let outcome = match &result {
+            Rewritten::Text { .. } => "ok",
+            Rewritten::NotEligible => "not_eligible",
+            _ if cancel.load(SeqCst) => "cancelled",
+            _ if !wait.ready => "timeout",
+            _ => "failed",
+        };
+        log_timing(&Timing { wait, rewrite: began.elapsed(), outcome });
+        result
     }
 }
 
@@ -622,6 +644,7 @@ fn state_of(state: State) -> DictState {
         State::Recording => DictState::Recording,
         State::Transcribing => DictState::Transcribing,
         State::Persisting => DictState::Persisting,
+        State::StartingModel => DictState::StartingModel,
         State::Rewriting => DictState::Rewriting,
         State::Inserting => DictState::Inserting,
         State::Cancelling => DictState::Cancelling,
@@ -801,7 +824,7 @@ pub(crate) mod tests {
 
     #[test]
     fn escape_is_live_from_preparing_to_cancelling() {
-        let live = [State::Preparing, State::Connecting, State::Recording, State::Transcribing, State::Persisting, State::Rewriting, State::Inserting, State::Cancelling];
+        let live = [State::Preparing, State::Connecting, State::Recording, State::Transcribing, State::Persisting, State::StartingModel, State::Rewriting, State::Inserting, State::Cancelling];
         assert!(live.into_iter().all(session_active));
         assert!([State::Idle, State::Recovery, State::Failed].into_iter().all(|s| !session_active(s)));
     }
