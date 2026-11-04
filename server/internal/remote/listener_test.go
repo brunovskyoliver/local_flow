@@ -585,6 +585,34 @@ func TestSessionHello(t *testing.T) {
 	}
 }
 
+// Feature 028: an accepted session hello reports its device as seen, so the
+// Users page's last-seen time follows dictations, not only token refreshes.
+func TestSessionHelloMarksTheDeviceSeen(t *testing.T) {
+	h := newHarness(t, Operations{})
+	seen := make(chan int64, 2)
+	h.listener.cfg.Seen = func(device int64) { seen <- device }
+	_, device, token := h.approved("sub", 1)
+	if _, first := h.hello(PurposeSession, token); first.MessageType() != "ready" {
+		t.Fatalf("%#v", first)
+	}
+	select {
+	case id := <-seen:
+		if id != device.ID {
+			t.Fatalf("seen device %d, want %d", id, device.ID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session hello did not mark the device seen")
+	}
+	if _, first := h.hello(PurposeSession, "lfa_"+strings.Repeat("A", 43)); first.MessageType() == "ready" {
+		t.Fatal("unknown token accepted")
+	}
+	select {
+	case id := <-seen:
+		t.Fatalf("a refused hello marked device %d seen", id)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 // Hello errors carry no op and close the channel.
 func TestHelloErrors(t *testing.T) {
 	h := newHarness(t, Operations{})

@@ -280,11 +280,10 @@ impl UsersPage {
     fn device_row(&self, device: &flow_core::server_admin::Device, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let busy = self.busy;
         let (id, name) = (device.id, device.name.clone());
-        let mut extra = vec![device.kind.to_string(), format!("Added {}", device.added), format!("Last seen {}", device.last_seen)];
+        let mut extra = vec![device.kind.to_string(), device.activity.clone(), format!("Added {}", device.added)];
         if let Some(by) = &device.invited_by {
-            extra.push(format!("Added from {by}"));
+            extra.push(format!("from {by}"));
         }
-        extra.push(if device.connected { "Connected now".into() } else { "Not connected".into() });
         let mut buttons = h_flex().gap(px(6.));
         if device.state == "pending" {
             buttons = buttons.child(prototype_button(SharedString::from(format!("users.approve.device.{id}")), "Approve").disabled(busy).on_click(cx.listener(move |this, _, _, cx| this.act(Action::Approve(Kind::Device, id), cx))));
@@ -487,13 +486,17 @@ mod tests {
 
     // parity: SET-427
     /// T046: each user with name, sign-in kind, state and created date; devices nested with name,
-    /// kind, added, last seen, connected now and who added them.
+    /// kind, how recently it was active, when it was added and who added it.
     #[flow_ui::gpui::test]
     async fn lists_users_with_their_devices(cx: &mut TestAppContext) {
         let (win, _) = rig(cx);
-        assert_saw(&["Ana B", "Approved · Signs in with Token · Created 4 Nov 2026, 17:17 UTC", "User 2", "Pending · Signs in with Apple"]);
-        assert_saw(&["Ana's MacBook", "Approved · Mac · Added 3 Nov 2026, 10:00 UTC · Last seen 3 Nov 2026, 10:01 UTC · Connected now"]);
-        assert_saw(&["Ana's iPhone", "Pending · iPhone · Added 3 Nov 2026, 10:02 UTC · Last seen Never · Added from Ana's MacBook · Not connected"]);
+        use flow_core::server_admin::when;
+        let created = format!("Approved · Signs in with Token · Created {}", when("2026-11-04T17:17:00Z"));
+        assert_saw(&["Ana B", created.as_str(), "User 2", "Pending · Signs in with Apple"]);
+        let mac = format!("Approved · Mac · Connected now · Added {}", when("2026-11-03T10:00:00Z"));
+        assert_saw(&["Ana's MacBook", mac.as_str()]);
+        let phone = format!("Pending · iPhone · Never active · Added {} · from Ana's MacBook", when("2026-11-03T10:02:00Z"));
+        assert_saw(&["Ana's iPhone", phone.as_str()]);
         assert_saw(&["Old PC", "Revoked · Unknown"]);
         let has = |cx: &mut TestAppContext, id: &'static str| win.update(cx, |_, w, _| w.try_find(id).is_some()).unwrap();
         assert!(has(cx, "users.approve.device.2") && !has(cx, "users.approve.device.1"));
@@ -541,7 +544,8 @@ mod tests {
     #[flow_ui::gpui::test]
     async fn add_device_targets_the_user_by_default(cx: &mut TestAppContext) {
         let (win, server) = rig(cx);
-        assert_saw(&["Active tokens", "Ben", "New person · Expires 3 Dec 2026, 10:00 UTC", "For Ana", "For Ana B", "Recent activity", "admin:oliver rename user:1 — ok"]);
+        let expires = format!("New person · Expires {}", flow_core::server_admin::when("2026-12-03T10:00:00Z"));
+        assert_saw(&["Active tokens", "Ben", expires.as_str(), "For Ana", "For Ana B", "Recent activity", "admin:oliver rename user:1 — ok"]);
         click(cx, win, "users.addDevice.1");
         assert_saw(&["Add device for Ana B", "adds one device to Ana B"]);
         click(cx, win, "users.sheetCreate");

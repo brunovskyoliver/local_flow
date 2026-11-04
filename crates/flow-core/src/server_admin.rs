@@ -159,6 +159,8 @@ pub struct Device {
     pub added: String,
     pub last_seen: String,
     pub connected: bool,
+    /// "Connected now", "Active 5 min ago" or "Last active <date>".
+    pub activity: String,
     /// The name of the device whose invite this one redeemed.
     pub invited_by: Option<String>,
 }
@@ -213,14 +215,48 @@ pub fn parse_time(text: &str) -> Option<i64> {
     Some(((days * 24 + n(11..13)?) * 60 + n(14..16)?) * 60_000 + n(17..19)? * 1000)
 }
 
-/// "3 Nov 2026, 10:01" in the region's format; the UTC text as given when unreadable.
+/// "3 Nov 2026, 10:01" in local time, in the region's format where this thread has one; the text
+/// as given when unreadable. The page reads off the UI thread, where the region formatter isn't
+/// installed, so the fallback converts to local time itself.
 pub fn when(text: &str) -> String {
     let Some(ms) = parse_time(text) else { return text.to_string() };
     region_date(ms, "yMMMdjmm", false).unwrap_or_else(|| {
-        let (y, m, d) = crate::history::civil_from_days(ms.div_euclid(86_400_000));
-        let minutes = ms.rem_euclid(86_400_000) / 60_000;
-        format!("{d} {} {y}, {:02}:{:02} UTC", month_short(m), minutes / 60, minutes % 60)
+        let (y, m, d, hour, minute) = local_parts(ms);
+        format!("{d} {} {y}, {hour:02}:{minute:02}", month_short(m))
     })
+}
+
+/// (year, month 1-12, day, hour, minute) in this Mac's time zone, from SQLite's zone handling.
+fn local_parts(ms: i64) -> (i64, i64, i64, i64, i64) {
+    thread_local! {
+        static ZONE: Option<rusqlite::Connection> = rusqlite::Connection::open_in_memory().ok();
+    }
+    let text = ZONE.with(|c| c.as_ref().and_then(|c| c.query_row("SELECT strftime('%Y %m %d %H %M', ?1/1000, 'unixepoch', 'localtime')", [ms], |r| r.get::<_, String>(0)).ok()));
+    let parts: Vec<i64> = text.unwrap_or_default().split(' ').filter_map(|x| x.parse().ok()).collect();
+    match parts[..] {
+        [y, m, d, hour, minute] => (y, m, d, hour, minute),
+        _ => {
+            let (y, m, d) = crate::history::civil_from_days(ms.div_euclid(86_400_000));
+            let minutes = ms.rem_euclid(86_400_000) / 60_000;
+            (y, m, d, minutes / 60, minutes % 60)
+        }
+    }
+}
+
+/// "Active now", "Active 5 min ago", "Active 3 h ago", else the date; "Never" without a time.
+pub fn activity(last_seen: Option<&str>, connected: bool, now: i64) -> String {
+    if connected {
+        return "Connected now".into();
+    }
+    let Some(seen) = last_seen else { return "Never active".into() };
+    let Some(ms) = parse_time(seen) else { return format!("Last active {seen}") };
+    let minutes = (now - ms).max(0) / 60_000;
+    match minutes {
+        0..=1 => "Active just now".into(),
+        2..=59 => format!("Active {minutes} min ago"),
+        60..=1439 => format!("Active {} h ago", minutes / 60),
+        _ => format!("Last active {}", when(seen)),
+    }
 }
 
 /// Merges the reads into the page. Tokens are the live, unexpired ones at `now` (ms).
@@ -245,6 +281,7 @@ pub fn merge(list: AdminList, connected: &HashSet<i64>, tokens: Vec<TokenRow>, a
                     added: when(&d.enrolled_at),
                     last_seen: d.last_seen_at.as_deref().map(when).unwrap_or_else(|| "Never".into()),
                     connected: connected.contains(&d.id),
+                    activity: activity(d.last_seen_at.as_deref(), connected.contains(&d.id), now),
                     invited_by: d.invited_by.map(|id| names.get(&id).cloned().unwrap_or_else(|| format!("device {id}"))),
                     name: d.name,
                 })
@@ -271,6 +308,22 @@ mod tests {
     const TOKENS: &str = include_str!("../../../fixtures/server-admin/tokens.json");
 
     #[test]
+    fn times_are_local_and_activity_reads_as_how_long_ago() {
+        let at = "2026-11-04T20:27:00Z";
+        let shown = when(at);
+        assert!(!shown.contains("UTC"), "{shown}");
+        let (y, m, d, hour, minute) = local_parts(parse_time(at).unwrap());
+        assert_eq!(shown, format!("{d} {} {y}, {hour:02}:{minute:02}", month_short(m)));
+        let seen = parse_time(at).unwrap();
+        assert_eq!(activity(Some(at), true, seen + 3_600_000), "Connected now");
+        assert_eq!(activity(Some(at), false, seen + 30_000), "Active just now");
+        assert_eq!(activity(Some(at), false, seen + 6 * 60_000), "Active 6 min ago");
+        assert_eq!(activity(Some(at), false, seen + 3 * 3_600_000), "Active 3 h ago");
+        assert_eq!(activity(Some(at), false, seen + 3 * 86_400_000), format!("Last active {shown}"));
+        assert_eq!(activity(None, false, seen), "Never active");
+    }
+
+    #[test]
     fn merges_flowds_output_into_users_with_devices() {
         let status = serde_json::json!({"version": "1", "channels": {"open": 2, "devices": [{"device_id": 1, "channels": 2}]}});
         let now = parse_time("2026-11-04T12:00:00Z").unwrap();
@@ -280,13 +333,14 @@ mod tests {
         assert_eq!((ana.name.as_str(), ana.sign_in, ana.state.as_str()), ("Ana B", "Token", "approved"));
         assert_eq!((other.name.as_str(), other.sign_in, other.state.as_str()), ("User 2", "Apple", "pending"));
         let [mac, phone] = &ana.devices[..] else { panic!() };
-        assert_eq!((mac.kind, mac.connected, mac.last_seen.as_str(), mac.invited_by.as_deref()), ("Mac", true, "3 Nov 2026, 10:01 UTC", None));
+        assert_eq!((mac.kind, mac.connected, mac.last_seen.as_str(), mac.invited_by.as_deref()), ("Mac", true, when("2026-11-03T10:01:00Z").as_str(), None));
+        assert_eq!((mac.activity.as_str(), phone.activity.as_str()), ("Connected now", "Never active"));
         assert_eq!((phone.kind, phone.connected, phone.last_seen.as_str(), phone.invited_by.as_deref()), ("iPhone", false, "Never", Some("Ana's MacBook")));
         assert_eq!((other.devices[0].kind, other.devices[0].state.as_str()), ("Unknown", "revoked"));
         // The invite awaiting confirmation isn't live; the two admin tokens are, one for a new person.
         let targets: Vec<_> = model.tokens.iter().map(|t| (t.label.as_str(), t.target.as_deref())).collect();
         assert_eq!(targets, [("Ben", None), ("For Ana", Some("Ana B"))]);
-        assert_eq!(model.tokens[0].expires, "3 Dec 2026, 10:00 UTC");
+        assert_eq!(model.tokens[0].expires, when("2026-12-03T10:00:00Z"));
         assert_eq!(model.audit[0].action, "rename");
         // Past their expiry the tokens are gone.
         let later = parse_time("2027-01-01T00:00:00Z").unwrap();

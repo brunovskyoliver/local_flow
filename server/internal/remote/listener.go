@@ -141,6 +141,10 @@ type Config struct {
 	// Audit, when set, records a content-free audit row. The listener uses
 	// it for cross_user_attempt on authenticated channels (Feature 014 T085).
 	Audit func(accounts.AuditEntry)
+	// Seen, when set, is called off the channel's goroutine after each
+	// session hello is accepted, so a device's last-seen time follows its
+	// sessions and not only its token refreshes (Feature 028 US3).
+	Seen func(deviceID int64)
 }
 
 // Listener serves GET /v1/remote/identity and GET /v1/remote/channel and
@@ -450,6 +454,9 @@ func (l *Listener) serveChannel(ctx context.Context, c *Conn) {
 			return
 		}
 		l.authenticated(c)
+		if l.cfg.Seen != nil {
+			go l.cfg.Seen(principal.DeviceID)
+		}
 		// A revocation that swapped the snapshot after Authenticate read it
 		// and walked the registry before bind would miss this channel; the
 		// watcher swaps before it calls Revoke, so re-checking the current

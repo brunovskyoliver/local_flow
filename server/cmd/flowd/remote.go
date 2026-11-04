@@ -219,6 +219,8 @@ func startRemote(ctx context.Context, r remoteConfig, logger *log.Logger) (*remo
 				logger.Printf("remote event=audit_failed action=%s", entry.Action)
 			}
 		},
+		// At most one write a minute per device (accounts.LastSeenInterval).
+		Seen: func(device int64) { _, _ = store.TouchDevice(context.Background(), device) },
 	})
 	s.net, err = remote.Listen(r.listen)
 	if err != nil {
