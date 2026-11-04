@@ -4,7 +4,7 @@ cask "localflow" do
 
   url "https://github.com/brunovskyoliver/local_flow/releases/download/v#{version}/LocalFlow-#{version}-arm64.zip"
   name "LocalFlow"
-  desc "Private dictation and meeting notes, on your Mac or your own server"
+  desc "Private dictation and meeting notes, local or on your own server"
   homepage "https://github.com/brunovskyoliver/local_flow"
 
   depends_on arch: :arm64
@@ -14,8 +14,9 @@ cask "localflow" do
 
   # The build is ad-hoc signed and not notarized. Clearing the download quarantine lets it open
   # without the "Open Anyway" step; Gatekeeper stays on for everything else.
-  postflight do
-    system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{appdir}/LocalFlow.app"]
+  postflight_steps do
+    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "/Applications/LocalFlow.app"],
+                          writable_paths: ["LocalFlow.app"], writable_base: :appdir
   end
 
   uninstall quit: "org.localflow.LocalFlow"
