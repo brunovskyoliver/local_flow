@@ -66,6 +66,12 @@ pub struct OnboardingPage {
     _polling: Option<Task<()>>,
 }
 
+/// Which `CATALOG` language models are on disk.
+pub(crate) fn catalog_downloaded() -> [bool; 5] {
+    let dir = models_dir();
+    CATALOG.map(|m| m.is_downloaded(&dir))
+}
+
 /// `~/.mtplx/models`, or inside the data root when one is set, so an audit never reads the owner's.
 fn models_dir() -> PathBuf {
     if cfg!(test) {
@@ -186,8 +192,7 @@ impl OnboardingPage {
             }
         })
         .detach();
-        let dir = models_dir();
-        let downloaded = CATALOG.map(|m| m.is_downloaded(&dir));
+        let downloaded = catalog_downloaded();
         if cx.global::<Core>().scenario.as_deref() == Some("onboarding.serverlegacyhttp") {
             cx.global_mut::<Core>().prefs.set("rewriteEndpoint", "http://ref.invalid:8080");
         }

@@ -797,14 +797,48 @@ fn agent(timeout: Duration) -> ureq::Agent {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IdentityError {
+    /// Refused, timed out or otherwise not answered.
     Unreachable,
     /// It answered, with something other than a v1 identity.
     Invalid,
+    /// An `https://` address whose server answered the handshake with something other than TLS, or
+    /// hung up on it: most likely a plain `http://` listener.
+    NotTls,
+    /// The name doesn't resolve.
+    UnknownHost,
+}
+
+/// What a failed request means for the pairing form. Only `https://` can fail TLS.
+fn identity_error(https: bool, e: &ureq::Error) -> IdentityError {
+    match e {
+        ureq::Error::HostNotFound => IdentityError::UnknownHost,
+        ureq::Error::Io(io) if https && not_tls(io) => IdentityError::NotTls,
+        ureq::Error::Io(io) if lookup_failed(io) => IdentityError::UnknownHost,
+        _ => IdentityError::Unreachable,
+    }
+}
+
+/// rustls read a record that isn't TLS (Go's http server answers a ClientHello with `400 Bad
+/// Request`), or the server closed during the handshake. A bad certificate or an alert is TLS.
+fn not_tls(io: &std::io::Error) -> bool {
+    match io.get_ref().and_then(|inner| inner.downcast_ref::<rustls::Error>()) {
+        Some(tls) => matches!(tls, rustls::Error::InvalidMessage(_)),
+        None => io.kind() == std::io::ErrorKind::UnexpectedEof,
+    }
+}
+
+/// std's `getaddrinfo` failure: its kind isn't public, so the message (or the Winsock code) tells.
+fn lookup_failed(io: &std::io::Error) -> bool {
+    if cfg!(windows) && matches!(io.raw_os_error(), Some(11001 | 11004)) {
+        return true;
+    }
+    io.raw_os_error().is_none() && io.to_string().starts_with("failed to lookup address information")
 }
 
 /// 10 s, must be a 200 of at most 4,096 bytes with a valid key.
 pub fn fetch_identity(origin: &str) -> Result<Identity, IdentityError> {
-    let mut response = agent(Duration::from_secs(10)).get(format!("{}/v1/remote/identity", origin.trim_end_matches('/'))).call().map_err(|_| IdentityError::Unreachable)?;
+    let https = origin.starts_with("https://");
+    let mut response = agent(Duration::from_secs(10)).get(format!("{}/v1/remote/identity", origin.trim_end_matches('/'))).call().map_err(|e| identity_error(https, &e))?;
     if response.status().as_u16() != 200 {
         return Err(IdentityError::Invalid);
     }
@@ -3016,8 +3050,38 @@ mod tests {
         let identity = fetch_identity(&f.remote).expect("identity");
         assert_eq!(identity.fingerprint, f.fingerprint, "what the admin tool printed");
         assert_eq!(identity.validated_key().unwrap().len(), 32);
-        assert!(fetch_identity(&f.down).is_err(), "closed port");
+        assert_eq!(fetch_identity(&f.down).err(), Some(IdentityError::Unreachable), "closed port");
+        assert_eq!(fetch_identity(&f.down.replace("http://", "https://")).err(), Some(IdentityError::Unreachable), "closed port, on https too");
         assert!(fetch_identity(&f.rewrite).is_err(), "a server with no identity route");
+        assert_eq!(fetch_identity(&f.remote.replace("http://", "https://")).err(), Some(IdentityError::NotTls), "flowd's plain listener asked for TLS");
+    }
+
+    /// A plain listener that answers anything once, as `answer` says, then hangs up.
+    fn plain_listener(answer: &'static [u8]) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut buffer = [0u8; 4096];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(answer);
+            }
+        });
+        format!("127.0.0.1:{port}")
+    }
+
+    #[test]
+    fn identity_failures_are_told_apart() {
+        let http = plain_listener(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        assert_eq!(fetch_identity(&format!("https://{http}")).err(), Some(IdentityError::NotTls), "an http server answering a ClientHello");
+        assert_eq!(fetch_identity(&format!("http://{http}")).err(), Some(IdentityError::Invalid), "the same server over http answers, just not an identity");
+        let closer = plain_listener(b"");
+        assert_eq!(fetch_identity(&format!("https://{closer}")).err(), Some(IdentityError::NotTls), "hung up on the handshake");
+        assert_eq!(fetch_identity(&format!("http://{closer}")).err(), Some(IdentityError::Unreachable), "only https can fail TLS");
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        assert_eq!(fetch_identity(&format!("https://{closed}")).err(), Some(IdentityError::Unreachable), "refused");
+        assert_eq!(fetch_identity("https://nowhere.invalid:8090").err(), Some(IdentityError::UnknownHost), ".invalid never resolves");
     }
 
     // parity: SET-118 SET-119

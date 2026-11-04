@@ -459,6 +459,11 @@ pub trait ServerHost: Send + Sync {
     fn admin_act(&self, action: &flow_core::server_admin::Action) -> Result<(), String>;
     /// A 24-hour pairing token that adds a device to `user`, or a new person when `None` (T047).
     fn create_device_token(&self, label: &str, user: Option<i64>, addresses: &[String]) -> Result<flow_core::server_mode::OwnerToken, String>;
+    /// The summaries and meeting analysis backend flowd starts with: (loopback base URL, model).
+    fn analysis_backend(&self) -> Option<(String, String)>;
+    /// Stores it, or `None` for the rewrite model, and applies it to the server this app manages.
+    /// Refused for a URL off this Mac, a bad model name or a server set up elsewhere.
+    fn set_analysis_backend(&self, backend: Option<(&str, &str)>) -> Result<(), String>;
 }
 
 /// A `ServerHost` for tests: a server that starts on loopback, records each call and answers as
@@ -473,6 +478,7 @@ pub struct FakeServer {
     pub plan: std::sync::Mutex<flow_core::server_mode::PlanInput>,
     pub ai_phase: std::sync::Mutex<Option<flow_core::onboarding::AiPhase>>,
     pub page: std::sync::Mutex<Result<flow_core::server_admin::Model, flow_core::server_admin::ReadError>>,
+    pub analysis: std::sync::Mutex<Option<(String, String)>>,
     pub calls: std::sync::Mutex<Vec<String>>,
 }
 
@@ -490,6 +496,7 @@ impl Default for FakeServer {
             plan: std::sync::Mutex::new(flow_core::server_mode::PlanInput { physical_memory: 64 << 30, ..Default::default() }),
             ai_phase: Default::default(),
             page: std::sync::Mutex::new(Ok(Default::default())),
+            analysis: Default::default(),
             calls: Default::default(),
         }
     }
@@ -600,6 +607,22 @@ impl ServerHost for FakeServer {
     fn create_device_token(&self, label: &str, user: Option<i64>, _addresses: &[String]) -> Result<flow_core::server_mode::OwnerToken, String> {
         self.call(format!("token {label} user {user:?}"));
         self.token.lock().unwrap().clone()
+    }
+    fn analysis_backend(&self) -> Option<(String, String)> {
+        self.analysis.lock().unwrap().clone()
+    }
+    /// Validates as the real one does; an adopted server refuses.
+    fn set_analysis_backend(&self, backend: Option<(&str, &str)>) -> Result<(), String> {
+        self.call(match backend {
+            Some((url, model)) => format!("analysis {url} {model}"),
+            None => "analysis off".into(),
+        });
+        flow_core::server_mode::check_analysis_backend(backend)?;
+        if self.status.lock().unwrap().ownership == flow_core::server_mode::Ownership::Adopted {
+            return Err("This server was set up outside LocalFlow, so its settings stay as they are.".into());
+        }
+        *self.analysis.lock().unwrap() = backend.map(|(url, model)| (url.to_string(), model.to_string()));
+        Ok(())
     }
 }
 

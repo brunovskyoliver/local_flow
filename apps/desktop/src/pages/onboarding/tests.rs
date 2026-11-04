@@ -2180,7 +2180,7 @@ async fn the_server_path_downloads_opens_and_hands_over_a_token(cx: &mut TestApp
     assert_eq!(read(cx, w, |p, _| p.setup.step), Step::ServerNetwork);
     assert!(server.calls().contains(&"on".to_string()), "started on loopback");
     poll(cx, w);
-    assert_saw(&["Running on 127.0.0.1:18090, reachable only through a local proxy or tunnel", "Open the server to continue"]);
+    assert_saw(&["Running · this Mac only", "Open the server to continue"]);
     assert!(disabled(cx, w, "onboarding.primary"), "nothing reachable until the owner confirms");
     click(cx, w, "onboarding.serverOpen");
     assert_eq!(cx.pending_prompt().map(|p| p.0).as_deref(), Some("Open this server to the network?"));
@@ -2188,7 +2188,7 @@ async fn the_server_path_downloads_opens_and_hands_over_a_token(cx: &mut TestApp
     frame(cx, w);
     assert!(server.calls().contains(&"open".to_string()));
     poll(cx, w);
-    assert_saw(&["The server is open to the network.", "open to all networks"]);
+    assert_saw(&["The server is open to the network.", "Running · open to all networks"]);
 
     click(cx, w, "onboarding.primary");
     assert_eq!(read(cx, w, |p, _| p.setup.step), Step::ServerReady);

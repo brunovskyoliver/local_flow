@@ -79,6 +79,9 @@ impl flow_platform::Services for Stub {
     fn free_disk_bytes(&self) -> Option<u64> {
         None
     }
+    fn physical_memory(&self) -> u64 {
+        self.fake.physical_memory()
+    }
     fn secret(&self, name: &str) -> Result<Option<String>, Unavailable> {
         Ok(self.secret_data(name)?.map(|v| String::from_utf8(v).unwrap()))
     }
@@ -1545,16 +1548,16 @@ async fn server_mode_turns_on_opens_and_off_without_touching_the_client(cx: &mut
     cx.update(|cx| cx.global_mut::<Core>().prefs = flow_core::prefs::Prefs::open(file.clone()));
     let before = std::fs::read(&file).unwrap();
     let server = with_server(cx, r.win);
-    assert_saw(&["Server mode", "Off"]);
+    assert_saw(&["Server mode", "Stopped"]);
 
     click(cx, r.win, "settings.serverMode");
     answer(cx, r.win, "Turn on server mode?", "Turn On");
     assert_eq!(server.calls(), ["on"]);
-    assert_saw(&["Running on 127.0.0.1:18090, reachable only through a local proxy or tunnel", "This server listens only on this Mac.", "fp-fake", "Custom address", "No client has connected yet."]);
+    assert_saw(&["Running · this Mac only", "None yet. Open to the network, or add a custom address.", "fp-fake", "Custom address", "No client yet.", "Keeps running while this Mac is logged in."]);
 
     click(cx, r.win, "settings.serverModeOpen");
     answer(cx, r.win, "Open this server to the network?", "Open and Restart");
-    assert_saw(&["The server is open to the network.", "open to all networks", "192.168.1.20:18090"]);
+    assert_saw(&["The server is open to the network.", "Running · open to all networks", "192.168.1.20:18090"]);
     assert!(!has(cx, r.win, "settings.serverModeOpen"), "already open");
 
     type_into(cx, r.win, |p| p.server_custom.clone(), "https://proxy.example.com");
@@ -1587,7 +1590,7 @@ async fn an_adopted_server_says_so_and_downloads_its_models(cx: &mut TestAppCont
     cx.update(|cx| cx.global_mut::<Core>().server = Some(host));
     set(cx, r.win, |p, _, cx| p.refresh(cx));
     frame(cx, r.win);
-    assert_saw(&["Off. The server already on this Mac stays as it was set up.", "This server was set up outside LocalFlow.", "Not available yet", "Dictation: models not downloaded."]);
+    assert_saw(&["Stopped", "Set up outside LocalFlow. Its address and settings stay as they are.", "Not available yet", "Dictation: models not downloaded."]);
     click(cx, r.win, "settings.serverModeDownload");
     answer(cx, r.win, "Download models?", "Download");
     assert_eq!(server.calls(), ["download"]);
@@ -1595,6 +1598,64 @@ async fn an_adopted_server_says_so_and_downloads_its_models(cx: &mut TestAppCont
     click(cx, r.win, "settings.serverMode");
     answer(cx, r.win, "Start the server on this Mac?", "Start");
     assert!(!has(cx, r.win, "settings.serverModeOpen"), "an adopted server is never rewritten");
+}
+
+/// Sections only a Mac that dictates shows.
+const CLIENT_SECTIONS: [&str; 5] = ["settings.section.App context", "settings.section.Rewriting", "settings.section.Summaries", "settings.section.Permissions needed", "settings.speechDownload"];
+
+#[flow_ui::gpui::test]
+async fn a_server_mac_lists_the_servers_models_and_hides_what_only_a_client_uses(cx: &mut TestAppContext) {
+    use flow_core::onboarding::CATALOG;
+    let r = rig(cx, "", |p| p.set("setup.role", "server"));
+    let server = std::sync::Arc::new(flow_platform::FakeServer::default());
+    server.plan.lock().unwrap().speech_installed = [true, false, false];
+    let host: std::sync::Arc<dyn flow_platform::ServerHost> = server.clone();
+    cx.update(|cx| cx.global_mut::<Core>().server = Some(host));
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    frame(cx, r.win);
+
+    let size = |b: u64| core::byte_count(b);
+    use flow_core::server_mode::{DIARIZATION_OFFLINE_BYTES, MTPLX_RUNTIME_BYTES, PARAKEET_V3_BYTES, WHISPER_TURBO_BYTES};
+    assert_saw(&[
+        "Parakeet v3 (dictation)",
+        &format!("Ready · {}", size(PARAKEET_V3_BYTES)),
+        "Whisper large-v3-turbo (meetings)",
+        &format!("Not downloaded · {}", size(WHISPER_TURBO_BYTES)),
+        &format!("Not downloaded · {}", size(DIARIZATION_OFFLINE_BYTES)),
+        "On-device AI runtime",
+        &format!("Not downloaded · {}", size(MTPLX_RUNTIME_BYTES)),
+        CATALOG[0].name,
+    ]);
+    for id in ["settings.serverModel.dictation", "settings.serverModel.meetings", "settings.serverModel.speakers", "settings.serverModel.runtime", "settings.serverModel.languageModel", "settings.appearance"] {
+        assert!(has(cx, r.win, id), "{id} shows on a server Mac");
+    }
+    for id in CLIENT_SECTIONS.into_iter().chain(["settings.shortcut", "settings.learnCorrections", "settings.meetingLanguage", "settings.keepModelReady"]) {
+        assert!(!has(cx, r.win, id), "{id} is hidden on a server Mac");
+    }
+    assert!(!saw("Whisper Turbo") && !saw("Term booster") && !saw("Not installed"), "no client model rows");
+    assert!(has(cx, r.win, "settings.serverMode"), "Server mode stays");
+
+    let missing = WHISPER_TURBO_BYTES + DIARIZATION_OFFLINE_BYTES + MTPLX_RUNTIME_BYTES + CATALOG[0].download_bytes as u64;
+    assert_saw(&[&format!("{} to download", size(missing))]);
+    click(cx, r.win, "settings.serverModelsDownload");
+    answer(cx, r.win, "Download models?", "Download");
+    let mut calls = server.calls();
+    calls.sort();
+    assert_eq!(calls, ["download".to_string(), format!("language model {}", CATALOG[0].id)], "the server's own download paths, not the client's");
+    assert!(!logged(&r, "action downloadMeetingModel"));
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    assert_saw(&[&format!("Ready · {}", size(WHISPER_TURBO_BYTES)), "Installing MTPLX…"]);
+}
+
+#[flow_ui::gpui::test]
+async fn a_client_mac_with_server_mode_keeps_its_own_models(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |p| p.set("setup.role", "client"));
+    with_server(cx, r.win);
+    for id in CLIENT_SECTIONS.into_iter().chain(["settings.shortcut", "settings.keepModelReady", "settings.serverMode"]) {
+        assert!(has(cx, r.win, id), "{id} shows on a client Mac");
+    }
+    assert!(!has(cx, r.win, "settings.serverModels"));
+    assert_saw(&["Whisper Turbo", "Term booster"]);
 }
 
 // Feature 028 US4: device invites and "Your devices".

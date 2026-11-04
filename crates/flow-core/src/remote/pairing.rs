@@ -72,8 +72,11 @@ impl PairingLink {
 }
 
 /// What the pairing form says about a failed `pair` or `update_address`.
-pub fn failure_message(error: &EnrollError) -> &'static str {
-    match error {
+pub fn failure_message(error: &EnrollError) -> String {
+    let fixed = match error {
+        EnrollError::NotTls(Some(plain)) => return format!("This address doesn't speak https. Try {plain}"),
+        EnrollError::NotTls(None) => "This address doesn't speak https. Check the address.",
+        EnrollError::UnknownHost(host) => return format!("Can't find {host}."),
         EnrollError::WrongServer => "This address reaches a different server. Check the address or ask for a new token.",
         EnrollError::UpdateRequired => "Update the LocalFlow server to pair with a token. The token was not used.",
         EnrollError::InvalidIdentity => "The server did not answer with a LocalFlow identity. Check the address.",
@@ -87,7 +90,8 @@ pub fn failure_message(error: &EnrollError) -> &'static str {
             _ => "The server could not be reached. Try again.",
         },
         _ => "The server could not be reached. Try again.",
-    }
+    };
+    fixed.to_string()
 }
 
 #[cfg(test)]
@@ -183,5 +187,9 @@ mod tests {
         assert_eq!(failure_message(&EnrollError::InvalidIdentity), "The server did not answer with a LocalFlow identity. Check the address.");
         assert_eq!(failure_message(&EnrollError::UnusableRoute), "This address isn't a usable LocalFlow route: it answers, but a proxy may be blocking WebSockets or changing paths.");
         assert_eq!(failure_message(&EnrollError::DeviceKeyUnavailable), "This device can't create a device key.");
+        assert_eq!(failure_message(&EnrollError::NotTls(Some("http://ai.tail75b52d.ts.net:8090".into()))), "This address doesn't speak https. Try http://ai.tail75b52d.ts.net:8090");
+        assert_eq!(failure_message(&EnrollError::NotTls(None)), "This address doesn't speak https. Check the address.");
+        assert_eq!(failure_message(&EnrollError::UnknownHost("ai.tail75b52d.ts.net".into())), "Can't find ai.tail75b52d.ts.net.");
+        assert_eq!(failure_message(&EnrollError::Unreachable), "The server could not be reached. Try again.");
     }
 }

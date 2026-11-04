@@ -121,19 +121,57 @@ pub(crate) fn refresh_status<P: ServerPage>(page: &mut P, cx: &mut Context<P>) {
     .detach();
 }
 
-/// Swift's `statusLine`.
+/// Swift's `statusLine`, shorter: the port shows only in the addresses.
 pub(crate) fn status_line(s: &ServerModeStatus) -> String {
     if !s.loaded {
-        return if s.ownership == Ownership::Adopted { "Off. The server already on this Mac stays as it was set up.".into() } else { "Off".into() };
+        return "Stopped".into();
     }
     if !s.running {
         return "Starting…".into();
     }
     match &s.listen {
         None => "Running".into(),
-        Some(listen) if s.can_open_to_network() => format!("Running on {listen}, reachable only through a local proxy or tunnel"),
-        Some(listen) => format!("Running on {listen}, open to all networks"),
+        Some(_) if s.can_open_to_network() => "Running · this Mac only".into(),
+        Some(_) => "Running · open to all networks".into(),
     }
+}
+
+/// This Mac is the server: it can host one and onboarding's role choice was "This is the server"
+/// (`setup.role`). Server mode alone doesn't count: a Mac that dictates can run a server beside it.
+pub(crate) fn is_server_mac(cx: &App) -> bool {
+    host(cx).is_some() && cx.global::<Core>().prefs.string(ROLE_KEY).as_deref() == Some(Role::Server.raw())
+}
+
+/// The server's model plan: the default for this Mac, or `model` when the owner picked one.
+pub(crate) fn plan(cx: &App, memory: u64, downloaded: [bool; 5], model: Option<Option<usize>>) -> Option<ServerModelPlan> {
+    let input = host(cx)?.plan_input(memory, cx.global::<Core>().services.free_disk_bytes(), downloaded);
+    Some(match model {
+        Some(model) => plan_for(&input, model),
+        None => server_model_plan(&input),
+    })
+}
+
+pub(crate) fn is_speech(part: PlanPart) -> bool {
+    matches!(part, PlanPart::Dictation | PlanPart::Meetings | PlanPart::Speakers)
+}
+
+/// Each plan item's state while `ui` downloads: speech models one after another in plan order,
+/// then the runtime and the language model as `phase` reports them.
+pub(crate) fn row_states(plan: &ServerModelPlan, ui: &ServerUi, phase: Option<&AiPhase>, waiting: &RowState) -> Vec<RowState> {
+    let progress = *ui.downloaded.lock().unwrap();
+    let running = ui.busy && ui.models_started && ui.download_error.is_none();
+    // The worker fetches the missing speech models in plan order, so only the first missing
+    // one is downloading; the rest are queued.
+    let current = plan.items.iter().position(|i| is_speech(i.part) && !i.installed);
+    plan.items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| match item.part {
+            PlanPart::Dictation | PlanPart::Meetings | PlanPart::Speakers => speech_row(item.installed, ui.download_error.as_deref(), running && current == Some(index), progress, waiting),
+            PlanPart::Runtime => runtime_row(item.installed, phase, waiting),
+            PlanPart::LanguageModel(_) => model_row(item.installed, phase, waiting),
+        })
+        .collect()
 }
 
 pub(crate) fn open_message(outcome: OpenOutcome) -> String {
@@ -145,7 +183,7 @@ pub(crate) fn open_message(outcome: OpenOutcome) -> String {
 }
 
 pub(crate) const OPEN_TITLE: &str = "Open this server to the network?";
-pub(crate) const OPEN_EXPLANATION: &str = "The server restarts and listens on all networks, not just this Mac. Anyone who can reach it can try to connect, and tokens control who gets in. If it isn't healthy within 60 seconds, the previous settings come back.";
+pub(crate) const OPEN_EXPLANATION: &str = "The server restarts and listens on all networks. Tokens control who gets in. If it isn't healthy within 60 seconds, the previous settings come back.";
 pub(crate) const OPEN_BUTTON: &str = "Open and Restart";
 
 /// Asks, then opens: the bind changes only after the owner confirms (FR-009).
@@ -174,12 +212,7 @@ impl ServerPage for OnboardingPage {
 impl OnboardingPage {
     /// The plan on screen: the default, or the owner's smaller pick.
     pub(super) fn server_plan(&self, cx: &App) -> Option<ServerModelPlan> {
-        let host = host(cx)?;
-        let input = host.plan_input(self.memory, cx.global::<Core>().services.free_disk_bytes(), self.downloaded);
-        Some(match self.server.model {
-            Some(model) => plan_for(&input, model),
-            None => server_model_plan(&input),
-        })
+        plan(cx, self.memory, self.downloaded, self.server.model)
     }
 
     /// The server parts of the snapshot, from the last status and plan.
@@ -190,7 +223,7 @@ impl OnboardingPage {
         }
         let ui = &self.server;
         next.server_models_ready = self.server_plan(cx).is_some_and(|plan| {
-            let speech = plan.items.iter().filter(|i| matches!(i.part, PlanPart::Dictation | PlanPart::Meetings | PlanPart::Speakers)).all(|i| i.installed);
+            let speech = plan.items.iter().filter(|i| is_speech(i.part)).all(|i| i.installed);
             speech && (plan.model.is_none() || (ui.ai_started && ui.ai_phase == Some(AiPhase::Ready)))
         });
         next.server_reachable = ui.status.running && ui.status.listen.is_some() && !ui.status.can_open_to_network();
@@ -279,25 +312,8 @@ impl OnboardingPage {
         ];
         let Some(plan) = self.server_plan(cx) else { return body };
         let ui = &self.server;
-        let progress = *ui.downloaded.lock().unwrap();
         let waiting = RowState::Waiting(if ui.models_started { "Queued".into() } else { String::new() });
-        let running = ui.busy && ui.models_started && ui.download_error.is_none();
-        // The worker fetches the missing speech models in plan order, so only the first missing
-        // one is downloading; the rest are queued.
-        let current = plan.items.iter().position(|i| matches!(i.part, PlanPart::Dictation | PlanPart::Meetings | PlanPart::Speakers) && !i.installed);
-        let phase = ui.ai_phase.as_ref().filter(|_| ui.ai_started);
-        let states: Vec<RowState> = plan
-            .items
-            .iter()
-            .enumerate()
-            .map(|(index, item)| match item.part {
-                PlanPart::Dictation | PlanPart::Meetings | PlanPart::Speakers => {
-                    speech_row(item.installed, ui.download_error.as_deref(), running && current == Some(index), progress, &waiting)
-                }
-                PlanPart::Runtime => runtime_row(item.installed, phase, &waiting),
-                PlanPart::LanguageModel(_) => model_row(item.installed, phase, &waiting),
-            })
-            .collect();
+        let states = row_states(&plan, ui, ui.ai_phase.as_ref().filter(|_| ui.ai_started), &waiting);
         let mut card = setup_card(cx).id("onboarding.serverModels");
         for (item, state) in plan.items.iter().zip(states) {
             let (symbol, retry) = match item.part {

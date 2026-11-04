@@ -39,6 +39,8 @@ pub trait ServerProcessRunner: Send + Sync {
     fn run(&self, program: &Path, args: &[String]) -> ProcessResult;
     /// `GET url` with `Authorization: Bearer <bearer>`, loopback only. `Err` when nothing answered.
     fn get(&self, url: &str, bearer: &str) -> HttpAnswer;
+    /// `PUT url` with a JSON `body`, otherwise as `get`.
+    fn put(&self, url: &str, bearer: &str, body: &[u8]) -> HttpAnswer;
     /// `run`, handing each stderr line to `line` as it comes (`flowd-speech provision`'s progress).
     fn run_streaming(&self, program: &Path, args: &[String], line: &mut dyn FnMut(&str)) -> ProcessResult {
         let result = self.run(program, args);
@@ -85,11 +87,21 @@ impl ServerProcessRunner for SystemRunner {
     }
     fn get(&self, url: &str, bearer: &str) -> HttpAnswer {
         let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(ADMIN_TIMEOUT)).max_redirects(0).http_status_as_error(false).proxy(None).build().into();
-        let mut response = agent.get(url).header("Authorization", format!("Bearer {bearer}")).call().map_err(|_| "unreachable".to_string())?;
-        let status = response.status().as_u16();
-        let body = response.body_mut().with_config().limit(MAX_ADMIN_BODY).read_to_vec().map_err(|_| "unreadable".to_string())?;
-        Ok((status, body))
+        let response = agent.get(url).header("Authorization", format!("Bearer {bearer}")).call();
+        read_answer(response)
     }
+    fn put(&self, url: &str, bearer: &str, body: &[u8]) -> HttpAnswer {
+        let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(ADMIN_TIMEOUT)).max_redirects(0).http_status_as_error(false).proxy(None).build().into();
+        let response = agent.put(url).header("Authorization", format!("Bearer {bearer}")).header("Content-Type", "application/json").send(body);
+        read_answer(response)
+    }
+}
+
+fn read_answer(response: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> HttpAnswer {
+    let mut response = response.map_err(|_| "unreachable".to_string())?;
+    let status = response.status().as_u16();
+    let body = response.body_mut().with_config().limit(MAX_ADMIN_BODY).read_to_vec().map_err(|_| "unreadable".to_string())?;
+    Ok((status, body))
 }
 
 /// One call a `RecordingRunner` saw.
@@ -97,10 +109,12 @@ impl ServerProcessRunner for SystemRunner {
 pub enum RecordedCall {
     Run { program: PathBuf, args: Vec<String> },
     Get { url: String, bearer: String },
+    Put { url: String, bearer: String, body: String },
 }
 
 type RunAnswer = Box<dyn FnMut(&Path, &[String]) -> ProcessResult + Send>;
 type GetAnswer = Box<dyn FnMut(&str) -> HttpAnswer + Send>;
+type PutAnswer = Box<dyn FnMut(&str, &[u8]) -> HttpAnswer + Send>;
 
 /// A runner for tests: records every call and answers with scripted closures. By default every
 /// run succeeds with no output and nothing answers HTTP.
@@ -108,11 +122,17 @@ pub struct RecordingRunner {
     calls: Mutex<Vec<RecordedCall>>,
     run_answer: Mutex<RunAnswer>,
     get_answer: Mutex<GetAnswer>,
+    put_answer: Mutex<PutAnswer>,
 }
 
 impl Default for RecordingRunner {
     fn default() -> Self {
-        RecordingRunner { calls: Mutex::default(), run_answer: Mutex::new(Box::new(|_, _| ProcessResult::ok(""))), get_answer: Mutex::new(Box::new(|_| Err("unreachable".into()))) }
+        RecordingRunner {
+            calls: Mutex::default(),
+            run_answer: Mutex::new(Box::new(|_, _| ProcessResult::ok(""))),
+            get_answer: Mutex::new(Box::new(|_| Err("unreachable".into()))),
+            put_answer: Mutex::new(Box::new(|_, _| Err("unreachable".into()))),
+        }
     }
 }
 
@@ -125,6 +145,9 @@ impl RecordingRunner {
     }
     pub fn answer_gets(&self, f: impl FnMut(&str) -> HttpAnswer + Send + 'static) {
         *self.get_answer.lock().unwrap() = Box::new(f);
+    }
+    pub fn answer_puts(&self, f: impl FnMut(&str, &[u8]) -> HttpAnswer + Send + 'static) {
+        *self.put_answer.lock().unwrap() = Box::new(f);
     }
     pub fn calls(&self) -> Vec<RecordedCall> {
         self.calls.lock().unwrap().clone()
@@ -143,6 +166,10 @@ impl ServerProcessRunner for RecordingRunner {
     fn get(&self, url: &str, bearer: &str) -> HttpAnswer {
         self.calls.lock().unwrap().push(RecordedCall::Get { url: url.into(), bearer: bearer.into() });
         (self.get_answer.lock().unwrap())(url)
+    }
+    fn put(&self, url: &str, bearer: &str, body: &[u8]) -> HttpAnswer {
+        self.calls.lock().unwrap().push(RecordedCall::Put { url: url.into(), bearer: bearer.into(), body: String::from_utf8_lossy(body).into_owned() });
+        (self.put_answer.lock().unwrap())(url, body)
     }
 }
 
@@ -200,6 +227,17 @@ impl ServerAdmin {
             return Err(AdminError::Refused(status));
         }
         serde_json::from_slice::<serde_json::Value>(&body).ok().filter(|v| v.is_object()).ok_or(AdminError::Invalid)
+    }
+
+    /// `PUT /v1/admin/analysis`: switches the running flowd's summaries backend, `None` back to the
+    /// rewrite model. flowd reads `analysis-api-key` itself.
+    pub fn put_analysis(&self, backend: Option<(&str, &str)>) -> Result<(), AdminError> {
+        let token = self.admin_token()?;
+        let url = format!("http://127.0.0.1:{}/v1/admin/analysis", self.paths.admin_port());
+        let (url_value, model) = backend.unwrap_or(("", ""));
+        let body = serde_json::json!({"backend": url_value, "model": model}).to_string();
+        let (status, _) = self.runner.put(&url, &token, body.as_bytes()).map_err(|_| AdminError::Unreachable)?;
+        if status == 200 { Ok(()) } else { Err(AdminError::Refused(status)) }
     }
 
     // The Users page (T044, T045)
@@ -299,6 +337,7 @@ const LAUNCHCTL: &str = "/bin/launchctl";
 const DOWNLOAD_FAILED: &str = "A model could not be downloaded or verified. Try again.";
 const ADOPTED_OPEN: &str = "This server was set up outside LocalFlow, so its settings stay as they are. Change its address where it was set up.";
 const HANDOFF_STALE: &str = "Meetings sent from a phone: turn server mode off and on.";
+const ADOPTED_ANALYSIS: &str = "This server was set up outside LocalFlow, so its settings stay as they are. Change its analysis backend where it was set up.";
 
 /// Server mode for one Mac. Nothing here touches the client's own agents or preferences: its
 /// state is `server-mode.json` beside them, with Swift's key names.
@@ -663,7 +702,7 @@ impl ServerMode {
             }
         }
         let rewriting = self.prepare_mtplx()?;
-        let bytes = self.paths.flowd_plist(listen, rewriting, executable(&self.paths.meeting_processor()));
+        let bytes = self.paths.flowd_plist(listen, rewriting, executable(&self.paths.meeting_processor()), self.analysis().as_ref());
         let plist = self.paths.plist();
         std::fs::create_dir_all(plist.parent().unwrap_or(Path::new("/"))).and_then(|_| write_atomic(&plist, &bytes, 0o644)).map_err(|e| format!("Could not write {}: {e}", file_name(&plist)))?;
         record_plist(&mut self.prefs(), &bytes);
@@ -744,6 +783,69 @@ impl ServerMode {
         Ok(())
     }
 
+    // The analysis backend
+
+    /// The stored backend as flowd starts with it, the key file passed only when it's private.
+    fn analysis(&self) -> Option<Analysis> {
+        let (url, model) = analysis_backend(&self.prefs())?;
+        Some(Analysis { url, model, key_file: private_file(&self.paths.analysis_key()) })
+    }
+
+    pub fn analysis_backend(&self) -> Option<(String, String)> {
+        analysis_backend(&self.prefs())
+    }
+
+    /// Stores the summaries backend in `server-mode.json` so flowd keeps it across restarts. A
+    /// managed plist gets the flags (its new hash recorded, so it stays managed); a running flowd
+    /// switches through the admin API, or is reloaded when that doesn't answer. An adopted server is
+    /// refused and nothing changes.
+    // ponytail: after a switch over the admin API launchd still holds the old arguments, so a crash
+    // restart runs without the backend until the next reload or login.
+    pub fn set_analysis_backend(&self, backend: Option<(&str, &str)>) -> Result<(), String> {
+        check_analysis_backend(backend)?;
+        let key = self.paths.analysis_key();
+        if backend.is_some() && key.exists() && !private_file(&key) {
+            return Err(ANALYSIS_KEY_NOT_PRIVATE.into());
+        }
+        let job = self.job(self.paths.label());
+        match self.ownership(job.is_some()) {
+            Ownership::Adopted => return Err(ADOPTED_ANALYSIS.into()),
+            // The install writes it into the plist.
+            Ownership::None => return store_analysis_backend(&mut self.prefs(), backend).map_err(String::from),
+            Ownership::Managed => {}
+        }
+        let plist = self.paths.plist();
+        let bytes = self.plist_bytes().ok_or(NO_PLIST)?;
+        let analysis = backend.map(|(url, model)| Analysis { url: url.into(), model: model.into(), key_file: private_file(&key) });
+        let arguments = program_arguments(&bytes).ok_or(NO_PLIST)?;
+        let new = replace_arguments(&bytes, &self.paths.with_analysis(&arguments, analysis.as_ref())).ok_or(NO_PLIST)?;
+        write_atomic(&plist, &new, 0o644).map_err(|e| format!("Could not write {}: {e}", file_name(&plist)))?;
+        {
+            let mut prefs = self.prefs();
+            record_plist(&mut prefs, &new);
+            store_analysis_backend(&mut prefs, backend)?;
+        }
+        match job {
+            None => Ok(()),
+            Some(j) if j.running && self.admin.put_analysis(backend).is_ok() => Ok(()),
+            Some(_) => self.reload().map_or(Ok(()), Err),
+        }
+    }
+
+    /// A summaries backend stored in `server-mode.json` that the managed plist doesn't carry yet
+    /// (written there by hand, or by a build before the flags existed) goes into the plist.
+    pub fn apply_stored_analysis(&self) {
+        let Some((url, model)) = self.analysis_backend() else { return };
+        if self.ownership(self.job(self.paths.label()).is_some()) != Ownership::Managed {
+            return;
+        }
+        let Some(arguments) = self.plist_bytes().and_then(|b| program_arguments(&b)) else { return };
+        if value_after(&arguments, "--analysis-backend") == Some(url.as_str()) && value_after(&arguments, "--analysis-model") == Some(model.as_str()) {
+            return;
+        }
+        let _ = self.set_analysis_backend(Some((&url, &model)));
+    }
+
     // The owner's first token (T031)
 
     pub fn owner_name(&self) -> String {
@@ -808,6 +910,7 @@ impl crate::ServerHost for ServerMode {
     fn launch(&self) {
         self.recover_interrupted_open();
         self.resync_if_updated();
+        self.apply_stored_analysis();
     }
     fn users_page(&self) -> Result<flow_core::server_admin::Model, flow_core::server_admin::ReadError> {
         self.admin.users_page(flow_core::history::now_ms())
@@ -817,6 +920,12 @@ impl crate::ServerHost for ServerMode {
     }
     fn create_device_token(&self, label: &str, user: Option<i64>, addresses: &[String]) -> Result<OwnerToken, String> {
         self.admin.create_token(label, user, addresses)
+    }
+    fn analysis_backend(&self) -> Option<(String, String)> {
+        ServerMode::analysis_backend(self)
+    }
+    fn set_analysis_backend(&self, backend: Option<(&str, &str)>) -> Result<(), String> {
+        ServerMode::set_analysis_backend(self, backend)
     }
 }
 
@@ -845,6 +954,12 @@ fn text(path: &Path) -> String {
 
 fn file_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// A regular file only this user can read or write, as flowd wants its key files.
+fn private_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o077 == 0)
 }
 
 fn executable(path: &Path) -> bool {
@@ -1312,7 +1427,7 @@ mod tests {
     #[test]
     fn a_server_set_up_elsewhere_is_started_but_never_rewritten() {
         let r = rig("adopted");
-        let foreign = r.mode.paths.flowd_plist("0.0.0.0:9999", false, false);
+        let foreign = r.mode.paths.flowd_plist("0.0.0.0:9999", false, false, None);
         std::fs::create_dir_all(r.mode.paths.plist().parent().unwrap()).unwrap();
         std::fs::write(r.mode.paths.plist(), &foreign).unwrap();
         std::fs::create_dir_all(r.mode.paths.bin_dir()).unwrap();
@@ -1326,6 +1441,144 @@ mod tests {
         r.mode.turn_off().unwrap();
         assert_eq!(std::fs::read(r.mode.paths.plist()).unwrap(), foreign);
         std::fs::remove_dir_all(r.home).unwrap();
+    }
+
+    const BACKEND: (&str, &str) = ("http://127.0.0.1:8443/v1", "smart");
+
+    fn write_analysis_key(paths: &ServerModePaths, mode: u32) {
+        std::fs::write(paths.analysis_key(), "sk-local\n").unwrap();
+        std::fs::set_permissions(paths.analysis_key(), std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    fn calls_after(runner: &RecordingRunner, before: usize) -> Vec<RecordedCall> {
+        runner.calls()[before..].to_vec()
+    }
+
+    fn stored(mode: &ServerMode) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(mode.app_root.join("server-mode.json")).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn the_analysis_backend_goes_into_the_managed_plist_and_the_running_flowd() {
+        let r = rig("analysis");
+        let client_before = std::fs::read(&r.client_prefs).unwrap();
+        r.mode.turn_on().unwrap();
+        write_token(&r.mode.paths, 0o600);
+        write_analysis_key(&r.mode.paths, 0o600);
+        r.runner.answer_puts(|_, _| Ok((200, b"{}".to_vec())));
+        let before = r.runner.calls().len();
+        r.mode.set_analysis_backend(Some(BACKEND)).unwrap();
+
+        let args = r.mode.plist_arguments().unwrap();
+        assert_eq!(value_after(&args, "--analysis-backend"), Some(BACKEND.0));
+        assert_eq!(value_after(&args, "--analysis-model"), Some(BACKEND.1));
+        assert_eq!(value_after(&args, "--analysis-backend-key-file"), Some(r.mode.paths.analysis_key().to_str().unwrap()));
+        assert_eq!(r.mode.status().ownership, Ownership::Managed, "the new hash is recorded");
+        assert_eq!(r.mode.analysis_backend(), Some((BACKEND.0.into(), BACKEND.1.into())));
+        assert_eq!((stored(&r.mode)["serverMode.analysisBackend"].as_str(), stored(&r.mode)["serverMode.analysisModel"].as_str()), (Some(BACKEND.0), Some(BACKEND.1)));
+        let calls = calls_after(&r.runner, before);
+        let url = format!("http://127.0.0.1:{}/v1/admin/analysis", r.mode.paths.admin_port());
+        assert!(calls.contains(&RecordedCall::Put { url, bearer: "ab".repeat(32), body: r#"{"backend":"http://127.0.0.1:8443/v1","model":"smart"}"#.into() }));
+        assert!(!calls.iter().any(|c| matches!(c, RecordedCall::Run { args, .. } if args[0] == "bootout")), "switched live, no restart");
+        assert!(!std::fs::read_to_string(r.mode.paths.plist()).unwrap().contains("sk-local"), "the key stays in its file");
+
+        // A restart renders the plist again with the same flags.
+        r.mode.turn_off().unwrap();
+        r.mode.turn_on().unwrap();
+        assert_eq!(value_after(&r.mode.plist_arguments().unwrap(), "--analysis-backend"), Some(BACKEND.0));
+
+        // Cleared: the flags go and flowd is told to use the rewrite model.
+        let before = r.runner.calls().len();
+        r.mode.set_analysis_backend(None).unwrap();
+        assert!(r.mode.plist_arguments().unwrap().iter().all(|a| !a.starts_with("--analysis")));
+        assert_eq!(r.mode.analysis_backend(), None);
+        assert!(calls_after(&r.runner, before).iter().any(|c| matches!(c, RecordedCall::Put { body, .. } if body == r#"{"backend":"","model":""}"#)));
+        assert_eq!(std::fs::read(&r.client_prefs).unwrap(), client_before, "the client's preferences are untouched");
+        assert_dev_labels_only(&r.runner);
+        std::fs::remove_dir_all(r.home).unwrap();
+    }
+
+    #[test]
+    fn a_stored_analysis_backend_reaches_the_plist_at_launch_once() {
+        let r = rig("analysis-launch");
+        r.mode.turn_on().unwrap();
+        write_token(&r.mode.paths, 0o600);
+        write_analysis_key(&r.mode.paths, 0o600);
+        r.runner.answer_puts(|_, _| Ok((200, b"{}".to_vec())));
+        store_analysis_backend(&mut r.mode.prefs(), Some(BACKEND)).unwrap();
+        r.mode.apply_stored_analysis();
+        let args = r.mode.plist_arguments().unwrap();
+        assert_eq!((value_after(&args, "--analysis-backend"), value_after(&args, "--analysis-model")), (Some(BACKEND.0), Some(BACKEND.1)));
+        assert_eq!(r.mode.status().ownership, Ownership::Managed);
+        let before = r.runner.calls().len();
+        r.mode.apply_stored_analysis();
+        assert!(!calls_after(&r.runner, before).iter().any(|c| matches!(c, RecordedCall::Put { .. })), "already applied");
+        assert_dev_labels_only(&r.runner);
+        std::fs::remove_dir_all(r.home).unwrap();
+    }
+
+    #[test]
+    fn without_the_admin_api_flowd_is_reloaded_and_without_a_key_file_no_key_flag() {
+        let r = rig("analysis-reload");
+        r.mode.turn_on().unwrap();
+        let before = r.runner.calls().len();
+        r.mode.set_analysis_backend(Some(BACKEND)).unwrap();
+        let args = r.mode.plist_arguments().unwrap();
+        assert_eq!(value_after(&args, "--analysis-backend"), Some(BACKEND.0));
+        assert!(!args.contains(&"--analysis-backend-key-file".to_string()), "no key file, no flag");
+        let runs: Vec<String> = calls_after(&r.runner, before).into_iter().filter_map(|c| if let RecordedCall::Run { args, .. } = c { Some(args[0].clone()) } else { None }).collect();
+        let bootout = runs.iter().position(|a| a == "bootout").expect("no admin token: reloaded");
+        assert!(runs[bootout..].contains(&"bootstrap".to_string()));
+        assert!(r.mode.status().running);
+        assert_eq!(r.mode.status().ownership, Ownership::Managed);
+        std::fs::remove_dir_all(r.home).unwrap();
+    }
+
+    #[test]
+    fn a_backend_set_before_the_install_is_in_its_first_plist() {
+        let r = rig("analysis-first");
+        write_analysis_key(&r.mode.paths, 0o600);
+        r.mode.set_analysis_backend(Some(BACKEND)).unwrap();
+        assert!(!r.mode.paths.plist().exists(), "nothing written before the owner turns it on");
+        r.mode.turn_on().unwrap();
+        let args = r.mode.plist_arguments().unwrap();
+        assert_eq!(value_after(&args, "--analysis-model"), Some(BACKEND.1));
+        assert!(args.contains(&"--analysis-backend-key-file".to_string()));
+        std::fs::remove_dir_all(r.home).unwrap();
+    }
+
+    #[test]
+    fn an_analysis_backend_is_refused_for_an_adopted_server_a_remote_url_or_a_shared_key() {
+        let r = rig("analysis-refused");
+        let client_before = std::fs::read(&r.client_prefs).unwrap();
+        let foreign = r.mode.paths.flowd_plist("0.0.0.0:9999", false, false, None);
+        std::fs::create_dir_all(r.mode.paths.plist().parent().unwrap()).unwrap();
+        std::fs::write(r.mode.paths.plist(), &foreign).unwrap();
+        r.mode.turn_on().unwrap();
+        assert_eq!(r.mode.set_analysis_backend(Some(BACKEND)), Err(ADOPTED_ANALYSIS.into()));
+        assert_eq!(r.mode.set_analysis_backend(None), Err(ADOPTED_ANALYSIS.into()));
+        assert_eq!(std::fs::read(r.mode.paths.plist()).unwrap(), foreign, "never rewritten");
+        assert_eq!(r.mode.analysis_backend(), None);
+        assert!(stored(&r.mode).get("serverMode.analysisBackend").is_none());
+        assert!(!r.runner.calls().iter().any(|c| matches!(c, RecordedCall::Put { .. })), "nor switched live");
+
+        let r2 = rig("analysis-invalid");
+        r2.mode.turn_on().unwrap();
+        let plist = std::fs::read(r2.mode.paths.plist()).unwrap();
+        let before = r2.runner.calls().len();
+        for (url, model, why) in [("http://192.168.1.20:8443/v1", "smart", ANALYSIS_NOT_LOOPBACK), ("http://example.com/v1", "smart", ANALYSIS_NOT_LOOPBACK), ("http://u:p@127.0.0.1/v1", "smart", ANALYSIS_NOT_LOOPBACK), ("http://127.0.0.1:8443/v1", "", ANALYSIS_BAD_MODEL)] {
+            assert_eq!(r2.mode.set_analysis_backend(Some((url, model))), Err(why.into()), "{url}");
+        }
+        let long = "m".repeat(129);
+        assert_eq!(r2.mode.set_analysis_backend(Some((BACKEND.0, &long))), Err(ANALYSIS_BAD_MODEL.into()));
+        write_analysis_key(&r2.mode.paths, 0o644);
+        assert_eq!(r2.mode.set_analysis_backend(Some(BACKEND)), Err(ANALYSIS_KEY_NOT_PRIVATE.into()));
+        assert_eq!(std::fs::read(r2.mode.paths.plist()).unwrap(), plist);
+        assert_eq!(r2.mode.analysis_backend(), None);
+        assert!(calls_after(&r2.runner, before).is_empty(), "refused before touching launchd or flowd");
+        assert_eq!(std::fs::read(&r.client_prefs).unwrap(), client_before);
+        std::fs::remove_dir_all(r.home).unwrap();
+        std::fs::remove_dir_all(r2.home).unwrap();
     }
 
     #[test]

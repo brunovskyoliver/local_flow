@@ -454,7 +454,7 @@ fn finish<V: RemotePage>(this: &mut V, result: Result<Option<String>, EnrollErro
         }
         // The sheet went with the turn off.
         Err(EnrollError::TurnedOff) => {}
-        Err(error) => form.error = Some(failure_message(&error).to_string()),
+        Err(error) => form.error = Some(failure_message(&error)),
     }
     this.remote_changed(cx);
 }

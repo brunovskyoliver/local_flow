@@ -14,6 +14,9 @@ pub const CUSTOM_ADDRESS_KEY: &str = "serverMode.customAddress";
 pub const PLIST_HASH_KEY: &str = "serverMode.plistSHA256";
 pub const OPEN_PENDING_KEY: &str = "serverMode.openPending";
 pub const HELPERS_STAMP_KEY: &str = "serverMode.helpersStamp";
+/// The summaries and meeting analysis backend flowd starts with: a loopback base URL and its model.
+pub const ANALYSIS_BACKEND_KEY: &str = "serverMode.analysisBackend";
+pub const ANALYSIS_MODEL_KEY: &str = "serverMode.analysisModel";
 
 /// Helpers a server can't run without, from the app's `Contents/Helpers`.
 pub const REQUIRED_HELPERS: [&str; 3] = ["flowd", "flowd-speech", "localflow-whisper-engine"];
@@ -35,6 +38,9 @@ pub const NO_PLIST: &str = "The server's launch agent has no plist to start from
 pub const NO_REMOTE_LISTEN: &str = "This server's plist has no --remote-listen to change.";
 pub const REWRITING_MISSING: &str = "Rewriting and summaries: set up local AI in LocalFlow, then turn server mode off and on.";
 pub const HANDOFF_MISSING: &str = "Meetings sent from a phone: this server has no flowd-meeting.";
+pub const ANALYSIS_NOT_LOOPBACK: &str = "The analysis backend must be an http:// or https:// address on this Mac, such as http://127.0.0.1:8443/v1.";
+pub const ANALYSIS_BAD_MODEL: &str = "The analysis model needs a name of 1 to 128 bytes.";
+pub const ANALYSIS_KEY_NOT_PRIVATE: &str = "analysis-api-key must be private to this user (mode 0600).";
 
 /// `"<service>: models not downloaded."`
 pub fn models_missing(service: &str) -> String {
@@ -141,6 +147,11 @@ impl ServerModePaths {
     pub fn admin_token(&self) -> PathBuf {
         self.data_dir().join("admin-token")
     }
+    /// The analysis backend's API key (0600), which flowd reads itself: `--analysis-backend-key-file`
+    /// at start, and the admin API on a switch.
+    pub fn analysis_key(&self) -> PathBuf {
+        self.data_dir().join("analysis-api-key")
+    }
     /// The server MTPLX key (0600), read by the wrapper.
     pub fn mtplx_key(&self) -> PathBuf {
         self.data_dir().join("mtplx-api-key")
@@ -157,8 +168,9 @@ impl ServerModePaths {
     }
 
     /// The installer's flowd flags. `rewriting` starts it through the key wrapper; `meeting_processor`
-    /// is whether `bin/flowd-meeting` is executable.
-    pub fn flowd_arguments(&self, listen: &str, rewriting: bool, meeting_processor: bool) -> Vec<String> {
+    /// is whether `bin/flowd-meeting` is executable; `analysis` is the backend for summaries and
+    /// meeting analysis, if any (`analysis_arguments`).
+    pub fn flowd_arguments(&self, listen: &str, rewriting: bool, meeting_processor: bool, analysis: Option<&Analysis>) -> Vec<String> {
         let bin = self.bin_dir();
         let mut args: Vec<String> = Vec::new();
         if rewriting {
@@ -185,11 +197,40 @@ impl ServerModePaths {
         if meeting_processor {
             args.extend(["--meeting-processor".into(), text(&self.meeting_processor())]);
         }
+        args.extend(self.analysis_arguments(analysis));
         args.extend(["--log-file".into(), text(&self.log_dir().join("flowd.log")), "--admin-listen".into(), format!("127.0.0.1:{}", self.admin_port())]);
         if self.dev {
             args.push("--dev".into());
         }
         args
+    }
+
+    /// `--analysis-backend <url> --analysis-model <id>`, and `--analysis-backend-key-file` when the
+    /// key file is there and private. Empty without a backend.
+    pub fn analysis_arguments(&self, analysis: Option<&Analysis>) -> Vec<String> {
+        let Some(a) = analysis else { return vec![] };
+        let mut args = vec!["--analysis-backend".to_string(), a.url.clone(), "--analysis-model".into(), a.model.clone()];
+        if a.key_file {
+            args.extend(["--analysis-backend-key-file".into(), text(&self.analysis_key())]);
+        }
+        args
+    }
+
+    /// `arguments` with any analysis flags replaced by `analysis`'s, before `--log-file` as
+    /// `flowd_arguments` puts them; everything else stays as it was.
+    pub fn with_analysis(&self, arguments: &[String], analysis: Option<&Analysis>) -> Vec<String> {
+        let mut out: Vec<String> = Vec::with_capacity(arguments.len() + 6);
+        let mut rest = arguments.iter();
+        while let Some(a) = rest.next() {
+            if ANALYSIS_FLAGS.contains(&a.as_str()) {
+                rest.next();
+            } else {
+                out.push(a.clone());
+            }
+        }
+        let at = out.iter().position(|a| a == "--log-file").unwrap_or(out.len());
+        out.splice(at..at, self.analysis_arguments(analysis));
+        out
     }
 
     /// The serving flags and memory caps of the installer's MTPLX agent, key from `mtplx_key()`.
@@ -215,9 +256,9 @@ impl ServerModePaths {
     }
 
     /// flowd's plist, logs beside `flowd.log`.
-    pub fn flowd_plist(&self, listen: &str, rewriting: bool, meeting_processor: bool) -> Vec<u8> {
+    pub fn flowd_plist(&self, listen: &str, rewriting: bool, meeting_processor: bool, analysis: Option<&Analysis>) -> Vec<u8> {
         let logs = self.log_dir();
-        agent_plist(self.label(), &self.flowd_arguments(listen, rewriting, meeting_processor), &text(&logs.join("flowd.stdout.log")), &text(&logs.join("flowd.stderr.log")))
+        agent_plist(self.label(), &self.flowd_arguments(listen, rewriting, meeting_processor, analysis), &text(&logs.join("flowd.stdout.log")), &text(&logs.join("flowd.stderr.log")))
     }
 
     /// The server's own MTPLX plist; its stdout is discarded.
@@ -239,6 +280,93 @@ impl ServerModePaths {
 
 fn text(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+/// The flags `with_analysis` replaces, each followed by its value.
+const ANALYSIS_FLAGS: [&str; 3] = ["--analysis-backend", "--analysis-model", "--analysis-backend-key-file"];
+
+/// The summaries and meeting analysis backend, as flowd starts with it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Analysis {
+    pub url: String,
+    pub model: String,
+    /// `analysis-api-key` is there and private, so flowd is told to read it.
+    pub key_file: bool,
+}
+
+/// flowd's `loopbackURL`: http or https, no credentials, and `localhost` or a loopback IP literal,
+/// so flowd is never pointed at another machine. Nothing a plist or URL parser would read twice.
+pub fn loopback_url(raw: &str) -> bool {
+    if raw.is_empty() || !raw.bytes().all(|c| c.is_ascii_graphic()) {
+        return false;
+    }
+    let Some((scheme, rest)) = raw.split_once("://") else { return false };
+    if scheme != "http" && scheme != "https" {
+        return false;
+    }
+    let authority = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+    if authority.contains('@') || authority.contains('%') {
+        return false;
+    }
+    let (host, port, bracketed) = if let Some(inner) = authority.strip_prefix('[') {
+        let Some((host, after)) = inner.split_once(']') else { return false };
+        let port = match after {
+            "" => None,
+            _ => match after.strip_prefix(':') {
+                Some(port) => Some(port),
+                None => return false,
+            },
+        };
+        (host, port, true)
+    } else {
+        match authority.rsplit_once(':') {
+            Some((host, port)) => (host, Some(port), false),
+            None => (authority, None, false),
+        }
+    };
+    if port.is_some_and(|p| !p.is_empty() && p.parse::<u16>().is_err()) {
+        return false;
+    }
+    if bracketed {
+        return host.parse::<std::net::Ipv6Addr>().is_ok_and(|ip| ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback()));
+    }
+    host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+/// flowd's limit on the admin API: 1 to 128 bytes.
+pub fn valid_model(model: &str) -> bool {
+    (1..=128).contains(&model.len()) && !model.chars().any(char::is_control)
+}
+
+/// The stored backend and model, when both are there and still valid.
+pub fn analysis_backend(prefs: &Prefs) -> Option<(String, String)> {
+    let (url, model) = (prefs.string(ANALYSIS_BACKEND_KEY)?, prefs.string(ANALYSIS_MODEL_KEY)?);
+    (loopback_url(&url) && valid_model(&model)).then_some((url, model))
+}
+
+/// Why `backend` can't be stored, if it can't.
+pub fn check_analysis_backend(backend: Option<(&str, &str)>) -> Result<(), &'static str> {
+    match backend {
+        Some((url, _)) if !loopback_url(url) => Err(ANALYSIS_NOT_LOOPBACK),
+        Some((_, model)) if !valid_model(model) => Err(ANALYSIS_BAD_MODEL),
+        _ => Ok(()),
+    }
+}
+
+/// Stores the backend, or clears it with `None`. Prefs are unchanged when it isn't valid.
+pub fn store_analysis_backend(prefs: &mut Prefs, backend: Option<(&str, &str)>) -> Result<(), &'static str> {
+    check_analysis_backend(backend)?;
+    match backend {
+        Some((url, model)) => {
+            prefs.set(ANALYSIS_BACKEND_KEY, url);
+            prefs.set(ANALYSIS_MODEL_KEY, model);
+        }
+        None => {
+            prefs.remove(ANALYSIS_BACKEND_KEY);
+            prefs.remove(ANALYSIS_MODEL_KEY);
+        }
+    }
+    Ok(())
 }
 
 fn string_array(values: &[String]) -> plist::Value {
@@ -749,6 +877,7 @@ mod tests {
     #[test]
     fn preference_keys() {
         assert_eq!([ROLE_KEY, ENABLED_KEY, CUSTOM_ADDRESS_KEY, PLIST_HASH_KEY, OPEN_PENDING_KEY, HELPERS_STAMP_KEY], ["setup.role", "serverMode.enabled", "serverMode.customAddress", "serverMode.plistSHA256", "serverMode.openPending", "serverMode.helpersStamp"]);
+        assert_eq!([ANALYSIS_BACKEND_KEY, ANALYSIS_MODEL_KEY], ["serverMode.analysisBackend", "serverMode.analysisModel"]);
     }
 
     /// Swift's `testNewInstallOpensToAllNetworksWithDevIsolation`, argument for argument.
@@ -756,7 +885,7 @@ mod tests {
     fn flowd_arguments_for_a_new_dev_install() {
         let p = ServerModePaths::new("/h", true);
         let data = "/h/Library/Application Support/LocalFlow Server Dev";
-        let args = p.flowd_arguments("0.0.0.0:18090", false, false);
+        let args = p.flowd_arguments("0.0.0.0:18090", false, false, None);
         let expected = [
             format!("{data}/bin/flowd"),
             "serve".into(),
@@ -782,14 +911,14 @@ mod tests {
         ];
         assert_eq!(args, expected);
         assert_eq!(args[1], "serve", "no wrapper without local AI");
-        assert!(!ServerModePaths::new("/h", false).flowd_arguments("0.0.0.0:8090", false, false).contains(&"--dev".to_string()));
+        assert!(!ServerModePaths::new("/h", false).flowd_arguments("0.0.0.0:8090", false, false, None).contains(&"--dev".to_string()));
     }
 
     /// Swift's `testWithLocalAITheKeyStaysOutOfThePlist`: the wrapper and key file come first.
     #[test]
     fn rewriting_runs_flowd_through_the_key_wrapper() {
         let p = ServerModePaths::new("/h", true);
-        let args = p.flowd_arguments("0.0.0.0:18090", true, false);
+        let args = p.flowd_arguments("0.0.0.0:18090", true, false, None);
         assert_eq!(args[..3], [p.wrapper().to_string_lossy().into_owned(), p.mtplx_key().to_string_lossy().into_owned(), p.flowd().to_string_lossy().into_owned()]);
         assert!(p.wrapper().ends_with("bin/localflow-remote-flowd"));
         assert!(p.mtplx_key().ends_with("LocalFlow Server Dev/mtplx-api-key"));
@@ -800,11 +929,74 @@ mod tests {
     #[test]
     fn meeting_processor_is_passed_when_present() {
         let p = ServerModePaths::new("/h", true);
-        let args = p.flowd_arguments("0.0.0.0:18090", false, true);
+        let args = p.flowd_arguments("0.0.0.0:18090", false, true, None);
         assert_eq!(value_after(&args, "--meeting-processor"), Some(p.meeting_processor().to_str().unwrap()));
         assert!(p.meeting_processor().ends_with("bin/flowd-meeting"));
         assert_eq!(value_after(&args, "--meeting-helper").map(|h| h.ends_with("localflow-whisper-engine")), Some(true));
-        assert!(!p.flowd_arguments("0.0.0.0:18090", false, false).contains(&"--meeting-processor".to_string()));
+        assert!(!p.flowd_arguments("0.0.0.0:18090", false, false, None).contains(&"--meeting-processor".to_string()));
+    }
+
+    #[test]
+    fn analysis_flags_come_with_a_backend_and_the_key_only_when_private() {
+        let p = ServerModePaths::new("/h", true);
+        let without = p.flowd_arguments("0.0.0.0:18090", true, true, None);
+        assert!(without.iter().all(|a| !a.starts_with("--analysis")), "no backend, no flags");
+        let backend = Analysis { url: "http://127.0.0.1:8443/v1".into(), model: "smart".into(), key_file: true };
+        let with = p.flowd_arguments("0.0.0.0:18090", true, true, Some(&backend));
+        assert_eq!(value_after(&with, "--analysis-backend"), Some("http://127.0.0.1:8443/v1"));
+        assert_eq!(value_after(&with, "--analysis-model"), Some("smart"));
+        assert_eq!(value_after(&with, "--analysis-backend-key-file"), Some(p.analysis_key().to_str().unwrap()));
+        assert!(p.analysis_key().ends_with("LocalFlow Server Dev/analysis-api-key"));
+        assert_eq!(with.len(), without.len() + 6);
+        let at = |args: &[String], flag: &str| args.iter().position(|a| a == flag).unwrap();
+        assert!(at(&with, "--analysis-backend") > at(&with, "serve") && at(&with, "--analysis-backend") < at(&with, "--log-file"));
+        let no_key = p.flowd_arguments("0.0.0.0:18090", false, false, Some(&Analysis { key_file: false, ..backend.clone() }));
+        assert!(!no_key.contains(&"--analysis-backend-key-file".to_string()));
+        assert_eq!(no_key.len(), p.flowd_arguments("0.0.0.0:18090", false, false, None).len() + 4);
+        assert_eq!(program_arguments(&p.flowd_plist("0.0.0.0:18090", true, true, Some(&backend))).unwrap(), with);
+    }
+
+    #[test]
+    fn with_analysis_replaces_only_those_flags() {
+        let p = ServerModePaths::new("/h", true);
+        let backend = Analysis { url: "http://127.0.0.1:8443/v1".into(), model: "smart".into(), key_file: true };
+        let plain = p.flowd_arguments("0.0.0.0:18090", true, true, None);
+        let with = p.flowd_arguments("0.0.0.0:18090", true, true, Some(&backend));
+        assert_eq!(p.with_analysis(&plain, Some(&backend)), with, "the same place flowd_arguments puts them");
+        assert_eq!(p.with_analysis(&with, None), plain, "cleared");
+        let other = Analysis { url: "http://localhost:1234/v1".into(), model: "big".into(), key_file: false };
+        let changed = p.with_analysis(&with, Some(&other));
+        assert_eq!(value_after(&changed, "--analysis-backend"), Some("http://localhost:1234/v1"));
+        assert_eq!(changed.iter().filter(|a| a.starts_with("--analysis")).count(), 2);
+        let script = s(&["/script/flowd", "serve", "--remote-listen", "0.0.0.0:8090", "--google-client-id", "abc"]);
+        assert_eq!(p.with_analysis(&script, Some(&other))[6..], s(&["--analysis-backend", "http://localhost:1234/v1", "--analysis-model", "big"]), "appended without a --log-file");
+    }
+
+    #[test]
+    fn analysis_backend_is_loopback_only_with_a_short_model() {
+        for good in ["http://127.0.0.1:8443/v1", "https://localhost:8443/v1", "http://127.9.9.9", "http://[::1]:8000/v1", "http://[::ffff:127.0.0.1]:80", "http://localhost"] {
+            assert!(loopback_url(good), "{good}");
+        }
+        for bad in [
+            "", "127.0.0.1:8443", "ftp://127.0.0.1", "http://10.0.0.1:8443/v1", "http://example.com/v1", "http://localhost.example.com", "http://LOCALHOST",
+            "http://u:p@127.0.0.1", "http://127.0.0.1@evil.com", "http://127.0.0.1:99999", "http://127.0.0.1:x", "http://[::2]", "http://[::1]x", "http://[::1", "http://127.0.0.1 /v1", "http://127.0.0.1%2f",
+            "http://0x7f.1", "http://2130706433", "http://127.1",
+        ] {
+            assert!(!loopback_url(bad), "{bad}");
+        }
+        assert!(valid_model("smart") && valid_model(&"m".repeat(128)));
+        assert!(!valid_model("") && !valid_model(&"m".repeat(129)) && !valid_model("a\nb"));
+        let mut prefs = Prefs::memory();
+        assert_eq!(analysis_backend(&prefs), None);
+        assert_eq!(store_analysis_backend(&mut prefs, Some(("http://10.0.0.1/v1", "smart"))), Err(ANALYSIS_NOT_LOOPBACK));
+        assert_eq!(store_analysis_backend(&mut prefs, Some(("http://127.0.0.1:8443/v1", ""))), Err(ANALYSIS_BAD_MODEL));
+        assert!(!prefs.contains(ANALYSIS_BACKEND_KEY) && !prefs.contains(ANALYSIS_MODEL_KEY), "nothing stored when refused");
+        store_analysis_backend(&mut prefs, Some(("http://127.0.0.1:8443/v1", "smart"))).unwrap();
+        assert_eq!(analysis_backend(&prefs), Some(("http://127.0.0.1:8443/v1".into(), "smart".into())));
+        prefs.set(ANALYSIS_BACKEND_KEY, "http://example.com");
+        assert_eq!(analysis_backend(&prefs), None, "an edited file can't point flowd elsewhere");
+        store_analysis_backend(&mut prefs, None).unwrap();
+        assert!(!prefs.contains(ANALYSIS_BACKEND_KEY) && !prefs.contains(ANALYSIS_MODEL_KEY));
     }
 
     #[test]
@@ -828,7 +1020,7 @@ mod tests {
     #[test]
     fn plists_carry_the_agent_keys_and_no_key_value() {
         let p = ServerModePaths::new("/h", true);
-        let bytes = p.flowd_plist("0.0.0.0:18090", true, false);
+        let bytes = p.flowd_plist("0.0.0.0:18090", true, false, None);
         let d = dictionary(&bytes).unwrap();
         assert_eq!(d.get("Label").and_then(|v| v.as_string()), Some("org.localflow.LocalFlow.dev.remote"));
         assert_eq!(d.get("KeepAlive").and_then(|v| v.as_boolean()), Some(true));
@@ -838,7 +1030,7 @@ mod tests {
         assert_eq!(d.get("ThrottleInterval").and_then(|v| v.as_signed_integer()), Some(30));
         assert_eq!(d.get("StandardOutPath").and_then(|v| v.as_string()), Some("/h/Library/Logs/LocalFlow Server Dev/flowd.stdout.log"));
         assert_eq!(d.get("StandardErrorPath").and_then(|v| v.as_string()), Some("/h/Library/Logs/LocalFlow Server Dev/flowd.stderr.log"));
-        assert_eq!(program_arguments(&bytes).unwrap(), p.flowd_arguments("0.0.0.0:18090", true, false));
+        assert_eq!(program_arguments(&bytes).unwrap(), p.flowd_arguments("0.0.0.0:18090", true, false, None));
         assert!(String::from_utf8(bytes).unwrap().starts_with("<?xml"));
         let mtplx = p.mtplx_plist_bytes(Path::new("/ai/mtplx"), Path::new("/m"));
         let d = dictionary(&mtplx).unwrap();
@@ -863,7 +1055,7 @@ mod tests {
         let mut prefs = Prefs::memory();
         assert_eq!(ownership(None, &prefs, false), Ownership::None);
         assert_eq!(ownership(None, &prefs, true), Ownership::Adopted, "a loaded agent with no plist");
-        let ours = p.flowd_plist("0.0.0.0:18090", false, false);
+        let ours = p.flowd_plist("0.0.0.0:18090", false, false, None);
         assert_eq!(ownership(Some(&ours), &prefs, false), Ownership::Adopted, "lost preferences");
         record_plist(&mut prefs, &ours);
         assert_eq!(prefs.string(PLIST_HASH_KEY).unwrap(), plist_hash(&ours));

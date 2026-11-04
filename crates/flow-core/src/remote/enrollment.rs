@@ -36,6 +36,11 @@ pub enum EnrollError {
     InvalidIdentity,
     /// The identity route didn't answer.
     Unreachable,
+    /// An `https://` address whose server doesn't speak TLS. Holds the `http://` twin when FR-012a
+    /// allows one on that host and it didn't answer either; `pair` tries it first.
+    NotTls(Option<String>),
+    /// The address's name doesn't resolve. Holds the host.
+    UnknownHost(String),
     DeviceKeyUnavailable,
     /// The server answered with an unexpected message.
     Protocol,
@@ -99,6 +104,22 @@ impl RemoteSettings {
     }
     pub fn knows(&self, origin: &str) -> bool {
         self.origin.as_deref() == Some(origin) || self.alternates.iter().any(|a| a == origin)
+    }
+    /// `old` becomes `new` wherever it is, without making a repeat. A no-op when `old` isn't there.
+    fn replace(&mut self, old: &str, new: &str) {
+        if old == new || !self.knows(old) {
+            return;
+        }
+        let mut all: Vec<String> = Vec::new();
+        for address in self.addresses() {
+            let address = if address == old { new.to_string() } else { address };
+            if !all.contains(&address) {
+                all.push(address);
+            }
+        }
+        let mut all = all.into_iter();
+        self.origin = all.next();
+        self.alternates = all.collect();
     }
     /// An alternate that worked becomes current, in place of the old current. Anything else is a no-op,
     /// so a turn off that emptied the settings stays empty.
@@ -237,9 +258,33 @@ impl Enrollment {
         let identity = self.parts.identity.fetch(origin).map_err(|e| match e {
             IdentityError::Unreachable => EnrollError::Unreachable,
             IdentityError::Invalid => EnrollError::InvalidIdentity,
+            IdentityError::NotTls => EnrollError::NotTls(super::address::plain_http(origin)),
+            IdentityError::UnknownHost => EnrollError::UnknownHost(super::address::host(origin).to_string()),
         })?;
         identity.validated_key().ok_or(EnrollError::InvalidIdentity)?;
         Ok(identity)
+    }
+
+    /// The identity at `origin` and the address that served it. An `https://` address that a plain
+    /// listener answered is tried once as `http://` where FR-012a allows that host. This weakens
+    /// nothing: the identity must still be the token's or the pinned key, and the token, credentials
+    /// and content only travel sealed to that key (ADR 0037). Plain http shows timing, sizes and the
+    /// public key, which FR-012a accepts for these hosts and the address row says.
+    fn reach(&self, origin: &str) -> Result<(String, Identity), EnrollError> {
+        match self.fetch_at(origin) {
+            Ok(identity) => Ok((origin.to_string(), identity)),
+            Err(EnrollError::NotTls(Some(plain))) => match self.fetch_at(&plain) {
+                Ok(identity) => Ok((plain, identity)),
+                Err(EnrollError::Unreachable) => Err(EnrollError::NotTls(Some(plain))),
+                Err(e) => Err(e),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    /// An error that only says this address didn't answer, so another may be tried.
+    fn not_answered(e: &EnrollError) -> bool {
+        matches!(e, EnrollError::Unreachable | EnrollError::UnusableRoute | EnrollError::NotTls(_) | EnrollError::UnknownHost(_) | EnrollError::Channel(ChannelError::Unreachable | ChannelError::Timeout))
     }
 
     /// Pins a server's key. Only pairing pins; a later mismatch never re-pins.
@@ -275,17 +320,25 @@ impl Enrollment {
     pub fn update_address(&self, text: &str) -> Result<(), EnrollError> {
         let generation = self.generation();
         let (Some(_), Some(pinned), Some(entered)) = (self.origin(), self.pinned_key(), super::address::origins(text)) else { return Err(EnrollError::NotConfigured) };
+        let mut entered = entered;
         let mut verified = None;
         let mut last = EnrollError::NotConfigured;
-        for address in &entered {
+        for address in entered.iter_mut() {
             match self.verify_address(address, &pinned) {
-                Ok(()) => {
+                Ok(answered) => {
+                    *address = answered;
                     verified.get_or_insert_with(|| address.clone());
                 }
-                Err(e @ (EnrollError::Unreachable | EnrollError::UnusableRoute)) => last = e,
+                Err(e) if Self::not_answered(&e) && !matches!(e, EnrollError::Channel(_)) => last = e,
                 Err(e) => return Err(e),
             }
         }
+        let entered = entered.into_iter().fold(Vec::new(), |mut unique: Vec<String>, a| {
+            if !unique.contains(&a) {
+                unique.push(a);
+            }
+            unique
+        });
         let Some(first) = verified else { return Err(last) };
         let mut inner = self.inner();
         if generation != self.generation() {
@@ -296,15 +349,16 @@ impl Enrollment {
         Ok(())
     }
 
-    /// The identity at `address` must be the pinned key and a channel must open there.
-    fn verify_address(&self, address: &str, pinned: &[u8]) -> Result<(), EnrollError> {
-        let identity = self.fetch_at(address)?;
+    /// The identity at `address` must be the pinned key and a channel must open there. The address
+    /// that answered, which is `http://` for an `https://` one that `reach` downgraded.
+    fn verify_address(&self, address: &str, pinned: &[u8]) -> Result<String, EnrollError> {
+        let (address, identity) = self.reach(address)?;
         let key = identity.validated_key().ok_or(EnrollError::InvalidIdentity)?;
         if key != pinned {
             return Err(EnrollError::WrongServer);
         }
-        match self.open_checked(address, pinned) {
-            Ok(_) => Ok(()),
+        match self.open_checked(&address, pinned) {
+            Ok(_) => Ok(address),
             Err(EnrollError::Channel(ChannelError::PinMismatch)) => Err(EnrollError::WrongServer),
             Err(e) => Err(e),
         }
@@ -336,7 +390,7 @@ impl Enrollment {
         let mut result = Err(EnrollError::NotConfigured);
         for address in self.settings().addresses() {
             result = self.pair_at(&address, token, generation);
-            if !matches!(&result, Err(EnrollError::Unreachable | EnrollError::UnusableRoute | EnrollError::Channel(ChannelError::Unreachable | ChannelError::Timeout))) {
+            if !result.as_ref().is_err_and(Self::not_answered) {
                 break;
             }
         }
@@ -350,9 +404,10 @@ impl Enrollment {
     /// that key. The pin, which clears existing credentials, comes after the server's answer, so a
     /// refused token leaves a working device as it was. The kept attempt means another address, like
     /// a retry, redeems with the same device key.
-    fn pair_at(&self, origin: &str, token: &PairingToken, generation: u64) -> Result<(), EnrollError> {
-        channel_url(origin).ok_or(EnrollError::NotConfigured)?;
-        let identity = self.fetch_at(origin)?;
+    fn pair_at(&self, tried: &str, token: &PairingToken, generation: u64) -> Result<(), EnrollError> {
+        channel_url(tried).ok_or(EnrollError::NotConfigured)?;
+        let (origin, identity) = self.reach(tried)?;
+        let origin = origin.as_str();
         if identity.validated_key().as_deref() != Some(&token.server_key[..]) {
             return Err(EnrollError::WrongServer);
         }
@@ -368,6 +423,14 @@ impl Enrollment {
             }
         };
         let result = self.pair_with(token, &identity, origin, &handle, &public, generation);
+        if result.is_ok() && origin != tried {
+            // The `http://` twin that answered takes the place of the address typed.
+            let mut inner = self.inner();
+            if generation == self.generation() {
+                inner.settings.replace(tried, origin);
+                inner.settings.promote(origin);
+            }
+        }
         if result.is_err() && generation != self.generation() {
             return Err(EnrollError::TurnedOff);
         }
@@ -1065,14 +1128,25 @@ mod tests {
         dead: Vec<&'static str>,
         no_socket: Vec<&'static str>,
         wrong: Vec<&'static str>,
+        /// A plain http listener: `https://` fails TLS there.
+        plain: Vec<&'static str>,
+        /// Names that don't resolve.
+        unknown: Vec<&'static str>,
         identities: Arc<Mutex<Vec<String>>>,
         sockets: Arc<Mutex<Vec<String>>>,
+        urls: Arc<Mutex<Vec<String>>>,
     }
     struct NetIdentity(Net, Identity);
     impl IdentityFetching for NetIdentity {
         fn fetch(&self, origin: &str) -> Result<Identity, IdentityError> {
             self.0.identities.lock().unwrap().push(origin.to_string());
             let hit = |list: &[&str]| list.iter().any(|d| origin.contains(d));
+            if hit(&self.0.unknown) {
+                return Err(IdentityError::UnknownHost);
+            }
+            if hit(&self.0.plain) && origin.starts_with("https://") {
+                return Err(IdentityError::NotTls);
+            }
             if hit(&self.0.dead) {
                 return Err(IdentityError::Unreachable);
             }
@@ -1084,6 +1158,7 @@ mod tests {
         fn open(&self, url: &str) -> Result<Box<dyn Transport>, TransportError> {
             let host = url.split('/').nth(2).unwrap_or_default().to_string();
             self.0.sockets.lock().unwrap().push(host.clone());
+            self.0.urls.lock().unwrap().push(url.to_string());
             if self.0.dead.iter().chain(&self.0.no_socket).any(|d| host.contains(d)) {
                 return Err(TransportError::Unreachable);
             }
@@ -1231,6 +1306,79 @@ mod tests {
         let (f, _n) = net(n, vec![], "https://a.example", &["https://b.example"]);
         assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::UnusableRoute));
         assert_eq!(f.e.settings().origin.as_deref(), Some("https://a.example"));
+    }
+
+    /// The owner typed `https://` for flowd's plain listener on a tailnet name: the `http://` twin
+    /// pairs, through a channel sealed to the token's key, and replaces what was typed.
+    #[test]
+    fn https_to_a_plain_tailnet_listener_pairs_over_http() {
+        let n = Net { plain: vec!["ai.tail75b52d.ts.net"], ..Default::default() };
+        let replies = vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")];
+        let (f, n) = net(n, replies, "https://ai.tail75b52d.ts.net:8090", &["https://b.example"]);
+        f.e.pair(&pair_token(&f.key)).unwrap();
+        assert_eq!(seen(&n.identities), ["https://ai.tail75b52d.ts.net:8090", "http://ai.tail75b52d.ts.net:8090"], "retried once over http");
+        assert_eq!(seen(&n.urls), ["ws://ai.tail75b52d.ts.net:8090/v1/remote/channel", "ws://ai.tail75b52d.ts.net:8090/v1/remote/channel"]);
+        let s = f.e.settings();
+        assert_eq!((s.origin.as_deref(), s.alternates.as_slice()), (Some("http://ai.tail75b52d.ts.net:8090"), ["https://b.example".to_string()].as_slice()));
+        assert_eq!(s.state, "approved");
+        assert_eq!(f.counters.messages()[1]["type"], "pair");
+    }
+
+    #[test]
+    fn a_plain_listener_on_an_alternate_becomes_current_over_http() {
+        let n = Net { dead: vec!["a.example"], plain: vec!["mini.local"], ..Default::default() };
+        let replies = vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")];
+        let (f, _n) = net(n, replies, "https://a.example", &["https://mini.local"]);
+        f.e.pair(&pair_token(&f.key)).unwrap();
+        let s = f.e.settings();
+        assert_eq!((s.origin.as_deref(), s.alternates.as_slice()), (Some("http://mini.local"), ["https://a.example".to_string()].as_slice()));
+    }
+
+    #[test]
+    fn https_that_isnt_tls_says_so_and_never_downgrades_a_public_host() {
+        let n = Net { plain: vec!["plain.example.com"], ..Default::default() };
+        let (f, n) = net(n, vec![], "https://plain.example.com", &[]);
+        assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::NotTls(None)));
+        assert_eq!(seen(&n.identities), ["https://plain.example.com"], "plain http is refused for a public name");
+        assert!(seen(&n.sockets).is_empty());
+
+        // The twin is tried but doesn't answer either: the form suggests it, nothing more.
+        let n = Net { plain: vec!["ai.tail75b52d.ts.net"], dead: vec!["ai.tail75b52d.ts.net"], ..Default::default() };
+        let (f, n) = net(n, vec![], "https://ai.tail75b52d.ts.net:8090", &[]);
+        assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::NotTls(Some("http://ai.tail75b52d.ts.net:8090".into()))));
+        assert_eq!(seen(&n.identities).len(), 2);
+        assert_eq!(f.e.settings().origin.as_deref(), Some("https://ai.tail75b52d.ts.net:8090"), "nothing stored");
+
+        // The twin answers with another server's key: refused like any address.
+        let n = Net { plain: vec!["mini.local"], wrong: vec!["mini.local"], ..Default::default() };
+        let (f, n) = net(n, vec![], "https://mini.local", &[]);
+        assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::WrongServer));
+        assert!(seen(&n.sockets).is_empty(), "the token never left");
+    }
+
+    #[test]
+    fn an_unknown_name_says_so_and_moves_on() {
+        let n = Net { unknown: vec!["typo.example"], ..Default::default() };
+        let (f, _n) = net(n, vec![], "https://typo.example:8443", &[]);
+        assert_eq!(f.e.pair(&pair_token(&f.key)), Err(EnrollError::UnknownHost("typo.example".into())));
+        let n = Net { unknown: vec!["typo.example"], ..Default::default() };
+        let replies = vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")];
+        let (f, _n) = net(n, replies, "https://typo.example", &["https://b.example"]);
+        f.e.pair(&pair_token(&f.key)).expect("the next address");
+        assert_eq!(f.e.settings().origin.as_deref(), Some("https://b.example"));
+    }
+
+    #[test]
+    fn update_address_takes_the_http_twin_of_a_plain_listener() {
+        let n = Net { plain: vec!["mini.local"], ..Default::default() };
+        let (f, n) = approved_net(n, vec![Reply::ready(), Reply::ready()], "https://old.example", &[]);
+        f.e.update_address("https://mini.local:8090, http://mini.local:8090").unwrap();
+        let s = f.e.settings();
+        assert_eq!((s.origin.as_deref(), s.alternates.len()), (Some("http://mini.local:8090"), 0), "one address, no repeat");
+        assert_eq!(seen(&n.urls), ["ws://mini.local:8090/v1/remote/channel"; 2], "each entry verified over http");
+        let (f, _n) = approved_net(Net { plain: vec!["plain.example.com"], ..Default::default() }, vec![], "https://old.example", &[]);
+        assert_eq!(f.e.update_address("https://plain.example.com"), Err(EnrollError::NotTls(None)));
+        assert_eq!(f.e.settings().origin.as_deref(), Some("https://old.example"));
     }
 
     #[test]
@@ -1439,6 +1587,18 @@ pub(crate) mod flowd_tests {
         assert_eq!(e.pair(&token(&f)), Err(EnrollError::Unreachable));
         let (e, _) = client(&f, &f.rewrite);
         assert_eq!(e.pair(&token(&f)), Err(EnrollError::InvalidIdentity), "answers, with no identity route");
+    }
+
+    /// The owner's case against a real flowd: `https://` typed for its plain remote listener.
+    #[test]
+    fn pairs_over_http_when_https_was_typed_for_a_plain_listener() {
+        let f = Arc::new(Flowd::start());
+        let typed = f.remote.replace("http://", "https://");
+        let (e, _) = client(&f, &typed);
+        e.pair(&token(&f)).expect("the http twin pairs");
+        assert_eq!(e.settings().origin.as_deref(), Some(f.remote.as_str()));
+        assert!(e.settings().alternates.is_empty());
+        assert!(e.refresh_now().is_some(), "and works afterwards");
     }
 
     #[test]

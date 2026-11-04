@@ -99,6 +99,9 @@ pub struct SettingsPage {
     // Server mode (Feature 028)
     pub(super) server_mode: crate::pages::onboarding::server_mode::ServerUi,
     pub(super) server_custom: Entity<InputState>,
+    /// The server's model plan, on a server Mac only; read at most every 2 s.
+    pub(super) server_plan: Option<flow_core::server_mode::ServerModelPlan>,
+    server_plan_at: Option<std::time::Instant>,
     pub(super) devices: server::Devices,
     _subs: Vec<Subscription>,
     _poll: Task<()>,
@@ -282,6 +285,8 @@ impl SettingsPage {
             kind_error: None,
             server_mode: Default::default(),
             server_custom,
+            server_plan: None,
+            server_plan_at: None,
             devices: Default::default(),
             _subs: subs,
             _poll: poll,
@@ -301,6 +306,7 @@ impl SettingsPage {
     pub(super) fn refresh(&mut self, cx: &mut Context<Self>) {
         self.secrets_seen.borrow_mut().clear();
         self.pin_seen = None;
+        self.server_plan_at = None;
         self.poll(cx);
         self.load_devices(cx);
     }
@@ -313,6 +319,7 @@ impl SettingsPage {
             if self.server_mode.busy {
                 cx.notify();
             }
+            self.follow_server_plan(cx);
         }
         if self.recording
             && let Some(result) = cx.global::<Core>().services.take_recorded_shortcut()
@@ -395,6 +402,25 @@ impl SettingsPage {
         }
         self.follow_catalog(cx);
         self.follow_usage_binding(cx);
+    }
+
+    /// On a server Mac, what Settings › Models lists: the plan the server's onboarding step uses.
+    fn follow_server_plan(&mut self, cx: &mut Context<Self>) {
+        use crate::pages::onboarding::server_mode as sm;
+        if !sm::is_server_mac(cx) {
+            self.server_plan = None;
+            return;
+        }
+        if self.server_plan_at.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) {
+            return;
+        }
+        self.server_plan_at = Some(std::time::Instant::now());
+        let memory = cx.global::<Core>().services.physical_memory();
+        let plan = sm::plan(cx, memory, crate::pages::onboarding::catalog_downloaded(), None);
+        if plan != self.server_plan {
+            self.server_plan = plan;
+            cx.notify();
+        }
     }
 
     /// `prepareAutomaticEnrollment`, once per origin and device key: needs approval and a device key.
@@ -838,6 +864,11 @@ impl SettingsPage {
     }
 
     fn general(&self, cx: &mut Context<Self>) -> Div {
+        if crate::pages::onboarding::server_mode::is_server_mac(cx) {
+            // A server Mac doesn't dictate or take meetings: only the appearance applies.
+            let appearance = core::appearance(prefs(cx));
+            return group(cx).child(row("Appearance", None, picker("settings.appearance", "Appearance", 110., appearance, &[("System", "system"), ("Light", "light"), ("Dark", "dark")], false, cx), cx));
+        }
         let meeting_only = core::meeting_only(prefs(cx));
         let first = if meeting_only {
             row(
@@ -1232,19 +1263,24 @@ impl Render for SettingsPage {
             .when_some(self.swift_import_section(cx), |d, section| d.child(Self::section_title("Data")).child(section))
             .child(Self::section_title("General"))
             .child(self.general(cx));
-        if let Some(mics) = &self.mics {
-            column = column.children(self.microphones(mics, cx));
+        if crate::pages::onboarding::server_mode::is_server_mac(cx) {
+            // "This is the server": the server's models; nothing that only a dictating Mac uses.
+            column = column.child(Self::section_title("Models")).child(self.server_models(cx));
+        } else {
+            if let Some(mics) = &self.mics {
+                column = column.children(self.microphones(mics, cx));
+            }
+            column = column
+                .child(Self::section_title("App context"))
+                .child(self.context(cx))
+                .child(Self::section_title("Models"))
+                .child(self.models(cx))
+                .children(self.rewrite_section(window, cx));
+            if !routing.switch_applies() {
+                column = column.children(self.summaries(window, cx));
+            }
+            column = column.child(self.permissions_section(cx));
         }
-        column = column
-            .child(Self::section_title("App context"))
-            .child(self.context(cx))
-            .child(Self::section_title("Models"))
-            .child(self.models(cx))
-            .children(self.rewrite_section(window, cx));
-        if !routing.switch_applies() {
-            column = column.children(self.summaries(window, cx));
-        }
-        column = column.child(self.permissions_section(cx));
         // Swift selects only the general error.
         if let Some(line) = &self.recording_error {
             column = column.child(div().id("settings.recordingError").pt(px(16.)).child(t(line.clone()).size(14.).color(pl.warning)).test_support());

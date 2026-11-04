@@ -106,6 +106,21 @@ pub fn origin(text: &str) -> Option<String> {
     })
 }
 
+/// The `http://` twin of an `https://` origin, where FR-012a allows plain http on its host.
+pub fn plain_http(origin: &str) -> Option<String> {
+    self::origin(&format!("http://{}", origin.strip_prefix("https://")?))
+}
+
+/// The host of an origin, without scheme or port, as the user would recognize it.
+pub fn host(origin: &str) -> &str {
+    let authority = origin.split_once("://").map_or(origin, |(_, rest)| rest);
+    let authority = authority.split(['/', '?', '#']).next().unwrap_or_default();
+    match authority.strip_prefix('[') {
+        Some(inner) => inner.split(']').next().unwrap_or_default(),
+        None => authority.rsplit_once(':').map_or(authority, |(h, _)| h),
+    }
+}
+
 /// Where an address found on this machine leads. `None` for loopback, link-local, public or not an IP.
 pub fn server_address_kind(ip: &str) -> Option<ServerAddressKind> {
     // The MagicDNS name of this Mac's Tailscale address, which reverse lookup finds.
@@ -218,6 +233,20 @@ mod tests {
         assert_eq!(address_notice("http://example.com"), Some("http:// works only for private and Tailscale addresses. Use https:// for this one."));
         assert_eq!(address_notice("https://example.com"), None);
         assert_eq!(address_notice(""), None);
+    }
+
+    #[test]
+    fn plain_twin_and_host() {
+        assert_eq!(plain_http("https://ai.tail75b52d.ts.net:8090").as_deref(), Some("http://ai.tail75b52d.ts.net:8090"));
+        assert_eq!(plain_http("https://192.168.1.20").as_deref(), Some("http://192.168.1.20"));
+        assert_eq!(plain_http("https://mini.local").as_deref(), Some("http://mini.local"));
+        assert_eq!(plain_http("https://[fd7a:115c:a1e0::1]:8090").as_deref(), Some("http://[fd7a:115c:a1e0::1]:8090"));
+        for public in ["https://example.com", "https://8.8.8.8:8090", "https://evil.ts.net.example.com", "http://10.0.0.1"] {
+            assert_eq!(plain_http(public), None, "{public}");
+        }
+        assert_eq!(host("https://ai.tail75b52d.ts.net:8090"), "ai.tail75b52d.ts.net");
+        assert_eq!(host("https://example.com"), "example.com");
+        assert_eq!(host("http://[fe80::1%25en0]:8090"), "fe80::1%25en0");
     }
 
     #[test]

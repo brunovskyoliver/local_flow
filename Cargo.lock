@@ -1864,6 +1864,7 @@ dependencies = [
  "plist",
  "rand_core 0.9.5",
  "rusqlite",
+ "rustls",
  "serde",
  "serde_json",
  "tungstenite",
