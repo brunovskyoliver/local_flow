@@ -1,9 +1,7 @@
-name: Release macOS app
+name: Release macOS app (Swift, signed)
+# From v0.4.0 the Homebrew cask ships the Rust app, packaged by scripts/package-rust-macos.sh
+# (docs/distribution/homebrew.md). This signed Swift build runs only when asked.
 on:
-  push:
-    # v0.3.x uses the documented manual ad-hoc release exception.
-    # Signed builds for these tags can still be requested explicitly below.
-    tags: ['v[0-9]*.[0-9]*.[0-9]*', '!v0.3.*']
   workflow_dispatch:
     inputs:
       tag:

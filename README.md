@@ -12,10 +12,10 @@ Install on Apple Silicon with Homebrew:
 brew install --cask brunovskyoliver/tap/localflow
 ```
 
-The app is ad-hoc signed, without an Apple Developer ID or notarization. On first
-launch, if macOS blocks it and you trust the download, use System Settings >
-Privacy & Security > Open Anyway. Updates may require renewed approval and privacy
-permissions. See the [installation and release guide](docs/distribution/homebrew.md).
+This installs the Rust desktop app. Setup lets you use it for meeting notes only,
+dictation only, or both, with models on your Mac or on a LocalFlow server. The app is
+ad-hoc signed and not notarized; the cask clears the quarantine flag so it opens
+without the Open Anyway step. See the [installation and release guide](docs/distribution/homebrew.md).
 
 ## Development
 

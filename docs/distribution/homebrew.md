@@ -1,39 +1,61 @@
 # Homebrew distribution
 
-The current v0.3.2 release is ad-hoc signed and not notarized, as requested by
-the maintainer. In-app updates are disabled; use Homebrew to upgrade. Future
-signed updates require the setup described in [signed updates](updates.md).
+From v0.4.0 the cask installs the Rust desktop app (ADR 0036). Swift builds are no longer
+published to Homebrew. The app is ad-hoc signed and not notarized; the cask clears the
+download's quarantine flag so it opens without the Open Anyway step. Gatekeeper stays on
+for everything else.
 
 ## Install
 
-The v0.3.2 cask is published in
-[homebrew-tap](https://github.com/brunovskyoliver/homebrew-tap).
-Homebrew discovers that repository automatically from the tap name.
+On a Mac with Apple silicon and macOS 14 or later:
 
 ```sh
 brew install --cask brunovskyoliver/tap/localflow
 ```
 
-Open LocalFlow from Applications. If macOS blocks it, dismiss the warning and,
-if you trust the download, go to System Settings > Privacy & Security and click
-Open Anyway for LocalFlow. Confirm the dialog. This is Apple's per-app exception;
-Gatekeeper stays enabled. Managed Macs may prohibit it. See
-[Apple's instructions](https://support.apple.com/102445).
+Open LocalFlow from Applications. It runs in the menu bar. Setup asks what it's for:
 
-Allow Microphone access and follow the app's permission setup. Global shortcuts
-need Input Monitoring; insertion may need Accessibility. Meeting capture requests
-Screen & System Audio Recording. Install models through the app. Homebrew does
-not download model weights or grant privacy permissions.
+- **Meeting notes**: record calls and get transcripts and notes. No shortcut and no
+  keyboard permissions; only Microphone and Screen & System Audio Recording.
+- **Dictation**: hold a key in any app and talk. Needs Microphone and Input
+  Monitoring, and Accessibility for typing into some apps.
+- **Both**.
 
-Quit the app before updating:
+Next it asks where the AI runs: on this Mac (models download inside the app) or on a
+LocalFlow server (paste the token or link the server's owner gives you; nothing is
+downloaded). A meetings-only install on a server is the lightest setup. Dictation can be
+turned on later in Settings. On an Apple-silicon Mac, setup can also make this Mac the
+server for other people (see [remote-server.md](remote-server.md)).
+
+Update and uninstall through Homebrew:
 
 ```sh
-brew update
-brew upgrade --cask brunovskyoliver/tap/localflow
+brew upgrade --cask localflow
+brew uninstall --cask localflow
 ```
 
-This release does not declare `auto_updates`; the ordinary upgrade command above
-is sufficient. macOS may request permissions again after replacement.
+The cask quits the app first. macOS may ask for permissions again after an upgrade,
+because each ad-hoc build has a new signature. Uninstalling keeps Application Support
+(recordings, transcripts, models and settings); there is deliberately no `zap` stanza.
+
+A Mac that ran the Swift app keeps its data: the Rust app reads the Swift app's
+settings, history and models on first launch.
+
+## Make a release
+
+On an Apple-silicon Mac with Xcode, Go and Rust, from a clean `main`:
+
+```sh
+scripts/package-rust-macos.sh X.Y.Z
+git tag vX.Y.Z && git push origin vX.Y.Z
+gh release create vX.Y.Z build/distribution/X.Y.Z/LocalFlow-X.Y.Z-arm64.zip \
+  build/distribution/X.Y.Z/LocalFlow-X.Y.Z-arm64.zip.sha256 \
+  build/distribution/X.Y.Z/localflow.rb --title "LocalFlow X.Y.Z" --notes-file NOTES.md --latest
+```
+
+The tap's sync workflow copies the release's `localflow.rb` to `Casks/localflow.rb` within
+the hour; start it from the tap's Actions tab to publish at once. The signed Swift
+workflow (`.github/workflows/release.yml`) now runs only when started by hand.
 
 ## Use a shared LocalFlow server
 
@@ -44,7 +66,7 @@ The server serves only its tailnet (`tailscale serve`, see
 
 The server owner:
 
-1. In the Tailscale admin console, open Machines › mac-mini › Share and send the
+1. In the Tailscale admin console, open Machines › (the server) › Share and send the
    invite link. Sharing gives the user that one machine and nothing else of the
    tailnet; shared users don't count against the plan's user limit.
 2. Limit shared users to the HTTPS port in the tailnet policy, so they can't reach
@@ -55,37 +77,26 @@ The server owner:
    {"grants": [{"src": ["autogroup:shared"], "dst": ["*"], "ip": ["tcp:443"]}]}
    ```
 
-3. Approve each user and device in the LocalFlow Server app (Devices tab) or
-   with `flowd admin approve user|device <id>`.
+3. On the server Mac, open LocalFlow › Users and choose **Add device…** for an
+   existing person or **New person…**. Send the token or link it shows; it works
+   once and expires.
 
 The user:
 
 1. Install Tailscale (`brew install --cask tailscale-app`, or the Mac App Store),
    sign in with any account and accept the share invite.
-   `curl -s https://mac-mini.tailf15b6.ts.net/v1/remote/identity` should answer.
+   `curl -s <server address>/v1/remote/identity` should answer.
 2. Install LocalFlow as above and grant its permissions.
-3. In Settings › Server, turn on Remote dictation, confirm the consent sheet and
-   enter `https://mac-mini.tailf15b6.ts.net`. Check that the fingerprint matches
-   the one the owner gives you, then sign in with Google. Sign in with Apple
-   needs an Apple-signed build and does not work in the Homebrew release.
-4. The app shows "Waiting for approval" and dictates locally until the owner
-   approves. Then turn on **Use this server for everything**. Check connection
-   times one round trip.
+3. In setup, or later in Settings › Server, choose a LocalFlow server and paste
+   the pairing token or link the owner made for you on the Users page. Check that
+   the fingerprint matches the one the owner gives you.
+4. A redeemed token approves the device at once. To add your other devices
+   (for example your iPhone) to the same account, use **Add another device** in
+   Settings › Server on a device that is already paired; no step is needed on
+   the server Mac.
 
 Without Tailscale running, the app finds the server unreachable and dictates
 locally. Local models are then needed only for that fallback.
 
 The server must be at least as new as the app: flowd rejects request fields it
 doesn't know. Update the server before publishing an app release.
-
-Quit LocalFlow before `brew uninstall --cask localflow`. The cask preserves
-Application Support data, including recordings, transcripts, models and settings.
-There is deliberately no destructive `zap` stanza.
-
-## Make a release
-
-Follow [signed updates](updates.md). The release workflow now requires protected
-signing/notarization credentials and a compatible-server attestation before it
-can publish. Local signed test artifacts use the explicit `--signed-local` mode;
-they are not notarized and have update checking disabled. No release has been
-published merely by adding this workflow.

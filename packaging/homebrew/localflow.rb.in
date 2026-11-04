@@ -4,20 +4,33 @@ cask "localflow" do
 
   url "https://github.com/brunovskyoliver/local_flow/releases/download/v#{version}/LocalFlow-#{version}-arm64.zip"
   name "LocalFlow"
-  desc "Local dictation and meeting transcription"
+  desc "Private dictation and meeting notes, on your Mac or your own server"
   homepage "https://github.com/brunovskyoliver/local_flow"
 
   depends_on arch: :arm64
   depends_on macos: :sonoma
 
   app "LocalFlow.app"
-  auto_updates true
+
+  # The build is ad-hoc signed and not notarized. Clearing the download quarantine lets it open
+  # without the "Open Anyway" step; Gatekeeper stays on for everything else.
+  postflight do
+    system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{appdir}/LocalFlow.app"]
+  end
+
+  uninstall quit: "org.localflow.LocalFlow"
 
   caveats <<~EOS
-    LocalFlow checks for updates when enabled; you confirm installation in the app.
-    Quit LocalFlow before a manual Homebrew upgrade or uninstall.
-    The first signed update from an older ad-hoc build may require macOS permission
-    and background-item approval again. Settings, recordings and models are preserved.
-    Model downloads are handled inside the app, separately from Homebrew.
+    Open LocalFlow from Applications; it lives in the menu bar.
+    Setup asks what you want it for:
+      - Meeting notes: record calls, get transcripts and notes. No shortcut or
+        keyboard permissions.
+      - Dictation: hold a key in any app and talk.
+      - Both.
+    Dictation can be turned on later in Settings.
+    Models download inside the app. With a LocalFlow server, paste the token or link
+    its owner gives you, and nothing is downloaded.
+    Updates come through Homebrew: brew upgrade --cask localflow
+    macOS may ask for permissions again after an upgrade.
   EOS
 end
