@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "type": "device_confirm_reply",
+  "op": 10,
+  "state": "approved"
+}

@@ -96,6 +96,24 @@
     },
     {
       "$ref": "#/$defs/usage_reply"
+    },
+    {
+      "$ref": "#/$defs/device_invite"
+    },
+    {
+      "$ref": "#/$defs/device_invite_reply"
+    },
+    {
+      "$ref": "#/$defs/device_confirm"
+    },
+    {
+      "$ref": "#/$defs/device_confirm_reply"
+    },
+    {
+      "$ref": "#/$defs/account_devices"
+    },
+    {
+      "$ref": "#/$defs/account_devices_reply"
     }
   ],
   "$defs": {
@@ -275,7 +293,7 @@
     "enrolled": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Server reply to enroll or pair. state is the combined user and device state; a rejected user gets no refresh token.",
+      "description": "Server reply to enroll or pair. state is the combined user and device state; a rejected user gets no refresh token. A pending reply to an invite redemption (Feature 028, ADR 0039) also carries inviter_device_key and confirm_by, together; no other reply has them.",
       "required": [
         "schema_version",
         "type",
@@ -304,6 +322,14 @@
           "type": "string",
           "pattern": "^lfr_[A-Za-z0-9_-]{43}$",
           "description": "lfr_ plus 32 random bytes, base64url without padding."
+        },
+        "inviter_device_key": {
+          "$ref": "#/$defs/device_key",
+          "description": "The inviting device's public key, for the comparison code. Invite redemptions only."
+        },
+        "confirm_by": {
+          "$ref": "#/$defs/wire_time",
+          "description": "When the inviting device's confirmation deadline passes. Invite redemptions only."
         }
       },
       "if": {
@@ -324,7 +350,38 @@
         "required": [
           "refresh_token"
         ]
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "inviter_device_key"
+            ]
+          },
+          "then": {
+            "required": [
+              "confirm_by"
+            ],
+            "properties": {
+              "state": {
+                "const": "pending"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "confirm_by"
+            ]
+          },
+          "then": {
+            "required": [
+              "inviter_device_key"
+            ]
+          }
+        }
+      ]
     },
     "refresh": {
       "type": "object",
@@ -2324,6 +2381,324 @@
         "op",
         "response"
       ]
+    },
+    "wire_time": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "RFC 3339 in UTC with second precision (Feature 028)."
+    },
+    "record_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "A positive server row ID, at most 2^53 - 1."
+    },
+    "device_key": {
+      "type": "string",
+      "pattern": "^B[A-Za-z0-9_-]{86}$",
+      "description": "Device P-256 public key, X9.63 uncompressed (65 bytes, first byte 0x04), base64url without padding."
+    },
+    "device_invite": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client, session (Feature 028). Asks for a 10-minute, single-use invite for the caller's own user. Answered by device_invite_reply, or by error with not_approved, busy or not_offered.",
+      "required": [
+        "schema_version",
+        "type",
+        "op"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "device_invite"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        }
+      }
+    },
+    "device_invite_reply": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: the invite. The token has the pairing token format and is redeemed with pair.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "invite_id",
+        "pairing_token",
+        "expires_at"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "device_invite_reply"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "invite_id": {
+          "$ref": "#/$defs/record_id"
+        },
+        "pairing_token": {
+          "type": "string",
+          "pattern": "^lfp_[A-Za-z0-9_-]{86}$",
+          "description": "lfp_ plus the 32-byte server public key and 32 random bytes, base64url without padding."
+        },
+        "expires_at": {
+          "$ref": "#/$defs/wire_time"
+        }
+      }
+    },
+    "device_confirm": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client, session: the inviting device approves (accept true) or removes (false) the device that redeemed its invite. signature is DER ECDSA P-256 by the inviting device's key over \"localflow-v1-device-confirm\" || its own session channel binding || invite_id as 8 bytes big-endian || the new device's key || pair_binding. Answered by device_confirm_reply, or by error with unauthorized (bad signature, not the inviting device) or pairing_token_invalid (not awaiting confirmation, or past confirm_by).",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "invite_id",
+        "accept",
+        "signature"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "device_confirm"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "invite_id": {
+          "$ref": "#/$defs/record_id"
+        },
+        "accept": {
+          "type": "boolean"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{11,96}$",
+          "description": "DER ECDSA signature, 8 to 72 bytes, base64url without padding."
+        }
+      }
+    },
+    "device_confirm_reply": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: approved, or removed (the pending device was deleted).",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "state"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "device_confirm_reply"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "approved",
+            "removed"
+          ]
+        }
+      }
+    },
+    "account_devices": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Client, session: list the caller's own user's devices, or revoke one of them (device_id, the caller included). Another user's or an unknown device is error unauthorized. Answered by account_devices_reply with the (updated) list.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "action"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "account_devices"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "revoke"
+          ]
+        },
+        "device_id": {
+          "$ref": "#/$defs/record_id"
+        }
+      },
+      "if": {
+        "properties": {
+          "action": {
+            "const": "revoke"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "device_id"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "device_id"
+          ]
+        }
+      }
+    },
+    "account_devices_reply": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Server: the caller's user's devices that are not revoked, at most 100, ordered by id. invite appears only on a pending device that redeemed an invite the caller created.",
+      "required": [
+        "schema_version",
+        "type",
+        "op",
+        "devices"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "type": {
+          "const": "account_devices_reply"
+        },
+        "op": {
+          "$ref": "#/$defs/op"
+        },
+        "devices": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "name",
+              "kind",
+              "state",
+              "enrolled_at",
+              "last_seen_at",
+              "connected",
+              "this_device"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/record_id"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "mac",
+                      "windows",
+                      "iphone"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "null when unknown."
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "approved"
+                ]
+              },
+              "enrolled_at": {
+                "$ref": "#/$defs/wire_time"
+              },
+              "last_seen_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/wire_time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "null when never seen."
+              },
+              "connected": {
+                "type": "boolean"
+              },
+              "this_device": {
+                "type": "boolean"
+              },
+              "invite": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "invite_id",
+                  "device_key",
+                  "pair_binding",
+                  "confirm_by"
+                ],
+                "properties": {
+                  "invite_id": {
+                    "$ref": "#/$defs/record_id"
+                  },
+                  "device_key": {
+                    "$ref": "#/$defs/device_key"
+                  },
+                  "pair_binding": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{43}$",
+                    "description": "The 32-byte binding of the channel that carried pair, base64url without padding."
+                  },
+                  "confirm_by": {
+                    "$ref": "#/$defs/wire_time"
+                  }
+                }
+              }
+            },
+            "if": {
+              "required": [
+                "invite"
+              ]
+            },
+            "then": {
+              "properties": {
+                "state": {
+                  "const": "pending"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

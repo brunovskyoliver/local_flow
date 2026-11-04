@@ -412,7 +412,7 @@ impl Services for Mac {
         let model = *flow_core::onboarding::CATALOG.iter().find(|m| m.id == model_id).ok_or(Unavailable("this model"))?;
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
         let resources = std::env::current_exe().ok().and_then(|e| Some(e.parent()?.parent()?.join("Resources/LocalAI"))).unwrap_or_default();
-        crate::local_ai::start(crate::local_ai::Install { root: self.app_data_dir().join("LocalFlow/LocalAI"), resources, log: home.join("Library/Logs/LocalFlow/local-ai-setup.log"), model }, LaunchAgents);
+        crate::local_ai::start(crate::local_ai::Install { root: self.app_data_dir().join("LocalFlow/LocalAI"), resources, log: home.join("Library/Logs/LocalFlow/local-ai-setup.log"), model, register_client_agents: true }, LaunchAgents);
         Ok(())
     }
     fn local_ai_phase(&self) -> Option<flow_core::onboarding::AiPhase> {
@@ -738,6 +738,20 @@ impl Services for Mac {
     /// Server mode's helpers and MTPLX are arm64 only.
     fn can_host_server(&self) -> bool {
         cfg!(target_arch = "aarch64")
+    }
+    /// Only for the real data folder: a redirected one (`LOCALFLOW_DATA_ROOT`) must not drive the
+    /// launch agents. Development builds get the `.dev` agents and ports (T033).
+    fn server_host(&self, root: &std::path::Path, live: bool) -> Option<std::sync::Arc<dyn crate::ServerHost>> {
+        use crate::server_mode_mac::{ServerMode, SystemRunner, dev_identity};
+        if !live || !self.can_host_server() {
+            return None;
+        }
+        let home = std::env::var_os("HOME").map(PathBuf::from)?;
+        let contents = std::env::current_exe().ok().and_then(|e| Some(e.parent()?.parent()?.to_path_buf()))?;
+        let paths = flow_core::server_mode::ServerModePaths::new(&home, dev_identity());
+        // SAFETY: getuid has no preconditions.
+        let uid = unsafe { libc::getuid() };
+        Some(std::sync::Arc::new(ServerMode::new(paths, std::sync::Arc::new(SystemRunner), contents, root.to_path_buf(), self.app_data_dir().join("LocalFlow/LocalAI"), uid)))
     }
     fn physical_memory(&self) -> u64 {
         let mut value = 0u64;

@@ -15,6 +15,7 @@ use std::time::Duration;
 mod models;
 mod scenario;
 mod server;
+mod server_mode;
 mod sheets;
 #[cfg(test)]
 mod tests;
@@ -95,6 +96,9 @@ pub struct SettingsPage {
     pub(super) add_category: &'static str,
     pub(super) exclusion_error: Option<&'static str>,
     pub(super) kind_error: Option<&'static str>,
+    // Server mode (Feature 028)
+    pub(super) server_mode: crate::pages::onboarding::server_mode::ServerUi,
+    pub(super) server_custom: Entity<InputState>,
     _subs: Vec<Subscription>,
     _poll: Task<()>,
 }
@@ -142,7 +146,14 @@ impl SettingsPage {
         let summary_key = cx.new(|cx| InputState::new(window, cx).placeholder("API key").masked(true));
         let pair = crate::remote::PairForm::new(window, cx);
         let bundle_draft = cx.new(|cx| InputState::new(window, cx).placeholder("Bundle ID"));
+        let custom_text = cx.global::<Core>().server.as_ref().map(|h| h.custom_address()).unwrap_or_default();
+        let server_custom = cx.new(|cx| InputState::new(window, cx).default_value(custom_text));
         let subs = vec![
+            cx.subscribe_in(&server_custom, window, |this, _, e: &TextInputEvent, _, cx| {
+                if matches!(e, TextInputEvent::PressEnter { .. }) {
+                    this.save_custom_address(cx);
+                }
+            }),
             cx.subscribe_in(&endpoint, window, |this, input, e: &TextInputEvent, w, cx| {
                 if matches!(e, TextInputEvent::Change) {
                     let text = val(input, cx);
@@ -268,6 +279,8 @@ impl SettingsPage {
             add_category: "work_chat",
             exclusion_error: None,
             kind_error: None,
+            server_mode: Default::default(),
+            server_custom,
             _subs: subs,
             _poll: poll,
         };
@@ -291,6 +304,13 @@ impl SettingsPage {
 
     /// `refresh` with what the store last said: assigned only if it changed.
     fn poll(&mut self, cx: &mut Context<Self>) {
+        if cx.global::<Core>().server.is_some() {
+            crate::pages::onboarding::server_mode::refresh_status(self, cx);
+            // A download's progress lives outside the status.
+            if self.server_mode.busy {
+                cx.notify();
+            }
+        }
         if self.recording
             && let Some(result) = cx.global::<Core>().services.take_recorded_shortcut()
         {

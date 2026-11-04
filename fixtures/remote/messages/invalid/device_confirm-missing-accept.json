@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "type": "device_confirm",
+  "op": 10,
+  "invite_id": 12,
+  "signature": "MEQCIAERERERERERERERERERERERERERERERERERERERERERAiACIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIg"
+}

@@ -17,6 +17,11 @@ impl OnboardingPage {
     pub(super) fn content(&mut self, cx: &mut Context<Self>) -> Body {
         let mut body = match self.setup.step {
             Step::Introduction => self.introduction(cx),
+            Step::Role => self.role_choice(cx),
+            Step::ServerModels => self.server_models(cx),
+            Step::ServerNetwork => self.server_network(cx),
+            Step::ServerReady => self.server_ready_step(cx),
+            Step::Complete if self.setup.role == flow_core::onboarding::Role::Server => vec![any(headline("Your server is ", "running", ".")), any(t("Manage it in Settings › Server.").color(pal(cx).muted))],
             Step::Purpose => self.purpose_choice(cx),
             Step::Ai => self.ai_choice(cx),
             Step::AiDetails if self.setup.ai_mode == AiMode::Remote => self.remote_server(cx),

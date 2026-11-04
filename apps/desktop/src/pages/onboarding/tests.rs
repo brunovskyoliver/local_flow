@@ -188,6 +188,10 @@ fn identity() -> (String, String) {
 const HEALTHY: &str = r#"{"service":"localflow-rewrite","protocol_versions":[1],"server":{"name":"studio"},"backend":{"state":"ready","model":"qwen"}}"#;
 
 fn rig(cx: &mut TestAppContext, ok: bool, perms: &[(Permission, PermissionState)]) -> Rig {
+    rig_with(cx, ok, perms, None)
+}
+
+fn rig_with(cx: &mut TestAppContext, ok: bool, perms: &[(Permission, PermissionState)], server: Option<std::sync::Arc<flow_platform::FakeServer>>) -> Rig {
     boot(cx, Mode::Light);
     let (ok, log): (Rc<Cell<bool>>, Log) = (Rc::new(Cell::new(ok)), Default::default());
     let answer = Rc::new(Cell::new(PermissionState::Denied));
@@ -197,7 +201,11 @@ fn rig(cx: &mut TestAppContext, ok: bool, perms: &[(Permission, PermissionState)
     *fake.permissions.borrow_mut() = perms.to_vec();
     let globe = Rc::new(Cell::new(true));
     let services = Stub { globe: globe.clone(), fake, ok: ok.clone(), log: log.clone(), answer: answer.clone(), recorded: recorded.clone(), background: background.clone(), verified: verified.clone() };
-    cx.update(|cx| cx.global_mut::<Core>().services = Box::new(services));
+    cx.update(|cx| {
+        let core = cx.global_mut::<Core>();
+        core.services = Box::new(services);
+        core.server = server.map(|s| s as std::sync::Arc<dyn flow_platform::ServerHost>);
+    });
     let win = cx.add_window(|w, cx| OnboardingPage::new(w, cx));
     frame(cx, win);
     log.borrow_mut().clear();
@@ -2104,3 +2112,159 @@ async fn the_workers_installs_drive_the_downloads_rows(cx: &mut TestAppContext) 
     apply_install_states(&mut s, &fake);
     assert_eq!((speech_state(&s, None), meeting_state(&s)), (RowState::Done, RowState::Done));
 }
+
+// Feature 028 US2: the server path (T028, T030, T031).
+
+fn server_rig(cx: &mut TestAppContext) -> (Win, std::sync::Arc<flow_platform::FakeServer>) {
+    let server = std::sync::Arc::new(flow_platform::FakeServer::default());
+    let win = rig_with(cx, true, &[], Some(server.clone())).win;
+    (win, server)
+}
+
+/// The 500 ms poll, at once.
+fn poll(cx: &mut TestAppContext, win: Win) {
+    win.update(cx, |p, _, cx| p.refresh(cx)).unwrap();
+    frame(cx, win);
+    win.update(cx, |p, _, cx| p.refresh(cx)).unwrap();
+    frame(cx, win);
+}
+
+#[flow_ui::gpui::test]
+async fn the_role_step_shows_only_where_this_mac_can_host(cx: &mut TestAppContext) {
+    let w = rig(cx, true, &[]).win;
+    click(cx, w, "onboarding.primary");
+    assert_eq!(read(cx, w, |p, _| p.setup.step), Step::Purpose, "no server host: the client path as before");
+    assert!(w.update(cx, |_, w, _| w.try_find("onboarding.roleServer").is_none()).unwrap());
+
+    let (w, _) = server_rig(cx);
+    click(cx, w, "onboarding.primary");
+    assert_eq!(read(cx, w, |p, _| p.setup.step), Step::Role);
+    assert_saw(&["How will you use this Mac?", "This Mac", "This is the server"]);
+    w.update(cx, |_, w, _| {
+        assert!(w.try_find("onboarding.roleClient").is_some() && w.try_find("onboarding.roleServer").is_some());
+        assert_eq!(w.find("onboarding.progress").label().as_deref(), Some("Step 2 of 9"));
+    })
+    .unwrap();
+    click(cx, w, "onboarding.primary");
+    assert_eq!((read(cx, w, |p, _| p.setup.step), pref(cx, "setup.role").as_deref()), (Step::Purpose, Some("client")));
+}
+
+#[flow_ui::gpui::test]
+async fn the_server_path_downloads_opens_and_hands_over_a_token(cx: &mut TestAppContext) {
+    let (w, server) = server_rig(cx);
+    let file = std::env::temp_dir().join(format!("flow-onboarding-server-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&file);
+    cx.update(|cx| cx.global_mut::<Core>().prefs = flow_core::prefs::Prefs::open(file.clone()));
+    click(cx, w, "onboarding.primary");
+    click(cx, w, "onboarding.roleServer");
+    click(cx, w, "onboarding.primary");
+    assert_eq!((read(cx, w, |p, _| p.setup.step), pref(cx, "setup.role").as_deref()), (Step::ServerModels, Some("server")));
+    // Each model with its size and the total, before anything starts.
+    let model = CATALOG[default_model(&[false; 5], 16 << 30)];
+    assert_saw(&["Parakeet v3 (dictation)", "Whisper large-v3-turbo (meetings)", "Speaker labels (meetings)", "On-device AI runtime", model.name, "Total ", "to download.", "Download"]);
+    assert!(server.calls().is_empty(), "nothing downloads before the owner asks");
+    w.update(cx, |_, w, _| assert_eq!(w.find("onboarding.progress").label().as_deref(), Some("Step 3 of 5"))).unwrap();
+
+    click(cx, w, "onboarding.primary");
+    let mut calls = server.calls();
+    calls.sort();
+    assert_eq!(calls, ["download".to_string(), format!("language model {}", model.id)], "the download runs in the background");
+    poll(cx, w);
+    assert!(disabled(cx, w, "onboarding.primary"), "the language model is still installing");
+    assert_saw(&["Waiting for the models…"]);
+    *server.ai_phase.lock().unwrap() = Some(AiPhase::Ready);
+    poll(cx, w);
+    assert!(!disabled(cx, w, "onboarding.primary"));
+
+    click(cx, w, "onboarding.primary");
+    assert_eq!(read(cx, w, |p, _| p.setup.step), Step::ServerNetwork);
+    assert!(server.calls().contains(&"on".to_string()), "started on loopback");
+    poll(cx, w);
+    assert_saw(&["Running on 127.0.0.1:18090, reachable only through a local proxy or tunnel", "Open the server to continue"]);
+    assert!(disabled(cx, w, "onboarding.primary"), "nothing reachable until the owner confirms");
+    click(cx, w, "onboarding.serverOpen");
+    assert_eq!(cx.pending_prompt().map(|p| p.0).as_deref(), Some("Open this server to the network?"));
+    cx.simulate_prompt_answer("Open and Restart");
+    frame(cx, w);
+    assert!(server.calls().contains(&"open".to_string()));
+    poll(cx, w);
+    assert_saw(&["The server is open to the network.", "open to all networks"]);
+
+    click(cx, w, "onboarding.primary");
+    assert_eq!(read(cx, w, |p, _| p.setup.step), Step::ServerReady);
+    assert!(server.calls().contains(&"token Oliver Owner http://192.168.1.20:18090".to_string()));
+    assert_saw(&["Your server is ready.", "192.168.1.20:18090", "fp-fake", "lfp_fake", "localflow://pair?token=lfp_fake", "Finish setup"]);
+    assert!(w.update(cx, |_, w, _| w.try_find("onboarding.serverQr").is_some()).unwrap());
+
+    click(cx, w, "onboarding.primary");
+    assert_eq!(read(cx, w, |p, _| p.setup.step), Step::Complete);
+    assert!(read(cx, w, |p, _| p.server.token.is_none()), "the token is dropped with the step");
+    let written = std::fs::read_to_string(&file).unwrap();
+    assert!(written.contains("\"setup.role\": \"server\"") && !written.contains("lfp_"), "never in preferences: {written}");
+    std::fs::remove_file(file).unwrap();
+}
+
+#[flow_ui::gpui::test]
+async fn a_rolled_back_open_says_why_and_keeps_the_step(cx: &mut TestAppContext) {
+    let (w, server) = server_rig(cx);
+    *server.open.lock().unwrap() = flow_core::server_mode::OpenOutcome::RolledBack("The server did not report healthy within 60 s.".into());
+    win_to_network(cx, w, &server);
+    click(cx, w, "onboarding.serverOpen");
+    cx.simulate_prompt_answer("Open and Restart");
+    poll(cx, w);
+    assert_saw(&["Previous settings restored. The server did not report healthy within 60 s."]);
+    assert_eq!(read(cx, w, |p, _| p.setup.step), Step::ServerNetwork);
+    assert!(disabled(cx, w, "onboarding.primary"));
+}
+
+fn win_to_network(cx: &mut TestAppContext, w: Win, server: &flow_platform::FakeServer) {
+    click(cx, w, "onboarding.primary");
+    click(cx, w, "onboarding.roleServer");
+    click(cx, w, "onboarding.primary");
+    click(cx, w, "onboarding.primary");
+    *server.ai_phase.lock().unwrap() = Some(AiPhase::Ready);
+    poll(cx, w);
+    click(cx, w, "onboarding.primary");
+    poll(cx, w);
+    assert_eq!(read(cx, w, |p, _| p.setup.step), Step::ServerNetwork);
+}
+
+#[flow_ui::gpui::test]
+async fn models_that_dont_fit_offer_a_way_on_and_a_failure_retries(cx: &mut TestAppContext) {
+    let (w, server) = server_rig(cx);
+    server.plan.lock().unwrap().free_disk = Some(1_000_000);
+    *server.download.lock().unwrap() = Err("A model could not be downloaded or verified. Try again.".into());
+    click(cx, w, "onboarding.primary");
+    click(cx, w, "onboarding.roleServer");
+    click(cx, w, "onboarding.primary");
+    assert_saw(&["of free disk space to download"]);
+    assert!(disabled(cx, w, "onboarding.primary"), "even the speech models don't fit");
+
+    server.plan.lock().unwrap().free_disk = Some(4_000_000_000);
+    poll(cx, w);
+    click(cx, w, "onboarding.serverWithoutRewriting");
+    assert_saw(&["Rewriting and summaries stay unavailable"]);
+    click(cx, w, "onboarding.primary");
+    poll(cx, w);
+    assert_eq!(server.calls(), ["download"], "no language model");
+    assert_saw(&["A model could not be downloaded or verified. Try again.", "Retry"]);
+    *server.download.lock().unwrap() = Ok(());
+    click(cx, w, "onboarding.retry.Parakeet v3 (dictation)");
+    poll(cx, w);
+    assert_eq!(server.calls(), ["download", "download"]);
+    assert!(!disabled(cx, w, "onboarding.primary"), "ready without rewriting");
+}
+
+#[flow_ui::gpui::test]
+async fn going_back_from_the_server_path_offers_the_client_path(cx: &mut TestAppContext) {
+    let (w, _) = server_rig(cx);
+    click(cx, w, "onboarding.primary");
+    click(cx, w, "onboarding.roleServer");
+    click(cx, w, "onboarding.primary");
+    click(cx, w, "onboarding.back");
+    assert_eq!(read(cx, w, |p, _| p.setup.step), Step::Role);
+    click(cx, w, "onboarding.roleClient");
+    click(cx, w, "onboarding.primary");
+    assert_eq!((read(cx, w, |p, _| p.setup.step), pref(cx, "setup.role").as_deref()), (Step::Purpose, Some("client")));
+}
+

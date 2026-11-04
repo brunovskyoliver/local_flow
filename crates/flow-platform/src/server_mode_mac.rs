@@ -1,10 +1,11 @@
 //! Server mode's processes (Feature 028, research R6). Every `launchctl`, `flowd admin`,
 //! `flowd-speech` and loopback admin call goes through `ServerProcessRunner`, so tests never start
 //! one; the paths and argument lists come from `flow_core::server_mode`.
-use flow_core::server_mode::ServerModePaths;
+use flow_core::prefs::Prefs;
+use flow_core::server_mode::*;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// A finished child process. Token values reach the app only through `output`, on stdout.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -38,6 +39,12 @@ pub trait ServerProcessRunner: Send + Sync {
     fn run(&self, program: &Path, args: &[String]) -> ProcessResult;
     /// `GET url` with `Authorization: Bearer <bearer>`, loopback only. `Err` when nothing answered.
     fn get(&self, url: &str, bearer: &str) -> HttpAnswer;
+    /// `run`, handing each stderr line to `line` as it comes (`flowd-speech provision`'s progress).
+    fn run_streaming(&self, program: &Path, args: &[String], line: &mut dyn FnMut(&str)) -> ProcessResult {
+        let result = self.run(program, args);
+        result.error.lines().for_each(&mut *line);
+        result
+    }
 }
 
 pub struct SystemRunner;
@@ -52,6 +59,29 @@ impl ServerProcessRunner for SystemRunner {
             Ok(out) => ProcessResult { status: out.status.code().unwrap_or(-1), output: String::from_utf8_lossy(&out.stdout).into_owned(), error: String::from_utf8_lossy(&out.stderr).into_owned() },
             Err(_) => ProcessResult::failed(-1, format!("could not start {}", program.display())),
         }
+    }
+    fn run_streaming(&self, program: &Path, args: &[String], line: &mut dyn FnMut(&str)) -> ProcessResult {
+        use std::io::{BufRead, Read};
+        use std::process::Stdio;
+        let spawned = std::process::Command::new(program).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn();
+        let Ok(mut child) = spawned else { return ProcessResult::failed(-1, format!("could not start {}", program.display())) };
+        // stdout on its own thread: a child that fills it while stderr is read must not block.
+        let mut stdout = child.stdout.take();
+        let output = std::thread::spawn(move || {
+            let mut text = String::new();
+            if let Some(out) = stdout.as_mut() {
+                let _ = out.read_to_string(&mut text);
+            }
+            text
+        });
+        let mut error = String::new();
+        for l in child.stderr.take().map(std::io::BufReader::new).into_iter().flat_map(|r| r.lines()).map_while(Result::ok) {
+            line(&l);
+            error.push_str(&l);
+            error.push('\n');
+        }
+        let status = child.wait().ok().and_then(|s| s.code()).unwrap_or(-1);
+        ProcessResult { status, output: output.join().unwrap_or_default(), error }
     }
     fn get(&self, url: &str, bearer: &str) -> HttpAnswer {
         let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(ADMIN_TIMEOUT)).max_redirects(0).http_status_as_error(false).proxy(None).build().into();
@@ -173,6 +203,681 @@ impl ServerAdmin {
     }
 }
 
+// The controller (T025): Swift's `ServerModeController`, with the pure parts in flow_core.
+
+/// Time for the 60-second open and the waits around launchctl, so tests run them instantly.
+pub trait Clock: Send + Sync {
+    fn now(&self) -> Instant;
+    fn sleep(&self, duration: Duration);
+}
+
+pub struct SystemClock;
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+    fn sleep(&self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
+/// A clock that moves only when something sleeps on it.
+pub struct FakeClock(Mutex<Instant>);
+impl Default for FakeClock {
+    fn default() -> Self {
+        FakeClock(Mutex::new(Instant::now()))
+    }
+}
+impl Clock for FakeClock {
+    fn now(&self) -> Instant {
+        *self.0.lock().unwrap()
+    }
+    fn sleep(&self, duration: Duration) {
+        *self.0.lock().unwrap() += duration;
+    }
+}
+
+/// `origin` → the fingerprint its `GET /v1/remote/identity` reports, `None` when it doesn't answer.
+pub type IdentityProbe = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+/// The numeric addresses of this Mac's interfaces that are up, without loopback.
+pub type Interfaces = Arc<dyn Fn() -> Vec<String> + Send + Sync>;
+
+const LAUNCHCTL: &str = "/bin/launchctl";
+const DOWNLOAD_FAILED: &str = "A model could not be downloaded or verified. Try again.";
+const ADOPTED_OPEN: &str = "This server was set up outside LocalFlow, so its settings stay as they are. Change its address where it was set up.";
+const HANDOFF_STALE: &str = "Meetings sent from a phone: turn server mode off and on.";
+
+/// Server mode for one Mac. Nothing here touches the client's own agents or preferences: its
+/// state is `server-mode.json` beside them, with Swift's key names.
+pub struct ServerMode {
+    pub paths: ServerModePaths,
+    pub admin: ServerAdmin,
+    runner: Arc<dyn ServerProcessRunner>,
+    /// The app's `Contents` folder: `Helpers` and `Resources`.
+    contents: PathBuf,
+    /// This app's data folder: `server-mode.json` and `ServerMode/` for the open's backup.
+    app_root: PathBuf,
+    /// The MTPLX runtime and `model-path`, shared with the Swift app (`LocalFlow/LocalAI`).
+    local_ai: PathBuf,
+    uid: u32,
+    prefs: Mutex<Prefs>,
+    pub clock: Arc<dyn Clock>,
+    pub probe: IdentityProbe,
+    pub interfaces: Interfaces,
+    /// Between health checks during an open; Swift's is 3 s.
+    pub poll: Duration,
+}
+
+impl ServerMode {
+    pub fn new(paths: ServerModePaths, runner: Arc<dyn ServerProcessRunner>, contents: PathBuf, app_root: PathBuf, local_ai: PathBuf, uid: u32) -> Self {
+        let prefs = Mutex::new(Prefs::open(app_root.join("server-mode.json")));
+        ServerMode {
+            admin: ServerAdmin::new(paths.clone(), runner.clone()),
+            paths,
+            runner,
+            contents,
+            app_root,
+            local_ai,
+            uid,
+            prefs,
+            clock: Arc::new(SystemClock),
+            probe: Arc::new(|origin: &str| flow_core::settings::fetch_identity(origin).ok().map(|i| i.fingerprint)),
+            interfaces: Arc::new(interface_ips),
+            poll: Duration::from_secs(3),
+        }
+    }
+
+    fn prefs(&self) -> std::sync::MutexGuard<'_, Prefs> {
+        self.prefs.lock().unwrap()
+    }
+
+    // launchctl
+
+    fn domain(&self) -> String {
+        format!("gui/{}", self.uid)
+    }
+    fn target(&self, label: &str) -> String {
+        format!("{}/{label}", self.domain())
+    }
+    fn launchctl(&self, args: &[String]) -> ProcessResult {
+        self.runner.run(Path::new(LAUNCHCTL), args)
+    }
+    fn job(&self, label: &str) -> Option<AgentJob> {
+        let result = self.launchctl(&["print".into(), self.target(label)]);
+        result.succeeded().then(|| AgentJob::parse(&result.output))
+    }
+    fn bootout(&self, label: &str) -> ProcessResult {
+        self.launchctl(&["bootout".into(), self.target(label)])
+    }
+    fn bootstrap(&self, plist: &Path) -> ProcessResult {
+        self.launchctl(&["bootstrap".into(), self.domain(), text(plist)])
+    }
+    /// bootstrap fails with error 5 while the old job is still being torn down.
+    fn wait_until_gone(&self, label: &str) {
+        for _ in 0..50 {
+            if self.job(label).is_none() {
+                return;
+            }
+            self.clock.sleep(Duration::from_millis(200));
+        }
+    }
+
+    // Status
+
+    fn plist_bytes(&self) -> Option<Vec<u8>> {
+        std::fs::read(self.paths.plist()).ok()
+    }
+    fn plist_arguments(&self) -> Option<Vec<String>> {
+        program_arguments(&self.plist_bytes()?)
+    }
+    pub fn ownership(&self, loaded: bool) -> Ownership {
+        ownership(self.plist_bytes().as_deref(), &self.prefs(), loaded)
+    }
+
+    fn helpers(&self) -> PathBuf {
+        self.contents.join("Helpers")
+    }
+    fn helpers_present(&self) -> bool {
+        REQUIRED_HELPERS.iter().all(|h| executable(&self.helpers().join(h))) && self.helpers().join(RESOURCE_BUNDLE).exists()
+    }
+    /// Changes when an update or a rebuild replaces the helpers.
+    fn helpers_stamp(&self) -> String {
+        ["flowd", "flowd-speech", MEETING_PROCESSOR]
+            .iter()
+            .map(|name| {
+                let meta = std::fs::metadata(self.helpers().join(name)).ok();
+                let size = meta.as_ref().map_or(0, |m| m.len());
+                let date = meta.and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+                format!("{name}:{size}:{date}")
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// A pinned descriptor: the one installed with the server, else the app's.
+    fn descriptor(&self, name: &str) -> Option<Vec<u8>> {
+        std::fs::read(self.paths.bin_dir().join(name)).or_else(|_| std::fs::read(self.resource(name))).ok()
+    }
+    fn resource(&self, name: &str) -> PathBuf {
+        let models = self.contents.join("Resources/Models").join(name);
+        if models.exists() { models } else { self.contents.join("Resources").join(name) }
+    }
+    /// Bytes still missing per `SERVER_MODELS` entry; `None` without a readable descriptor.
+    fn model_gaps(&self) -> [Option<u64>; 3] {
+        SERVER_MODELS.map(|(file, root, _)| missing_model_bytes(&self.descriptor(file)?, &self.paths.models_dir().join(root)))
+    }
+
+    pub fn status(&self) -> ServerModeStatus {
+        let job = self.job(self.paths.label());
+        let mut status = ServerModeStatus { loaded: job.is_some(), running: job.is_some_and(|j| j.running), ..Default::default() };
+        status.ownership = self.ownership(status.loaded);
+        let arguments = self.plist_arguments();
+        status.listen = arguments.as_deref().and_then(|a| value_after(a, "--remote-listen")).map(String::from);
+        if status.ownership == Ownership::None {
+            status.listen = None;
+            if !self.helpers_present() {
+                status.missing.push(HELPERS_MISSING.into());
+            }
+        }
+        if status.running
+            && let Some(origin) = status.listen.as_deref().and_then(health_origin)
+        {
+            status.fingerprint = (self.probe)(&origin);
+            let people = self.admin.run(&["list"]);
+            status.client_connected = people.succeeded() && client_seen(&people.output);
+        }
+        for ((_, _, service), gap) in SERVER_MODELS.iter().zip(self.model_gaps()) {
+            let Some(bytes) = gap else { continue };
+            status.missing_model_bytes += bytes;
+            let line = models_missing(service);
+            if bytes > 0 && !status.missing.contains(&line) {
+                status.missing.push(line);
+            }
+        }
+        if status.ownership != Ownership::None {
+            if !self.paths.mtplx_plist().exists() {
+                status.missing.push(REWRITING_MISSING.into());
+            }
+            if !executable(&self.paths.meeting_processor()) {
+                status.missing.push(HANDOFF_MISSING.into());
+            } else if status.ownership == Ownership::Managed && arguments.is_some_and(|a| !a.iter().any(|x| x == "--meeting-processor")) {
+                // Set up before flowd-meeting was bundled: the next plist this app writes has the flag.
+                status.missing.push(HANDOFF_STALE.into());
+            }
+        }
+        status
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.prefs().bool_or(ENABLED_KEY, false)
+    }
+
+    pub fn addresses(&self, listen: Option<&str>) -> Vec<ServerAddress> {
+        addresses(listen, &(self.interfaces)(), &self.prefs())
+    }
+
+    pub fn plan_input(&self, physical_memory: u64, free_disk: Option<u64>, downloaded: [bool; 5]) -> PlanInput {
+        let speech_installed = self.model_gaps().map(|g| g == Some(0));
+        let runtime_installed = self.local_ai.join("python/bin/python3").is_file() && self.local_ai.join("venv/.localflow-requirements").is_file();
+        PlanInput { physical_memory, free_disk, downloaded, speech_installed, runtime_installed }
+    }
+
+    // On and off
+
+    /// A new server listens on loopback only: nothing is reachable from other devices until the
+    /// owner confirms `open_to_network` (FR-009). An adopted server is started as it is (FR-011).
+    pub fn turn_on(&self) -> Result<(), String> {
+        if self.job(self.paths.label()).is_none() {
+            match self.ownership(false) {
+                Ownership::Adopted => {}
+                Ownership::None => self.install(&format!("127.0.0.1:{}", self.paths.remote_port()))?,
+                Ownership::Managed => {
+                    if !self.helpers_present() {
+                        return Err(HELPERS_MISSING.into());
+                    }
+                    if self.prefs().string(HELPERS_STAMP_KEY) != Some(self.helpers_stamp()) {
+                        self.sync_helpers()?;
+                    }
+                    let listen = self.plist_arguments().and_then(|a| value_after(&a, "--remote-listen").map(String::from));
+                    self.install(&listen.unwrap_or_else(|| format!("127.0.0.1:{}", self.paths.remote_port())))?;
+                }
+            }
+            self.start()?;
+        }
+        self.prefs().set(ENABLED_KEY, true);
+        Ok(())
+    }
+
+    /// Stops both agents and keeps them from coming back at login: their connections close. Deletes
+    /// nothing, so the users and devices are there when it's turned on again.
+    pub fn turn_off(&self) -> Result<(), String> {
+        for label in [self.paths.label(), self.paths.mtplx_label()] {
+            if self.job(label).is_some() {
+                let result = self.bootout(label);
+                if !result.succeeded() {
+                    return Err(format!("launchctl bootout failed: {}", result.reason()));
+                }
+                self.wait_until_gone(label);
+            }
+            self.launchctl(&["disable".into(), self.target(label)]);
+        }
+        self.prefs().set(ENABLED_KEY, false);
+        Ok(())
+    }
+
+    /// After an app update: new helpers for a server this app installed. An adopted one is left alone.
+    pub fn resync_if_updated(&self) {
+        let loaded = self.job(self.paths.label()).is_some();
+        if self.ownership(loaded) != Ownership::Managed || !self.helpers_present() || self.prefs().string(HELPERS_STAMP_KEY) == Some(self.helpers_stamp()) {
+            return;
+        }
+        if loaded {
+            self.bootout(self.paths.label());
+            self.wait_until_gone(self.paths.label());
+        }
+        let _ = self.sync_helpers();
+        if loaded {
+            self.bootstrap(&self.paths.plist());
+        }
+    }
+
+    /// The speech and meeting models. The worker's model locks need flowd stopped, and flowd comes
+    /// back whatever the result. Before the first install the helpers are copied so the worker exists.
+    pub fn download_models(&self, progress: &(dyn Fn(u64, u64) + Sync)) -> Result<(), String> {
+        let worker = self.paths.bin_dir().join("flowd-speech");
+        if !executable(&worker) {
+            if self.ownership(false) == Ownership::Adopted || !self.helpers_present() {
+                return Err(HELPERS_MISSING.into());
+            }
+            self.sync_helpers()?;
+        }
+        let loaded = self.job(self.paths.label()).is_some();
+        if loaded {
+            self.bootout(self.paths.label());
+            self.wait_until_gone(self.paths.label());
+        }
+        let args = ["provision".to_string(), "--models".into(), text(&self.paths.models_dir()), "--meeting".into()];
+        let result = self.runner.run_streaming(&worker, &args, &mut |line| {
+            if let Some(flow_core::dictation::provision::Line::Progress { completed, total, .. }) = flow_core::dictation::provision::parse(line) {
+                progress(completed, total);
+            }
+        });
+        if loaded {
+            self.bootstrap(&self.paths.plist());
+        }
+        if result.succeeded() { Ok(()) } else { Err(DOWNLOAD_FAILED.into()) }
+    }
+
+    // Open to the network
+
+    /// Changes only `--remote-listen`, keeps the previous plist and restores it unless the server
+    /// is healthy within 60 s. A server set up elsewhere is never rewritten (FR-011).
+    pub fn open_to_network(&self) -> OpenOutcome {
+        let Some(bytes) = self.plist_bytes() else { return OpenOutcome::Failed(NO_REMOTE_LISTEN.into()) };
+        let Some((changed, port)) = program_arguments(&bytes).and_then(|a| opened_arguments(&a)) else { return OpenOutcome::Failed(NO_REMOTE_LISTEN.into()) };
+        if self.ownership(true) != Ownership::Managed {
+            return OpenOutcome::Failed(ADOPTED_OPEN.into());
+        }
+        let previous_pid = self.job(self.paths.label()).and_then(|j| j.pid);
+        let backup = self.paths.backup_plist(&self.app_root);
+        let plist = self.paths.plist();
+        let written = (|| {
+            std::fs::create_dir_all(backup.parent().unwrap_or(&self.app_root))?;
+            std::fs::copy(&plist, &backup)?;
+            let new = replace_arguments(&bytes, &changed).ok_or_else(|| std::io::Error::other("not a plist"))?;
+            write_atomic(&plist, &new, 0o644)
+        })();
+        if let Err(e) = written {
+            return OpenOutcome::Failed(format!("Could not write {}: {e}", file_name(&plist)));
+        }
+        begin_open(&mut self.prefs());
+        let outcome = self.await_open(previous_pid, port, &backup);
+        end_open(&mut self.prefs());
+        outcome
+    }
+
+    fn await_open(&self, previous_pid: Option<i32>, port: u16, backup: &Path) -> OpenOutcome {
+        if let Some(failure) = self.reload() {
+            return self.rolled_back(failure, backup);
+        }
+        let origin = format!("http://127.0.0.1:{port}");
+        let end = self.clock.now() + OPEN_DEADLINE;
+        let mut check = OpenCheck::new(previous_pid);
+        while self.clock.now() < end {
+            self.clock.sleep(self.poll);
+            let job = self.job(self.paths.label());
+            let answered = job.is_some_and(|j| j.running && j.pid != previous_pid) && (self.probe)(&origin).is_some();
+            if check.observe(job, answered) {
+                if let Some(bytes) = self.plist_bytes() {
+                    record_plist(&mut self.prefs(), &bytes);
+                }
+                return OpenOutcome::Opened;
+            }
+        }
+        self.rolled_back(not_healthy(OPEN_DEADLINE), backup)
+    }
+
+    fn rolled_back(&self, reason: String, backup: &Path) -> OpenOutcome {
+        match self.restore(backup) {
+            Some(failure) => OpenOutcome::Failed(format!("{reason} The previous settings were restored, but: {failure}")),
+            None => OpenOutcome::RolledBack(reason),
+        }
+    }
+
+    /// `None` once the previous plist is back and loaded.
+    fn restore(&self, backup: &Path) -> Option<String> {
+        if let Err(e) = std::fs::rename(backup, self.paths.plist()) {
+            return Some(format!("could not restore the plist: {e}"));
+        }
+        self.reload()
+    }
+
+    /// The app quit during an open's health window: nothing proved the new bind healthy, so the
+    /// previous settings come back. Runs at launch.
+    pub fn recover_interrupted_open(&self) {
+        if take_interrupted_open(&mut self.prefs()) {
+            let _ = self.restore(&self.paths.backup_plist(&self.app_root));
+        }
+    }
+
+    /// bootout, wait for the job to go, bootstrap from the plist. `None` on success.
+    fn reload(&self) -> Option<String> {
+        let label = self.paths.label();
+        if self.job(label).is_some() {
+            self.bootout(label);
+            self.wait_until_gone(label);
+        }
+        let result = self.bootstrap(&self.paths.plist());
+        (!result.succeeded()).then(|| format!("launchctl bootstrap failed: {}", result.reason()))
+    }
+
+    // Install
+
+    /// A new install, or a managed one whose plist is rendered again with its own bind.
+    fn install(&self, listen: &str) -> Result<(), String> {
+        if !self.helpers_present() {
+            return Err(HELPERS_MISSING.into());
+        }
+        self.prepare_folders()?;
+        if !self.paths.flowd().exists() {
+            self.sync_helpers()?;
+        }
+        // flowd refuses to serve without the identity key; `init` refuses a second run.
+        if !self.paths.database().exists() {
+            let result = self.admin.run(&["init"]);
+            if !result.succeeded() {
+                return Err(format!("flowd admin init failed: {}", result.reason()));
+            }
+        }
+        let rewriting = self.prepare_mtplx()?;
+        let bytes = self.paths.flowd_plist(listen, rewriting, executable(&self.paths.meeting_processor()));
+        let plist = self.paths.plist();
+        std::fs::create_dir_all(plist.parent().unwrap_or(Path::new("/"))).and_then(|_| write_atomic(&plist, &bytes, 0o644)).map_err(|e| format!("Could not write {}: {e}", file_name(&plist)))?;
+        record_plist(&mut self.prefs(), &bytes);
+        Ok(())
+    }
+
+    fn prepare_folders(&self) -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+        for dir in [self.paths.bin_dir(), self.paths.log_dir()] {
+            std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
+        }
+        for dir in [self.paths.data_dir(), self.paths.log_dir()] {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| format!("Could not protect {}: {e}", dir.display()))?;
+        }
+        Ok(())
+    }
+
+    fn sync_helpers(&self) -> Result<(), String> {
+        self.prepare_folders()?;
+        let bin = self.paths.bin_dir();
+        let failed = |name: &str| format!("Could not install {name}.");
+        let optional = executable(&self.helpers().join(MEETING_PROCESSOR)).then_some(MEETING_PROCESSOR);
+        for name in REQUIRED_HELPERS.into_iter().chain(optional) {
+            copy_file(&self.helpers().join(name), &bin.join(name), 0o755).map_err(|_| failed(name))?;
+        }
+        copy_dir(&self.helpers().join(RESOURCE_BUNDLE), &bin.join(RESOURCE_BUNDLE)).map_err(|_| failed(RESOURCE_BUNDLE))?;
+        // The worker reads the pinned descriptors next to itself.
+        for name in DESCRIPTORS {
+            copy_file(&self.resource(name), &bin.join(name), 0o644).map_err(|_| failed(name))?;
+        }
+        // The helper and model licences travel with the install (ADR 0019).
+        let licenses = self.contents.join("Resources/WhisperLicenses");
+        if licenses.is_dir() {
+            copy_dir(&licenses, &bin.join("WhisperLicenses")).map_err(|_| failed("WhisperLicenses"))?;
+        }
+        self.prefs().set(HELPERS_STAMP_KEY, self.helpers_stamp());
+        Ok(())
+    }
+
+    /// With the local AI runtime and a model the server gets its own MTPLX agent, key and wrapper,
+    /// so the key never appears in a plist. An MTPLX plist already there is kept. False without one.
+    fn prepare_mtplx(&self) -> Result<bool, String> {
+        let mtplx = self.local_ai.join("venv/bin/mtplx");
+        let model = std::fs::read_to_string(self.local_ai.join("model-path")).ok().map(|m| PathBuf::from(m.trim()));
+        let Some(model) = model.filter(|m| executable(&mtplx) && m.exists()) else { return Ok(self.paths.mtplx_plist().exists()) };
+        let key = self.paths.mtplx_key();
+        if !key.exists() {
+            write_new_key(&key).map_err(|_| format!("Could not write {}.", file_name(&key)))?;
+        }
+        let wrapper = self.paths.wrapper();
+        write_atomic(&wrapper, WRAPPER_SCRIPT.as_bytes(), 0o755).map_err(|_| format!("Could not write {}.", file_name(&wrapper)))?;
+        let plist = self.paths.mtplx_plist();
+        if !plist.exists() {
+            let bytes = self.paths.mtplx_plist_bytes(&mtplx, &model);
+            std::fs::create_dir_all(plist.parent().unwrap_or(Path::new("/"))).and_then(|_| write_atomic(&plist, &bytes, 0o644)).map_err(|_| format!("Could not write {}.", file_name(&plist)))?;
+        }
+        Ok(true)
+    }
+
+    /// MTPLX first, so flowd's backend probe finds it. `disable` from an earlier turn-off also blocks
+    /// bootstrap, so `enable` comes first.
+    fn start(&self) -> Result<(), String> {
+        if !self.paths.plist().exists() {
+            return Err(NO_PLIST.into());
+        }
+        for (label, plist) in [(self.paths.mtplx_label(), self.paths.mtplx_plist()), (self.paths.label(), self.paths.plist())] {
+            if !plist.exists() {
+                continue;
+            }
+            self.launchctl(&["enable".into(), self.target(label)]);
+            if self.job(label).is_none() {
+                let result = self.bootstrap(&plist);
+                if !result.succeeded() {
+                    return Err(format!("launchctl bootstrap failed: {}", result.reason()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // The owner's first token (T031)
+
+    pub fn owner_name(&self) -> String {
+        let full = self.runner.run(Path::new("/usr/bin/id"), &["-F".into()]);
+        Some(full.output.trim().to_string()).filter(|n| full.succeeded() && !n.is_empty()).unwrap_or_else(|| "Owner".into())
+    }
+
+    /// The token reaches only the returned value: the runner's arguments carry the label and
+    /// addresses, and a failure reports stderr, which has no token.
+    pub fn create_owner_token(&self, label: &str, addresses: &[String]) -> Result<OwnerToken, String> {
+        let mut args = vec!["token", "create", "--label", label, "--ttl", "24h"];
+        for address in addresses {
+            args.extend(["--address", address.as_str()]);
+        }
+        args.push("--json");
+        let result = self.admin.run(&args);
+        if !result.succeeded() {
+            return Err(format!("flowd admin token create failed: {}", result.reason()));
+        }
+        OwnerToken::parse(&result.output).ok_or_else(|| "flowd admin token create gave no token.".into())
+    }
+}
+
+impl crate::ServerHost for ServerMode {
+    fn status(&self) -> ServerModeStatus {
+        ServerMode::status(self)
+    }
+    fn enabled(&self) -> bool {
+        ServerMode::enabled(self)
+    }
+    fn addresses(&self, listen: Option<&str>) -> Vec<ServerAddress> {
+        ServerMode::addresses(self, listen)
+    }
+    fn custom_address(&self) -> String {
+        custom_address(&self.prefs())
+    }
+    fn set_custom_address(&self, text: &str) -> bool {
+        set_custom_address(&mut self.prefs(), text)
+    }
+    fn plan_input(&self, physical_memory: u64, free_disk: Option<u64>, downloaded: [bool; 5]) -> PlanInput {
+        ServerMode::plan_input(self, physical_memory, free_disk, downloaded)
+    }
+    fn install_language_model(&self, model_id: &str) -> Result<(), crate::Unavailable> {
+        let model = *flow_core::onboarding::CATALOG.iter().find(|m| m.id == model_id).ok_or(crate::Unavailable("this model"))?;
+        let log = self.paths.home.join("Library/Logs/LocalFlow/local-ai-setup.log");
+        let install = crate::local_ai::Install { root: self.local_ai.clone(), resources: self.contents.join("Resources/LocalAI"), log, model, register_client_agents: false };
+        crate::local_ai::start(install, NoClientAgents);
+        Ok(())
+    }
+    fn language_model_phase(&self) -> Option<flow_core::onboarding::AiPhase> {
+        crate::local_ai::phase()
+    }
+    fn download_models(&self, progress: &(dyn Fn(u64, u64) + Sync)) -> Result<(), String> {
+        ServerMode::download_models(self, progress)
+    }
+    fn turn_on(&self) -> Result<(), String> {
+        ServerMode::turn_on(self)
+    }
+    fn turn_off(&self) -> Result<(), String> {
+        ServerMode::turn_off(self)
+    }
+    fn open_to_network(&self) -> OpenOutcome {
+        ServerMode::open_to_network(self)
+    }
+    fn owner_name(&self) -> String {
+        ServerMode::owner_name(self)
+    }
+    fn create_owner_token(&self, label: &str, addresses: &[String]) -> Result<OwnerToken, String> {
+        ServerMode::create_owner_token(self, label, addresses)
+    }
+    fn launch(&self) {
+        self.recover_interrupted_open();
+        self.resync_if_updated();
+    }
+}
+
+/// The server path never touches the client's agents (T024): `install` doesn't call these.
+struct NoClientAgents;
+impl crate::local_ai::Agents for NoClientAgents {
+    fn loaded(&self, _: &str) -> bool {
+        false
+    }
+    fn register(&self, _: &str) -> Result<(), String> {
+        Err(flow_core::onboarding::AI_ERROR_REGISTRATION.into())
+    }
+    fn kickstart(&self, _: &str, _: bool) -> bool {
+        false
+    }
+}
+
+/// Development builds run only the `.dev` server, on 18090-18093 (T033).
+pub fn dev_identity() -> bool {
+    cfg!(debug_assertions)
+}
+
+fn text(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+fn executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+/// Through a staging file and a rename: a running helper keeps its old file, the next start gets the new one.
+fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let stage = path.with_extension("new");
+    std::fs::write(&stage, bytes)?;
+    std::fs::set_permissions(&stage, std::fs::Permissions::from_mode(mode))?;
+    std::fs::rename(stage, path)
+}
+
+fn copy_file(source: &Path, destination: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let stage = destination.with_extension("new");
+    let _ = std::fs::remove_file(&stage);
+    std::fs::copy(source, &stage)?;
+    std::fs::set_permissions(&stage, std::fs::Permissions::from_mode(mode))?;
+    std::fs::rename(stage, destination)
+}
+
+/// Replaces `destination` with a copy of the folder, symlinks kept as links.
+fn copy_dir(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let _ = std::fs::remove_dir_all(destination);
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let (from, to) = (entry.path(), destination.join(entry.file_name()));
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            std::os::unix::fs::symlink(std::fs::read_link(&from)?, &to)?;
+        } else if kind.is_dir() {
+            copy_dir(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
+/// 32 random bytes as hex, created 0600 and never replaced.
+fn write_new_key(path: &Path) -> std::io::Result<()> {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut bytes = [0u8; 32];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?.write_all(hex.as_bytes())
+}
+
+/// IPv4 and IPv6 addresses of interfaces that are up and running, without loopback.
+pub fn interface_ips() -> Vec<String> {
+    let mut ips = Vec::new();
+    unsafe {
+        let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
+        if libc::getifaddrs(&mut head) != 0 {
+            return ips;
+        }
+        let mut cursor = head;
+        while !cursor.is_null() {
+            let entry = &*cursor;
+            cursor = entry.ifa_next;
+            let flags = entry.ifa_flags as i32;
+            let address = entry.ifa_addr;
+            if flags & libc::IFF_UP == 0 || flags & libc::IFF_RUNNING == 0 || flags & libc::IFF_LOOPBACK != 0 || address.is_null() {
+                continue;
+            }
+            let family = (*address).sa_family as i32;
+            if family != libc::AF_INET && family != libc::AF_INET6 {
+                continue;
+            }
+            let mut host = [0 as libc::c_char; libc::NI_MAXHOST as usize];
+            if libc::getnameinfo(address, (*address).sa_len as libc::socklen_t, host.as_mut_ptr(), host.len() as libc::socklen_t, std::ptr::null_mut(), 0, libc::NI_NUMERICHOST) == 0 {
+                let ip = std::ffi::CStr::from_ptr(host.as_ptr()).to_string_lossy();
+                ips.push(ip.split('%').next().unwrap_or_default().to_string());
+            }
+        }
+        libc::freeifaddrs(head);
+    }
+    ips
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,5 +963,253 @@ mod tests {
         assert_eq!((result.status, result.reason()), (-1, "could not start /nonexistent/flowd".to_string()));
         let echoed = SystemRunner.run(Path::new("/bin/sh"), &["-c".into(), "printf out; printf err >&2; exit 4".into()]);
         assert_eq!(echoed, ProcessResult { status: 4, output: "out".into(), error: "err".into() });
+    }
+
+    // ServerMode (T025, T031, T033)
+
+    use std::collections::HashMap;
+
+    struct Rig {
+        home: PathBuf,
+        mode: ServerMode,
+        runner: Arc<RecordingRunner>,
+        answers: Arc<Mutex<bool>>,
+        client_prefs: PathBuf,
+    }
+
+    fn executable_file(path: &Path, body: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// An app bundle with fake helpers, a launchd that keeps loaded jobs in a map, and a flowd that
+    /// answers `admin init`, `list` and `token create`. Development identity only.
+    fn rig(name: &str) -> Rig {
+        let (home, paths) = dev_home(&format!("mode-{name}"));
+        let contents = home.join("LocalFlow.app/Contents");
+        for helper in REQUIRED_HELPERS {
+            executable_file(&contents.join("Helpers").join(helper), "#!/bin/sh\n");
+        }
+        std::fs::create_dir_all(contents.join("Helpers").join(RESOURCE_BUNDLE).join("Inner")).unwrap();
+        std::fs::write(contents.join("Helpers").join(RESOURCE_BUNDLE).join("Inner/x"), "x").unwrap();
+        for name in DESCRIPTORS {
+            let file = format!(r#"{{"files":[{{"path":"{name}.bin","size":4}}]}}"#);
+            std::fs::create_dir_all(contents.join("Resources/Models")).unwrap();
+            std::fs::write(contents.join("Resources/Models").join(name), file).unwrap();
+        }
+        let app_root = home.join("app");
+        std::fs::create_dir_all(&app_root).unwrap();
+        // The client's own settings, which server mode must never change.
+        let client_prefs = app_root.join("preferences.json");
+        std::fs::write(&client_prefs, r#"{"dictation.model":"parakeet-v3","rewrite.enabled":true}"#).unwrap();
+
+        let runner = RecordingRunner::new();
+        let jobs: Arc<Mutex<HashMap<String, i32>>> = Arc::default();
+        let database = paths.database();
+        let mut next_pid = 100;
+        runner.answer_runs(move |program, args| {
+            let mut jobs = jobs.lock().unwrap();
+            let label = |target: &str| target.rsplit('/').next().unwrap().to_string();
+            match (program.to_str().unwrap(), args.first().map(String::as_str).unwrap_or("")) {
+                (LAUNCHCTL, "print") => match jobs.get(&label(&args[1])) {
+                    Some(pid) => ProcessResult::ok(format!("\tstate = running\n\tpid = {pid}\n")),
+                    None => ProcessResult::failed(113, "Could not find service"),
+                },
+                (LAUNCHCTL, "bootstrap") => {
+                    next_pid += 1;
+                    jobs.insert(Path::new(&args[2]).file_stem().unwrap().to_string_lossy().into_owned(), next_pid);
+                    ProcessResult::ok("")
+                }
+                (LAUNCHCTL, "bootout") => {
+                    jobs.remove(&label(&args[1]));
+                    ProcessResult::ok("")
+                }
+                (LAUNCHCTL, _) => ProcessResult::ok(""),
+                ("/usr/bin/id", _) => ProcessResult::ok("Oliver Owner\n"),
+                (p, "provision") if p.ends_with("flowd-speech") => ProcessResult { status: 0, output: String::new(), error: "provision model=m state=downloading completed=4 total=9\nprovision model=m state=verified\n".into() },
+                (p, "admin") if p.ends_with("flowd") => match args.last().unwrap().as_str() {
+                    "init" => {
+                        std::fs::write(&database, "").unwrap();
+                        ProcessResult::ok("")
+                    }
+                    "list" => ProcessResult::ok("user 1 owner\n  device 2 last seen 2026-11-04\n"),
+                    "--json" => ProcessResult::ok(r#"{"id":"t1","label":"Owner","expires_at":"2026-11-05T10:00:00Z","token":"lfp_secret","link":"localflow://pair?token=lfp_secret"}"#),
+                    _ => ProcessResult::failed(2, "unknown"),
+                },
+                _ => ProcessResult::failed(-1, "unexpected"),
+            }
+        });
+        let mut mode = ServerMode::new(paths, runner.clone(), contents, app_root, home.join("LocalAI"), 501);
+        let answers = Arc::new(Mutex::new(true));
+        let answering = answers.clone();
+        mode.clock = Arc::new(FakeClock::default());
+        mode.probe = Arc::new(move |_| answering.lock().unwrap().then(|| "fp-1".to_string()));
+        mode.interfaces = Arc::new(|| vec!["192.168.1.20".into()]);
+        Rig { home, mode, runner, answers, client_prefs }
+    }
+
+    fn listen(mode: &ServerMode) -> Option<String> {
+        value_after(&mode.plist_arguments()?, "--remote-listen").map(String::from)
+    }
+
+    fn launchctl_args(runner: &RecordingRunner) -> Vec<Vec<String>> {
+        runner.runs().into_iter().filter(|(p, _)| p == Path::new(LAUNCHCTL)).map(|(_, a)| a).collect()
+    }
+
+    /// T033: every launchctl call names the development agents, never `org.localflow.LocalFlow.remote[.mtplx]`.
+    fn assert_dev_labels_only(runner: &RecordingRunner) {
+        for args in launchctl_args(runner) {
+            assert!(args.iter().all(|a| !a.contains("org.localflow.LocalFlow.remote")), "production label in {args:?}");
+        }
+    }
+
+    #[test]
+    fn turning_on_installs_a_loopback_server_and_off_keeps_its_data() {
+        let r = rig("on-off");
+        let before = std::fs::read(&r.client_prefs).unwrap();
+        assert_eq!(r.mode.status().ownership, Ownership::None);
+        r.mode.turn_on().unwrap();
+        assert!(r.mode.enabled());
+        assert_eq!(listen(&r.mode), Some(format!("127.0.0.1:{}", r.mode.paths.remote_port())), "nothing reachable before the owner opens it");
+        let status = r.mode.status();
+        assert_eq!((status.ownership, status.loaded, status.running), (Ownership::Managed, true, true));
+        assert_eq!(status.fingerprint.as_deref(), Some("fp-1"));
+        assert!(status.client_connected);
+        assert_eq!(status.missing_model_bytes, 12, "three models of 4 bytes each");
+        assert!(status.missing.contains(&models_missing("Dictation")));
+        assert!(r.mode.addresses(status.listen.as_deref()).is_empty(), "loopback has no address to show");
+        for helper in REQUIRED_HELPERS {
+            assert!(executable(&r.mode.paths.bin_dir().join(helper)), "{helper}");
+        }
+        assert!(r.mode.paths.bin_dir().join(RESOURCE_BUNDLE).join("Inner/x").exists());
+        assert!(r.mode.paths.bin_dir().join("parakeet-v3.json").exists());
+        assert!(r.mode.paths.database().exists());
+        let data_mode = std::fs::metadata(r.mode.paths.data_dir()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(data_mode, 0o700);
+
+        r.mode.turn_off().unwrap();
+        assert!(!r.mode.enabled());
+        assert!(!r.mode.status().loaded);
+        assert!(r.mode.paths.database().exists() && r.mode.paths.plist().exists(), "off deletes nothing");
+        let args = launchctl_args(&r.runner);
+        assert!(args.contains(&vec!["bootout".into(), format!("gui/501/{}", r.mode.paths.label())]));
+        assert!(args.contains(&vec!["disable".into(), format!("gui/501/{}", r.mode.paths.label())]));
+
+        r.mode.turn_on().unwrap();
+        assert!(r.mode.status().running, "on again after off: enable comes before bootstrap");
+        assert_eq!(std::fs::read(&r.client_prefs).unwrap(), before, "the client's dictation and rewrite settings are untouched");
+        assert!(r.mode.app_root.join("server-mode.json").exists());
+        assert_dev_labels_only(&r.runner);
+        std::fs::remove_dir_all(r.home).unwrap();
+    }
+
+    #[test]
+    fn opening_to_the_network_rewrites_only_the_bind_once_healthy() {
+        let r = rig("open");
+        r.mode.turn_on().unwrap();
+        let before = program_arguments(&std::fs::read(r.mode.paths.plist()).unwrap()).unwrap();
+        assert_eq!(r.mode.open_to_network(), OpenOutcome::Opened);
+        let after = r.mode.plist_arguments().unwrap();
+        let port = r.mode.paths.remote_port();
+        assert_eq!(after, opened_arguments(&before).unwrap().0);
+        assert_eq!(listen(&r.mode), Some(format!("0.0.0.0:{port}")));
+        assert_eq!(r.mode.status().ownership, Ownership::Managed, "the new plist is recorded as this app's");
+        assert_eq!(r.mode.addresses(Some(&format!("0.0.0.0:{port}")))[0].origin, format!("http://192.168.1.20:{port}"));
+        assert!(!take_interrupted_open(&mut r.mode.prefs()), "the pending marker is cleared");
+        assert_dev_labels_only(&r.runner);
+        std::fs::remove_dir_all(r.home).unwrap();
+    }
+
+    #[test]
+    fn an_open_that_never_answers_is_rolled_back_after_sixty_seconds() {
+        let r = rig("rollback");
+        r.mode.turn_on().unwrap();
+        let before = std::fs::read(r.mode.paths.plist()).unwrap();
+        *r.answers.lock().unwrap() = false;
+        let start = r.mode.clock.now();
+        let OpenOutcome::RolledBack(reason) = r.mode.open_to_network() else { panic!("expected a rollback") };
+        assert_eq!(reason, not_healthy(OPEN_DEADLINE));
+        assert!(r.mode.clock.now() - start >= OPEN_DEADLINE);
+        assert_eq!(std::fs::read(r.mode.paths.plist()).unwrap(), before, "the previous plist is back");
+        assert_eq!(r.mode.status().ownership, Ownership::Managed);
+        assert!(r.mode.status().loaded, "and loaded again");
+        std::fs::remove_dir_all(r.home).unwrap();
+    }
+
+    #[test]
+    fn an_open_cut_short_by_quitting_is_restored_at_launch() {
+        let r = rig("interrupted");
+        r.mode.turn_on().unwrap();
+        let before = std::fs::read(r.mode.paths.plist()).unwrap();
+        let backup = r.mode.paths.backup_plist(&r.mode.app_root);
+        std::fs::create_dir_all(backup.parent().unwrap()).unwrap();
+        std::fs::copy(r.mode.paths.plist(), &backup).unwrap();
+        std::fs::write(r.mode.paths.plist(), b"half-written").unwrap();
+        begin_open(&mut r.mode.prefs());
+        crate::ServerHost::launch(&r.mode);
+        assert_eq!(std::fs::read(r.mode.paths.plist()).unwrap(), before);
+        std::fs::remove_dir_all(r.home).unwrap();
+    }
+
+    #[test]
+    fn a_server_set_up_elsewhere_is_started_but_never_rewritten() {
+        let r = rig("adopted");
+        let foreign = r.mode.paths.flowd_plist("0.0.0.0:9999", false, false);
+        std::fs::create_dir_all(r.mode.paths.plist().parent().unwrap()).unwrap();
+        std::fs::write(r.mode.paths.plist(), &foreign).unwrap();
+        std::fs::create_dir_all(r.mode.paths.bin_dir()).unwrap();
+        assert_eq!(r.mode.status().ownership, Ownership::Adopted);
+        r.mode.turn_on().unwrap();
+        assert!(r.mode.status().running);
+        assert_eq!(r.mode.open_to_network(), OpenOutcome::Failed(ADOPTED_OPEN.into()));
+        assert_eq!(std::fs::read(r.mode.paths.plist()).unwrap(), foreign);
+        assert!(!r.mode.paths.database().exists(), "no admin init on someone else's server");
+        assert_eq!(r.mode.download_models(&|_, _| {}), Err(HELPERS_MISSING.into()), "no flowd-speech of its own to run");
+        r.mode.turn_off().unwrap();
+        assert_eq!(std::fs::read(r.mode.paths.plist()).unwrap(), foreign);
+        std::fs::remove_dir_all(r.home).unwrap();
+    }
+
+    #[test]
+    fn models_download_with_flowd_stopped_and_report_progress() {
+        let r = rig("models");
+        r.mode.turn_on().unwrap();
+        let seen = Mutex::new(Vec::new());
+        r.mode.download_models(&|done, total| seen.lock().unwrap().push((done, total))).unwrap();
+        assert_eq!(*seen.lock().unwrap(), [(4, 9)]);
+        let runs = r.runner.runs();
+        let provision = runs.iter().position(|(p, _)| p.ends_with("flowd-speech")).unwrap();
+        let worker_args = &runs[provision].1;
+        assert_eq!(worker_args[..2], ["provision".to_string(), "--models".into()]);
+        assert_eq!(runs[provision - 1].1, vec!["print".to_string(), format!("gui/501/{}", r.mode.paths.label())], "waited for flowd to go");
+        assert_eq!(runs[provision + 1].1[0], "bootstrap", "and brought it back");
+        assert_dev_labels_only(&r.runner);
+        std::fs::remove_dir_all(r.home).unwrap();
+    }
+
+    #[test]
+    fn the_owner_token_stays_in_memory() {
+        let r = rig("token");
+        r.mode.turn_on().unwrap();
+        assert_eq!(r.mode.owner_name(), "Oliver Owner");
+        let token = r.mode.create_owner_token("Oliver Owner", &["http://192.168.1.20:18090".into()]).unwrap();
+        assert_eq!((token.token.as_str(), token.expires_at.as_str()), ("lfp_secret", "2026-11-05T10:00:00Z"));
+        assert!(!format!("{token:?}").contains("lfp_"));
+        let create = r.runner.runs().into_iter().find(|(_, a)| a.contains(&"create".to_string())).unwrap().1;
+        assert!(create.ends_with(&["token".into(), "create".into(), "--label".into(), "Oliver Owner".into(), "--ttl".into(), "24h".into(), "--address".into(), "http://192.168.1.20:18090".into(), "--json".into()]));
+        fn files(dir: &Path, out: &mut Vec<PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if entry.file_type().unwrap().is_dir() { files(&path, out) } else { out.push(path) }
+            }
+        }
+        let mut written = Vec::new();
+        files(&r.home, &mut written);
+        assert!(written.len() > 5);
+        for file in written {
+            assert!(!String::from_utf8_lossy(&std::fs::read(&file).unwrap()).contains("lfp_"), "{}", file.display());
+        }
+        std::fs::remove_dir_all(r.home).unwrap();
     }
 }

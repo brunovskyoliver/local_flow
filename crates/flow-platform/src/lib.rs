@@ -412,6 +412,174 @@ pub trait Services: 'static {
     fn can_host_server(&self) -> bool {
         false
     }
+    /// Server mode for an app whose data is in `root`. `None` where this machine can't host a
+    /// server, or when the data root is redirected (`live` false): tests and scenarios never reach
+    /// launchd through this.
+    fn server_host(&self, _root: &std::path::Path, _live: bool) -> Option<std::sync::Arc<dyn ServerHost>> {
+        None
+    }
+}
+
+/// Server mode (Feature 028, research R6): the launchd agents, helpers, models and `flowd admin`
+/// of this Mac's server. Every call blocks, so callers run them off the UI thread. The app's own
+/// process opens no listener (FR-012); the server is its own agent.
+pub trait ServerHost: Send + Sync {
+    fn status(&self) -> flow_core::server_mode::ServerModeStatus;
+    /// `serverMode.enabled`: the owner turned it on here.
+    fn enabled(&self) -> bool;
+    /// Reachable addresses for `listen` (the plist's `--remote-listen`) and the custom address.
+    fn addresses(&self, listen: Option<&str>) -> Vec<flow_core::server_mode::ServerAddress>;
+    fn custom_address(&self) -> String;
+    /// False if the text is not a usable address; empty clears it.
+    fn set_custom_address(&self, text: &str) -> bool;
+    /// What is already on disk, for `server_model_plan`.
+    fn plan_input(&self, physical_memory: u64, free_disk: Option<u64>, downloaded: [bool; 5]) -> flow_core::server_mode::PlanInput;
+    /// Python, the MTPLX packages and `model_id`, without the client's agents (T024). Returns at
+    /// once; `language_model_phase` reports progress.
+    fn install_language_model(&self, model_id: &str) -> Result<(), Unavailable>;
+    fn language_model_phase(&self) -> Option<flow_core::onboarding::AiPhase>;
+    /// `flowd-speech provision --models <data>/Models --meeting`, reporting (completed, total) bytes.
+    fn download_models(&self, progress: &(dyn Fn(u64, u64) + Sync)) -> Result<(), String>;
+    /// Installs (bound to loopback for a new server) or adopts, then starts both agents.
+    fn turn_on(&self) -> Result<(), String>;
+    /// Stops both agents and keeps them from coming back at login. Deletes nothing.
+    fn turn_off(&self) -> Result<(), String>;
+    /// Binds the server to every network; undone unless healthy within 60 s.
+    fn open_to_network(&self) -> flow_core::server_mode::OpenOutcome;
+    /// The name the owner's first token is labelled with.
+    fn owner_name(&self) -> String;
+    /// `token create --label <label> --ttl 24h --address <origin>… --json`. The value is for the
+    /// ready step only.
+    fn create_owner_token(&self, label: &str, addresses: &[String]) -> Result<flow_core::server_mode::OwnerToken, String>;
+    /// At app launch: undoes an interrupted open and copies updated helpers to a managed server.
+    fn launch(&self);
+}
+
+/// A `ServerHost` for tests: a server that starts on loopback, records each call and answers as
+/// its fields say. `open` is what an open returns; `Opened` binds it to every network.
+pub struct FakeServer {
+    pub status: std::sync::Mutex<flow_core::server_mode::ServerModeStatus>,
+    pub enabled: std::sync::Mutex<bool>,
+    pub custom: std::sync::Mutex<String>,
+    pub open: std::sync::Mutex<flow_core::server_mode::OpenOutcome>,
+    pub download: std::sync::Mutex<Result<(), String>>,
+    pub token: std::sync::Mutex<Result<flow_core::server_mode::OwnerToken, String>>,
+    pub plan: std::sync::Mutex<flow_core::server_mode::PlanInput>,
+    pub ai_phase: std::sync::Mutex<Option<flow_core::onboarding::AiPhase>>,
+    pub calls: std::sync::Mutex<Vec<String>>,
+}
+
+impl Default for FakeServer {
+    fn default() -> Self {
+        let token = flow_core::server_mode::OwnerToken { token: "lfp_fake".into(), link: "localflow://pair?token=lfp_fake".into(), expires_at: "2026-11-05T10:00:00Z".into() };
+        let status = flow_core::server_mode::ServerModeStatus { missing_model_bytes: 12, ..Default::default() };
+        FakeServer {
+            status: std::sync::Mutex::new(status),
+            enabled: Default::default(),
+            custom: Default::default(),
+            open: std::sync::Mutex::new(flow_core::server_mode::OpenOutcome::Opened),
+            download: std::sync::Mutex::new(Ok(())),
+            token: std::sync::Mutex::new(Ok(token)),
+            plan: std::sync::Mutex::new(flow_core::server_mode::PlanInput { physical_memory: 64 << 30, ..Default::default() }),
+            ai_phase: Default::default(),
+            calls: Default::default(),
+        }
+    }
+}
+
+impl FakeServer {
+    fn call(&self, name: impl Into<String>) {
+        self.calls.lock().unwrap().push(name.into());
+    }
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl ServerHost for FakeServer {
+    fn status(&self) -> flow_core::server_mode::ServerModeStatus {
+        self.status.lock().unwrap().clone()
+    }
+    fn enabled(&self) -> bool {
+        *self.enabled.lock().unwrap()
+    }
+    fn addresses(&self, listen: Option<&str>) -> Vec<flow_core::server_mode::ServerAddress> {
+        let mut prefs = flow_core::prefs::Prefs::memory();
+        flow_core::server_mode::set_custom_address(&mut prefs, &self.custom.lock().unwrap());
+        flow_core::server_mode::addresses(listen, &["192.168.1.20".into()], &prefs)
+    }
+    fn custom_address(&self) -> String {
+        self.custom.lock().unwrap().clone()
+    }
+    fn set_custom_address(&self, text: &str) -> bool {
+        self.call(format!("custom {text}"));
+        let ok = flow_core::server_mode::set_custom_address(&mut flow_core::prefs::Prefs::memory(), text);
+        if ok {
+            *self.custom.lock().unwrap() = text.trim().to_string();
+        }
+        ok
+    }
+    fn plan_input(&self, physical_memory: u64, free_disk: Option<u64>, downloaded: [bool; 5]) -> flow_core::server_mode::PlanInput {
+        let plan = self.plan.lock().unwrap().clone();
+        flow_core::server_mode::PlanInput { physical_memory, free_disk: free_disk.or(plan.free_disk), downloaded, ..plan }
+    }
+    fn install_language_model(&self, model_id: &str) -> Result<(), Unavailable> {
+        self.call(format!("language model {model_id}"));
+        *self.ai_phase.lock().unwrap() = Some(flow_core::onboarding::AiPhase::PreparingRuntime);
+        Ok(())
+    }
+    fn language_model_phase(&self) -> Option<flow_core::onboarding::AiPhase> {
+        self.ai_phase.lock().unwrap().clone()
+    }
+    fn download_models(&self, progress: &(dyn Fn(u64, u64) + Sync)) -> Result<(), String> {
+        self.call("download");
+        progress(4, 12);
+        let result = self.download.lock().unwrap().clone();
+        if result.is_ok() {
+            self.plan.lock().unwrap().speech_installed = [true; 3];
+            let mut status = self.status.lock().unwrap();
+            status.missing_model_bytes = 0;
+            status.missing.clear();
+        }
+        result
+    }
+    fn turn_on(&self) -> Result<(), String> {
+        self.call("on");
+        let mut status = self.status.lock().unwrap();
+        if status.ownership == flow_core::server_mode::Ownership::None {
+            status.ownership = flow_core::server_mode::Ownership::Managed;
+            status.listen = Some("127.0.0.1:18090".into());
+        }
+        (status.loaded, status.running) = (true, true);
+        status.fingerprint = Some("fp-fake".into());
+        *self.enabled.lock().unwrap() = true;
+        Ok(())
+    }
+    fn turn_off(&self) -> Result<(), String> {
+        self.call("off");
+        let mut status = self.status.lock().unwrap();
+        (status.loaded, status.running, status.fingerprint) = (false, false, None);
+        *self.enabled.lock().unwrap() = false;
+        Ok(())
+    }
+    fn open_to_network(&self) -> flow_core::server_mode::OpenOutcome {
+        self.call("open");
+        let outcome = self.open.lock().unwrap().clone();
+        if outcome == flow_core::server_mode::OpenOutcome::Opened {
+            self.status.lock().unwrap().listen = Some("0.0.0.0:18090".into());
+        }
+        outcome
+    }
+    fn owner_name(&self) -> String {
+        "Oliver Owner".into()
+    }
+    fn create_owner_token(&self, label: &str, addresses: &[String]) -> Result<flow_core::server_mode::OwnerToken, String> {
+        self.call(format!("token {label} {}", addresses.join(" ")));
+        self.token.lock().unwrap().clone()
+    }
+    fn launch(&self) {
+        self.call("launch");
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

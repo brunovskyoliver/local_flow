@@ -12,10 +12,10 @@ final class DevicesModel {
   private(set) var busy = false
 
   func reload() async {
-    async let list = Admin.run(["list"])
+    async let list = Admin.listUsers()
     async let log = Admin.run(["audit", "--limit", "200"])
-    let (listed, audited) = await (list, log)
-    if listed.succeeded { users = Admin.parseList(listed.output) }
+    let ((listed, listedUsers), audited) = await (list, log)
+    if listed.succeeded { users = listedUsers }
     if audited.succeeded { audit = Admin.parseAudit(audited.output) }
     loadError = Admin.loadError(listed: listed, audited: audited)
   }
@@ -56,7 +56,9 @@ struct DevicesView: View {
             ForEach(user.devices) { device in
               row(
                 kind: "device", id: device.id, title: device.name, state: device.state,
-                detail: "enrolled \(device.enrolled) · last seen \(device.lastSeen)")
+                detail:
+                  "\(device.kindLabel) · enrolled \(device.enrolled) · last seen \(device.lastSeen)"
+              )
             }
           } header: {
             row(

@@ -198,6 +198,9 @@ public final class RemoteEnrollment {
   private let transports: any RemoteTransportOpening
   private let clock: any RemoteClock
   private let deviceName: String
+  private let deviceKind: RemoteDeviceKind?
+  /// The identity `pin` last stored, for its `features`; not persisted.
+  private var pinnedIdentity: RemoteServerIdentity?
   private var accessIssuedAt: Duration?
   private var refreshing: Task<String?, Never>?
   private var scheduledRefresh: Task<Void, Never>?
@@ -210,7 +213,8 @@ public final class RemoteEnrollment {
     preferences: any RemoteEnrollmentSettings, credentials: any RemoteCredentialStoring,
     keys: any RemoteDeviceKeys, signIn: any IdentitySignIn,
     identityFetcher: any RemoteIdentityFetching, transports: any RemoteTransportOpening,
-    clock: any RemoteClock = SystemRemoteClock(), deviceName: String
+    clock: any RemoteClock = SystemRemoteClock(), deviceName: String,
+    deviceKind: RemoteDeviceKind? = nil
   ) {
     self.preferences = preferences
     self.credentials = credentials
@@ -220,6 +224,7 @@ public final class RemoteEnrollment {
     self.transports = transports
     self.clock = clock
     self.deviceName = deviceName
+    self.deviceKind = deviceKind
   }
 
   public var state: RemoteDictationState { preferences.remoteState }
@@ -255,6 +260,7 @@ public final class RemoteEnrollment {
     try credentials.removeAll()
     accessIssuedAt = nil
     try credentials.write(.serverKey, key)
+    pinnedIdentity = identity
     preferences.remoteNotice = nil
     preferences.remoteState = .pinned
   }
@@ -307,6 +313,11 @@ public final class RemoteEnrollment {
     guard let origin, let url = Self.channelURL(origin: origin), let serverKey = pinnedKey else {
       throw RemoteEnrollmentError.notConfigured
     }
+    // The identity the user pinned decides whether `device_kind` goes out; none (an enroll
+    // after relaunch) sends none, and flowd stores "Unknown".
+    let kind =
+      pinnedIdentity?.validatedKey() == serverKey
+      ? deviceKind.flatMap { pinnedIdentity?.deviceKind($0) } : nil
     let device = try keys.create()
     let channel = try RemoteChannel(transport: try await transports.open(url), serverKey: serverKey)
     defer { Task { await channel.close() } }
@@ -323,7 +334,7 @@ public final class RemoteEnrollment {
         Data("localflow-v1-enroll".utf8) + binding, handle: device.handle)
       try await channel.send(
         .enroll(
-          op: 1, provider: provider, idToken: token, deviceName: deviceName,
+          op: 1, provider: provider, idToken: token, deviceName: deviceName, deviceKind: kind,
           deviceKey: device.publicKey, signature: signature))
       switch try await channel.receive() {
       case .enrolled(1, let state, let refresh):
@@ -388,7 +399,8 @@ public final class RemoteEnrollment {
         Self.pairSignatureInput(binding: await channel.binding), handle: device.handle)
       try await channel.send(
         .pair(
-          op: 1, token: token.value, deviceName: deviceName, deviceKey: device.publicKey,
+          op: 1, token: token.value, deviceName: deviceName,
+          deviceKind: deviceKind.flatMap { identity.deviceKind($0) }, deviceKey: device.publicKey,
           signature: signature))
       switch try await channel.receive() {
       case .enrolled(1, .approved, let refresh?):

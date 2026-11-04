@@ -1,0 +1,73 @@
+{
+  "description": "Test-only. The 6-digit device comparison code (ADR 0039, specs/028-server-users-and-rewrite-warmup/contracts/device-invites.md): uint32 big-endian of the first 4 bytes of SHA-256(\"localflow-v1-device-code\" || inviter_key || new_key || pair_binding), mod 1000000, as six digits with leading zeros. Checked by flowd (server/internal/remote/devices_test.go), Rust (crates/flow-core/src/remote/devices.rs) and Swift (DeviceCode tests). Keys are 65-byte X9.63 P-256 points; bindings are 32 bytes. Every byte string is hex.",
+  "label": "localflow-v1-device-code",
+  "vectors": [
+    {
+      "inviter_key": "049ede7b0c60c65b43413d82c649abf711df5721bc081158ce7f8e463e3cbe6812c85fdb66503dcf0c02bee9ae0f122593f3cfc42ece747f9e9ad823c4bf970613",
+      "new_key": "047d17fbf7c1149aac5a630bdefcc72214cf53b95eaddd97605171a96b2353d4b60daf45fd94942644560d7d58e9a2fa67a81b96ad6ae055684e9a655c5868e359",
+      "pair_binding": "67abdd721024f0ff4e0b3f4c2fc13bc5bad42d0b7851d456d88d203d15aaa450",
+      "code": "758846"
+    },
+    {
+      "inviter_key": "042f23ebb1c38db28363df39984086922a0585f3fa7fd315d8925ebd1663548c9f689bdaa9d3c18660d3666e2e507f0bb1a485d2c002b1129f5a0c1a20d6ef51c9",
+      "new_key": "04a4757befada0e90ed6fc98331930d2259570efa9989500300741cda55ff4c89d034463d401b1ad3b5330d48d9a1ad338b2da8a040ca406591c1de70fd9d46630",
+      "pair_binding": "26b25d457597a7b0463f9620f666dd10aa2c4373a505967c7c8d70922a2d6ece",
+      "code": "559978"
+    },
+    {
+      "inviter_key": "04c30185d937bfc78ee82f3629a1a80b7d18bbce03e84b441dda450714c29af2752dab3495d964654e6c7ecac2b94e52346140562da9ff520dd96ff47eb0145e2b",
+      "new_key": "04f95290566d018bfb65d7d31544793c715f52a89f5de0f26641f5f757a2690668105f029ff050fa291b61f3b0fda6095bcfec50324bedb3b2ad0c2b3ca1e80af3",
+      "pair_binding": "9d9f290527a6be626a8f5985b26e19b237b44872b03631811df4416fc1713178",
+      "code": "263419"
+    },
+    {
+      "inviter_key": "04a15683688022f0b72f5d4cbb6c39010caecdbf1f61f82a3ebb1e064629eb56dc6c23ce293423fe0151432f7d8c5e9bcd041586e92180a148915951846e9310e0",
+      "new_key": "041ad0571129d654112581e7ae8df7d0812559ee0ce2a5df6a933e46da330217d419c43603435ace3cfbae8e784e0a05d390d4b97d8d2bf9557db5b7b55b66419b",
+      "pair_binding": "fb5e512425fc9449316ec95969ebe71e2d576dbab833d61e2a5b9330fd70ee02",
+      "code": "126272"
+    },
+    {
+      "inviter_key": "046be798f163f46f9f9bd2f2c1e935516e7e16879e725d6737af3dfd201d86f2ae382bf6e08086ecf734c3bf457d270c81c244912c7883602ba02bf50134c36c21",
+      "new_key": "04ef995c50d51b7060e633b44c05c8949c3f5da003bbc39a5cef58418fe7af0f08069ff94cf5fc20a07d01d3248e2b66a5dd3d8536390a3385a4c2e87235e191e6",
+      "pair_binding": "2594b6a92ebfb1c3312deb7d01c015fb95e9fbe9bd7bc6b527af07813ec7b910",
+      "code": "059749"
+    },
+    {
+      "inviter_key": "047d17fbf7c1149aac5a630bdefcc72214cf53b95eaddd97605171a96b2353d4b60daf45fd94942644560d7d58e9a2fa67a81b96ad6ae055684e9a655c5868e359",
+      "new_key": "049ede7b0c60c65b43413d82c649abf711df5721bc081158ce7f8e463e3cbe6812c85fdb66503dcf0c02bee9ae0f122593f3cfc42ece747f9e9ad823c4bf970613",
+      "pair_binding": "67abdd721024f0ff4e0b3f4c2fc13bc5bad42d0b7851d456d88d203d15aaa450",
+      "code": "837433",
+      "note": "keys of the first vector swapped: a different code"
+    },
+    {
+      "inviter_key": "049ede7b0c60c65b43413d82c649abf711df5721bc081158ce7f8e463e3cbe6812c85fdb66503dcf0c02bee9ae0f122593f3cfc42ece747f9e9ad823c4bf970613",
+      "new_key": "047d17fbf7c1149aac5a630bdefcc72214cf53b95eaddd97605171a96b2353d4b60daf45fd94942644560d7d58e9a2fa67a81b96ad6ae055684e9a655c5868e359",
+      "pair_binding": "6c05854475873db354e11b0ae11d09b64d851c6e3409bc3b057b13df7a3bec96",
+      "code": "017360",
+      "note": "one leading zero"
+    },
+    {
+      "inviter_key": "049ede7b0c60c65b43413d82c649abf711df5721bc081158ce7f8e463e3cbe6812c85fdb66503dcf0c02bee9ae0f122593f3cfc42ece747f9e9ad823c4bf970613",
+      "new_key": "047d17fbf7c1149aac5a630bdefcc72214cf53b95eaddd97605171a96b2353d4b60daf45fd94942644560d7d58e9a2fa67a81b96ad6ae055684e9a655c5868e359",
+      "pair_binding": "63b529a522818b6fb9dbe7d5bd443bf73f4d155f8223f8776deae13ea8c6e48a",
+      "code": "000704",
+      "note": "three leading zeros"
+    },
+    {
+      "inviter_key": "049ede7b0c60c65b43413d82c649abf711df5721bc081158ce7f8e463e3cbe6812c85fdb66503dcf0c02bee9ae0f122593f3cfc42ece747f9e9ad823c4bf970613",
+      "new_key": "047d17fbf7c1149aac5a630bdefcc72214cf53b95eaddd97605171a96b2353d4b60daf45fd94942644560d7d58e9a2fa67a81b96ad6ae055684e9a655c5868e359",
+      "pair_binding": "dbe4d9cc2f2a25163358a1b10e3570211a61a82dc86afd1bb3930c6ef600b9cb",
+      "code": "000004",
+      "note": "five leading zeros"
+    }
+  ],
+  "confirm": {
+    "description": "What device_confirm signs: label || the inviting device's own session channel binding || invite_id as 8 bytes big-endian || new_key || pair_binding (the first vector's).",
+    "label": "localflow-v1-device-confirm",
+    "session_binding": "dc9e7b6ca48cf80102dbae82208cf5aaa02d40878b3db1312b2d6cde1eabf584",
+    "invite_id": 12,
+    "new_key": "047d17fbf7c1149aac5a630bdefcc72214cf53b95eaddd97605171a96b2353d4b60daf45fd94942644560d7d58e9a2fa67a81b96ad6ae055684e9a655c5868e359",
+    "pair_binding": "67abdd721024f0ff4e0b3f4c2fc13bc5bad42d0b7851d456d88d203d15aaa450",
+    "signature_input": "6c6f63616c666c6f772d76312d6465766963652d636f6e6669726ddc9e7b6ca48cf80102dbae82208cf5aaa02d40878b3db1312b2d6cde1eabf584000000000000000c047d17fbf7c1149aac5a630bdefcc72214cf53b95eaddd97605171a96b2353d4b60daf45fd94942644560d7d58e9a2fa67a81b96ad6ae055684e9a655c5868e35967abdd721024f0ff4e0b3f4c2fc13bc5bad42d0b7851d456d88d203d15aaa450"
+  }
+}

@@ -19,12 +19,10 @@ final class PairingModel {
 
   func reload() async {
     async let listed = run(["token", "list", "--json"])
-    async let people = run(["list"])
-    let (list, users) = await (listed, people)
+    async let people = Admin.listUsers(run: run)
+    let (list, (users, listedUsers)) = await (listed, people)
     if list.succeeded { tokens = Admin.parseTokens(list.output) }
-    if users.succeeded {
-      self.users = Admin.parseList(users.output).filter { $0.state == "approved" }
-    }
+    if users.succeeded { self.users = listedUsers.filter { $0.state == "approved" } }
     if !list.succeeded { message = Self.failure("token list", list) }
   }
 

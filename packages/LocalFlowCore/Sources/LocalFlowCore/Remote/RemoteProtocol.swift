@@ -70,6 +70,15 @@ public struct RemoteServerIdentity: Codable, Sendable, Equatable {
   public let suite: String
   public let serverKey: String
   public let fingerprint: String
+  /// Feature 028: what this flowd accepts beyond v1; absent means none. Unknown names are kept
+  /// and ignored.
+  public let features: [String]?
+
+  /// The `device_kind` to put in `pair` or `enroll`: only when this server lists the feature,
+  /// since older servers refuse unknown fields.
+  public func deviceKind(_ kind: RemoteDeviceKind) -> RemoteDeviceKind? {
+    features?.contains("device_kind") == true ? kind : nil
+  }
 
   public enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
@@ -77,7 +86,7 @@ public struct RemoteServerIdentity: Codable, Sendable, Equatable {
     case protocolVersions = "protocol_versions"
     case suite
     case serverKey = "server_key"
-    case fingerprint
+    case fingerprint, features
   }
 
   /// The 32-byte X25519 key, or nil when the response is not a v1 identity.
@@ -98,8 +107,9 @@ public struct RemoteServerIdentity: Codable, Sendable, Equatable {
 
   public init(
     schemaVersion: Int, server: String, protocolVersions: [Int], suite: String, serverKey: String,
-    fingerprint: String
+    fingerprint: String, features: [String]? = nil
   ) {
+    self.features = features
     self.schemaVersion = schemaVersion
     self.server = server
     self.protocolVersions = protocolVersions
@@ -171,13 +181,20 @@ public struct RemoteBoost: Codable, Sendable, Equatable {
   }
 }
 
+/// Feature 028: the `device_kind` of `pair` and `enroll` (contracts/device-kind.md).
+public enum RemoteDeviceKind: String, Sendable, Equatable {
+  case mac, windows, iphone
+}
+
 /// A message the app sends after `ready`.
 public enum RemoteClientMessage: Sendable, Equatable {
   case enroll(
-    op: Int, provider: IdentityProvider, idToken: String, deviceName: String, deviceKey: Data,
-    signature: Data)
+    op: Int, provider: IdentityProvider, idToken: String, deviceName: String,
+    deviceKind: RemoteDeviceKind? = nil, deviceKey: Data, signature: Data)
   /// Feature 027: redeems a pairing token; `signature` is over `localflow-v1-pair` ‖ binding.
-  case pair(op: Int, token: String, deviceName: String, deviceKey: Data, signature: Data)
+  case pair(
+    op: Int, token: String, deviceName: String, deviceKind: RemoteDeviceKind? = nil,
+    deviceKey: Data, signature: Data)
   case refresh(op: Int, refreshToken: String, signature: Data)
   case dictationStart(op: Int, boost: RemoteBoost?)
   case dictationEnd(op: Int, totalSamples: Int)
@@ -199,18 +216,22 @@ public enum RemoteClientMessage: Sendable, Equatable {
   public func encoded() throws -> Data {
     var object: [String: Any] = ["schema_version": RemoteProtocol.schemaVersion]
     switch self {
-    case .enroll(let op, let provider, let idToken, let deviceName, let deviceKey, let signature):
+    case .enroll(
+      let op, let provider, let idToken, let deviceName, let deviceKind, let deviceKey,
+      let signature):
       object.merge([
         "type": "enroll", "op": op, "provider": provider.rawValue, "id_token": idToken,
         "device_name": Self.deviceName(deviceName), "device_key": deviceKey.base64URL,
         "signature": signature.base64URL,
       ]) { $1 }
-    case .pair(let op, let token, let deviceName, let deviceKey, let signature):
+      if let deviceKind { object["device_kind"] = deviceKind.rawValue }
+    case .pair(let op, let token, let deviceName, let deviceKind, let deviceKey, let signature):
       object.merge([
         "type": "pair", "op": op, "pairing_token": token,
         "device_name": Self.deviceName(deviceName), "device_key": deviceKey.base64URL,
         "signature": signature.base64URL,
       ]) { $1 }
+      if let deviceKind { object["device_kind"] = deviceKind.rawValue }
     case .refresh(let op, let refreshToken, let signature):
       object.merge([
         "type": "refresh", "op": op, "refresh_token": refreshToken,
@@ -501,6 +522,11 @@ public enum RemoteServerMessage: Sendable {
         let refresh = object["refresh_token"] as? String
         // A rejected identity gets no refresh token; every other state gets one.
         guard (state == .rejected) == (refresh == nil) else {
+          throw RemoteProtocolError.invalidMessage
+        }
+        // Feature 028: an invite's pending reply carries both fields, and only a pending one.
+        let invite = (object["inviter_device_key"] != nil, object["confirm_by"] != nil)
+        guard invite.0 == invite.1, !invite.0 || state == .pending else {
           throw RemoteProtocolError.invalidMessage
         }
         return .enrolled(op: try op(), state: state, refreshToken: refresh)

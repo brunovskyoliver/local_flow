@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "type": "account_devices_reply",
+  "op": 8,
+  "devices": [
+    {
+      "id": 3,
+      "name": "Oliver's MacBook",
+      "kind": "mac",
+      "state": "approved",
+      "enrolled_at": "2026-11-01T09:00:00Z",
+      "last_seen_at": "2026-11-03T10:09:00Z",
+      "connected": true,
+      "this_device": true
+    },
+    {
+      "id": 9,
+      "name": "Oliver's iPhone",
+      "kind": null,
+      "state": "pending",
+      "enrolled_at": "2026-11-03T10:14:30Z",
+      "last_seen_at": null,
+      "connected": false,
+      "this_device": false,
+      "invite": {
+        "invite_id": 12,
+        "device_key": "BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU",
+        "pair_binding": "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM",
+        "confirm_by": "2026-11-03T10:24:30Z"
+      }
+    }
+  ]
+}

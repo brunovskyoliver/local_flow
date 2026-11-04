@@ -10,7 +10,8 @@ import (
 // PairSignatureLabel prefixes what the device key signs in a pair message.
 const PairSignatureLabel = "localflow-v1-pair"
 
-// pair redeems a one-time token (specs/027-remote-pairing/contracts/pairing.md).
+// pair redeems a one-time token (specs/027-remote-pairing/contracts/pairing.md),
+// or a device invite into a pending device (Feature 028, ADR 0039).
 // The device key's signature over the channel binding comes first; a refused
 // signature touches no token. Every refusal closes the channel, so the hello
 // limit bounds redemption attempts. Only the store audits, and only tokens it
@@ -28,7 +29,7 @@ func (a *accountOps) pair(ctx context.Context, c *Conn, m Message) (Operation, e
 		c.Fail(message.Op, code)
 		return nil, nil
 	}
-	pairing, err := a.cfg.Store.RedeemPairingToken(ctx, message.PairingToken, message.DeviceName, message.DeviceKey, accounts.DeviceKind(message.DeviceKind))
+	pairing, err := a.cfg.Store.Redeem(ctx, message.PairingToken, message.DeviceName, message.DeviceKey, accounts.DeviceKind(message.DeviceKind), c.Binding())
 	if err != nil {
 		code = pairCode(err)
 		c.Fail(message.Op, code)
@@ -36,7 +37,13 @@ func (a *accountOps) pair(ctx context.Context, c *Conn, m Message) (Operation, e
 	}
 	code, device, user = "ok", pairing.DeviceID, pairing.UserID
 	a.reload(ctx)
-	return nil, c.Send(ctx, Enrolled{Op: message.Op, State: "approved", RefreshToken: pairing.Refresh})
+	reply := Enrolled{Op: message.Op, State: string(pairing.State), RefreshToken: pairing.Refresh}
+	// An invite (ADR 0039) leaves the device pending until the inviting device
+	// confirms; the reply carries what the new device needs to show the code.
+	if pairing.InviterKey != nil {
+		reply.InviterDeviceKey, reply.ConfirmBy = pairing.InviterKey, WireTime(pairing.ConfirmBy)
+	}
+	return nil, c.Send(ctx, reply)
 }
 
 func pairCode(err error) ErrorCode {

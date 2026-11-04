@@ -87,7 +87,7 @@ func TestEveryMessageTypeHasFixtures(t *testing.T) {
 			}
 		}
 	}
-	if len(MessageTypes) != 31 {
+	if len(MessageTypes) != 37 {
 		t.Fatalf("%d message types", len(MessageTypes))
 	}
 }

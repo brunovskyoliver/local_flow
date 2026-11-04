@@ -24,6 +24,64 @@ final class AdminTests: XCTestCase {
     XCTAssertTrue(users[1].devices.isEmpty)
   }
 
+  private let listJSON = """
+    {"schema_version":1,"users":[{"id":1,"provider":"token","display":"Oliver","state":"approved",\
+    "created_at":"2026-11-03T09:12:44Z","changed_at":"2026-11-03T09:12:44Z","devices":[\
+    {"id":3,"name":"Oliver's iPhone","kind":"iphone","state":"approved","enrolled_at":"2026-11-03T09:14:02Z",\
+    "last_seen_at":"2026-11-03T10:01:00Z","changed_at":"2026-11-03T09:14:02Z","invited_by":null},\
+    {"id":4,"name":"Old Mac","kind":null,"state":"pending","enrolled_at":"2026-11-03T09:20:00Z",\
+    "last_seen_at":null,"changed_at":"2026-11-03T09:20:00Z","invited_by":null}]},\
+    {"id":2,"provider":"apple","display":null,"state":"pending","created_at":"2026-11-03T11:00:00Z",\
+    "changed_at":"2026-11-03T11:00:00Z","devices":[]}],"truncated":false}
+
+    """
+
+  func testListUsesJSONWithKinds() async {
+    let calls = Calls()
+    let json = listJSON
+    let (result, users) = await Admin.listUsers { arguments in
+      await calls.append(arguments)
+      return ProcessResult(status: 0, output: json, error: "")
+    }
+    let made = await calls.all
+    XCTAssertEqual(made, [["list", "--json"]])
+    XCTAssertTrue(result.succeeded)
+    XCTAssertEqual(users.map(\.id), [1, 2])
+    XCTAssertEqual(users[1].display, "-")
+    XCTAssertEqual(users[0].devices.map(\.kindLabel), ["iPhone", "Unknown"])
+    XCTAssertEqual(users[0].devices[1].lastSeen, "never")
+    XCTAssertEqual(
+      Admin.localTime("2026-11-03T10:01:00Z", in: TimeZone(identifier: "UTC")!),
+      "2026-11-03 10:01")
+  }
+
+  func testListFallsBackToTextWhenFlowdPredatesJSON() async {
+    let calls = Calls()
+    let (result, users) = await Admin.listUsers { arguments in
+      await calls.append(arguments)
+      if arguments.contains("--json") {
+        return ProcessResult(status: 1, output: "", error: "usage: flowd admin --data-dir <dir>\n")
+      }
+      return ProcessResult(
+        status: 0,
+        output: "user 1  apple  -  approved  created 2026-10-02 18:04\n"
+          + "  device 1  MacBook Pro  approved  enrolled 2026-10-02 18:04  last seen never\n",
+        error: "")
+    }
+    let made = await calls.all
+    XCTAssertEqual(made, [["list", "--json"], ["list"]])
+    XCTAssertTrue(result.succeeded)
+    XCTAssertEqual(users[0].devices.map(\.kindLabel), ["Unknown"])
+  }
+
+  func testListRefusesAnotherSchemaVersion() async {
+    let (result, users) = await Admin.listUsers { _ in
+      ProcessResult(status: 0, output: #"{"schema_version":2,"users":[]}"#, error: "")
+    }
+    XCTAssertFalse(result.succeeded)
+    XCTAssertTrue(users.isEmpty)
+  }
+
   func testParsesAudit() {
     let entries = Admin.parseAudit(
       "2026-10-01 14:39  admin:test  approve  device:1  ok\n2026-10-01 14:37  user:1  sign_in  -  ok\nbad line\n"
@@ -118,4 +176,9 @@ final class AdminTests: XCTestCase {
     let found = detector?.features(in: try XCTUnwrap(CIImage(data: tiff)))
     XCTAssertEqual((found?.first as? CIQRCodeFeature)?.messageString, link)
   }
+}
+
+private actor Calls {
+  private(set) var all: [[String]] = []
+  func append(_ arguments: [String]) { all.append(arguments) }
 }

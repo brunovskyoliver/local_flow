@@ -27,6 +27,8 @@ pub struct Core {
     pub analysis: Option<std::sync::Arc<flow_core::analysis::queue::Coordinator>>,
     /// Meetings the launch reconciler picked; `start_analysis` queues them.
     pub analysis_restarts: Vec<String>,
+    /// Server mode, where this Mac can host one and the data folder is the real one (Feature 028).
+    pub server: Option<std::sync::Arc<dyn flow_platform::ServerHost>>,
 }
 impl Global for Core {}
 
@@ -56,7 +58,12 @@ impl Core {
             Err(e) => (None, Some(e)),
         };
         let scenario = std::env::var("LOCALFLOW_SCENARIO").ok();
-        Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![], recorder: None, remote: None, swift_import, analysis: None, analysis_restarts: vec![] }
+        let server = services.server_host(&paths.root, paths.live);
+        if let Some(host) = server.clone() {
+            // An open cut short by a quit is undone, and an update's helpers reach a managed server.
+            std::thread::spawn(move || host.launch());
+        }
+        Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![], recorder: None, remote: None, swift_import, analysis: None, analysis_restarts: vec![], server }
     }
 
     /// The summary queue, made on first use: its paths and channel come from here.
@@ -127,6 +134,7 @@ impl Core {
             remote: None,
             analysis: None,
             analysis_restarts: vec![],
+            server: None,
         }
     }
 

@@ -183,7 +183,7 @@ final class PhoneServerConnection {
     enrollment = RemoteEnrollment(
       preferences: settings, credentials: credentials, keys: keys, signIn: signIn,
       identityFetcher: identityFetcher, transports: transports, clock: clock,
-      deviceName: deviceName)
+      deviceName: deviceName, deviceKind: .iphone)
     addressDraft = settings.serverAddress
     pool = RemoteChannelPool(open: { [weak self] in
       guard let self else { throw RemoteChannelError.closed }

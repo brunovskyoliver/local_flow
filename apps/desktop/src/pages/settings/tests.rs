@@ -1511,3 +1511,85 @@ async fn a_failed_booster_download_says_so_and_can_be_retried(cx: &mut TestAppCo
     click(cx, r.win, "settings.boostDownload");
     assert!(logged(&r, "action downloadBoostModel"), "Download stays as the retry");
 }
+
+// Feature 028 T032, T033: Settings › Server mode.
+
+fn with_server(cx: &mut TestAppContext, win: Win) -> std::sync::Arc<flow_platform::FakeServer> {
+    let server = std::sync::Arc::new(flow_platform::FakeServer::default());
+    let host: std::sync::Arc<dyn flow_platform::ServerHost> = server.clone();
+    cx.update(|cx| cx.global_mut::<Core>().server = Some(host));
+    set(cx, win, |p, _, cx| p.refresh(cx));
+    frame(cx, win);
+    server
+}
+
+fn answer(cx: &mut TestAppContext, win: Win, title: &str, button: &str) {
+    assert_eq!(cx.pending_prompt().map(|p| p.0).as_deref(), Some(title));
+    cx.simulate_prompt_answer(button);
+    frame(cx, win);
+}
+
+#[flow_ui::gpui::test]
+async fn server_mode_is_hidden_where_this_mac_cant_host(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    assert!(!has(cx, r.win, "settings.serverMode"), "Windows, Intel Macs and a redirected data folder");
+}
+
+#[flow_ui::gpui::test]
+async fn server_mode_turns_on_opens_and_off_without_touching_the_client(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    let file = std::env::temp_dir().join(format!("flow-settings-server-{}.json", std::process::id()));
+    std::fs::write(&file, r#"{"dictation.model":"parakeet-v3","rewriteEnabled":true,"setupVersion":1}"#).unwrap();
+    cx.update(|cx| cx.global_mut::<Core>().prefs = flow_core::prefs::Prefs::open(file.clone()));
+    let before = std::fs::read(&file).unwrap();
+    let server = with_server(cx, r.win);
+    assert_saw(&["Server mode", "Off"]);
+
+    click(cx, r.win, "settings.serverMode");
+    answer(cx, r.win, "Turn on server mode?", "Turn On");
+    assert_eq!(server.calls(), ["on"]);
+    assert_saw(&["Running on 127.0.0.1:18090, reachable only through a local proxy or tunnel", "This server listens only on this Mac.", "fp-fake", "Custom address", "No client has connected yet."]);
+
+    click(cx, r.win, "settings.serverModeOpen");
+    answer(cx, r.win, "Open this server to the network?", "Open and Restart");
+    assert_saw(&["The server is open to the network.", "open to all networks", "192.168.1.20:18090"]);
+    assert!(!has(cx, r.win, "settings.serverModeOpen"), "already open");
+
+    type_into(cx, r.win, |p| p.server_custom.clone(), "https://proxy.example.com");
+    click(cx, r.win, "settings.serverModeCustomSave");
+    assert_saw(&["Custom: https://proxy.example.com"]);
+    type_into(cx, r.win, |p| p.server_custom.clone(), "not an address");
+    click(cx, r.win, "settings.serverModeCustomSave");
+    assert_saw(&["That isn't an address clients can use."]);
+
+    click(cx, r.win, "settings.serverMode");
+    answer(cx, r.win, "Turn off server mode?", "Turn Off");
+    assert_eq!(server.calls().last().map(String::as_str), Some("off"));
+    assert!(!has(cx, r.win, "settings.serverModeAddress"));
+    assert_eq!(std::fs::read(&file).unwrap(), before, "dictation and rewrite settings are unchanged");
+    std::fs::remove_file(file).unwrap();
+}
+
+#[flow_ui::gpui::test]
+async fn an_adopted_server_says_so_and_downloads_its_models(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    let server = std::sync::Arc::new(flow_platform::FakeServer::default());
+    {
+        let mut status = server.status.lock().unwrap();
+        status.ownership = flow_core::server_mode::Ownership::Adopted;
+        status.listen = Some("0.0.0.0:8090".into());
+        status.missing = vec![flow_core::server_mode::models_missing("Dictation")];
+    }
+    let host: std::sync::Arc<dyn flow_platform::ServerHost> = server.clone();
+    cx.update(|cx| cx.global_mut::<Core>().server = Some(host));
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    frame(cx, r.win);
+    assert_saw(&["Off. The server already on this Mac stays as it was set up.", "This server was set up outside LocalFlow.", "Not available yet", "Dictation: models not downloaded."]);
+    click(cx, r.win, "settings.serverModeDownload");
+    answer(cx, r.win, "Download models?", "Download");
+    assert_eq!(server.calls(), ["download"]);
+    assert!(!has(cx, r.win, "settings.serverModeMissing"));
+    click(cx, r.win, "settings.serverMode");
+    answer(cx, r.win, "Start the server on this Mac?", "Start");
+    assert!(!has(cx, r.win, "settings.serverModeOpen"), "an adopted server is never rewritten");
+}

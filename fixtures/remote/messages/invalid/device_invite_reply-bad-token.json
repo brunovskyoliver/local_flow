@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "type": "device_invite_reply",
+  "op": 7,
+  "invite_id": 12,
+  "pairing_token": "lfp_short",
+  "expires_at": "2026-11-03T10:20:00Z"
+}

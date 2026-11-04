@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "type": "account_devices",
+  "op": 8,
+  "action": "list",
+  "device_id": 9
+}

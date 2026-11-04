@@ -682,6 +682,31 @@ pub fn next_smaller(input: &PlanInput, model: usize) -> Option<usize> {
     (0..CATALOG.len()).filter(|&i| CATALOG[i].download_bytes < limit && CATALOG[i].fits(input.physical_memory) && disk_fits(input, Some(i))).max_by_key(|&i| CATALOG[i].download_bytes)
 }
 
+// The owner's first token (T031).
+
+/// `flowd admin token create … --json`. Lives in memory for the ready step only: never written to
+/// preferences, a file or a log, and `Debug` leaves the value out.
+#[derive(Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct OwnerToken {
+    pub token: String,
+    #[serde(default)]
+    pub link: String,
+    pub expires_at: String,
+}
+
+impl std::fmt::Debug for OwnerToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OwnerToken").field("expires_at", &self.expires_at).finish_non_exhaustive()
+    }
+}
+
+impl OwnerToken {
+    /// `None` unless the output is the JSON object with a token.
+    pub fn parse(output: &str) -> Option<OwnerToken> {
+        serde_json::from_str::<OwnerToken>(output.trim()).ok().filter(|t| !t.token.is_empty())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1067,5 +1092,16 @@ mod tests {
         assert!(!plan_for(&input, None).fits(), "not even the speech models");
         let unknown = PlanInput { free_disk: None, ..mac(16) };
         assert!(server_model_plan(&unknown).fits(), "an unreadable disk isn't a refusal");
+    }
+
+    #[test]
+    fn owner_token_reads_create_json_and_hides_the_value_from_debug() {
+        let out = r#"{"id":3,"label":"Ana","expires_at":"2026-11-05T10:00:00Z","token":"lfp_secret","link":"localflow://pair?address=http%3A%2F%2F192.168.1.2%3A8090#token=lfp_secret"}"#;
+        let token = OwnerToken::parse(&format!("{out}\n")).unwrap();
+        assert_eq!((token.token.as_str(), token.expires_at.as_str()), ("lfp_secret", "2026-11-05T10:00:00Z"));
+        assert!(token.link.starts_with("localflow://pair?address="));
+        assert!(!format!("{token:?}").contains("lfp_"));
+        assert_eq!(OwnerToken::parse("token 3 Ana expires …\nlfp_x"), None, "text output isn't read");
+        assert_eq!(OwnerToken::parse(r#"{"token":"","expires_at":"x"}"#), None);
     }
 }

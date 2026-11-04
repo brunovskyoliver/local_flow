@@ -1,6 +1,7 @@
 package accounts
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"strings"
@@ -529,5 +530,99 @@ func TestRedeemDeviceKind(t *testing.T) {
 	}
 	if d, _ := store.Device(ctx, pairing.DeviceID); d.Kind != KindUnknown {
 		t.Fatal(d.Kind)
+	}
+}
+
+// Redeeming an invite adds a pending device to the inviting device's user, moves
+// the invite to awaiting_confirm with the binding and a deadline 10 minutes
+// after redemption, and returns the inviting device's key. It is single use.
+func TestRedeemInvite(t *testing.T) {
+	store, clock, _ := openStore(t)
+	mac := inviter(t, store, "owner", 1)
+	value, row := invite(t, store, mac.ID)
+	clock.Advance(3 * time.Minute)
+	pairing := redeemInvite(t, store, value, 2)
+	if pairing.State != DevicePending || pairing.UserID != mac.UserID || !bytes.Equal(pairing.InviterKey, deviceKey(1)) ||
+		!pairing.ConfirmBy.Equal(clock.Now().Add(InviteConfirmWindow)) || !strings.HasPrefix(pairing.Refresh, RefreshPrefix) {
+		t.Fatalf("%+v", pairing)
+	}
+	device, err := store.Device(ctx, pairing.DeviceID)
+	if err != nil || device.State != DevicePending || device.UserID != mac.UserID || device.Kind != KindIPhone {
+		t.Fatalf("%+v %v", device, err)
+	}
+	var binding []byte
+	if err := store.db.QueryRow(`SELECT pair_binding FROM pairing_tokens WHERE id = ?`, row.ID).Scan(&binding); err != nil || !bytes.Equal(binding, testBinding) {
+		t.Fatal(err)
+	}
+	if tokenState(t, store, row.ID) != PairingAwaitingConfirm {
+		t.Fatal("not awaiting confirmation")
+	}
+	// Single use, even for the same key (the reply can't be replayed into a
+	// second pending lineage).
+	for _, key := range []byte{2, 3} {
+		if _, err := store.Redeem(ctx, value, "iPhone", deviceKey(key), "", testBinding); !errors.Is(err, ErrPairingTokenInvalid) {
+			t.Fatal(key, err)
+		}
+	}
+	// Without a binding (the admin path) an invite is not accepted.
+	other, _ := invite(t, store, mac.ID)
+	if _, err := store.RedeemPairingToken(ctx, other, "iPhone", deviceKey(4), ""); !errors.Is(err, ErrPairingTokenInvalid) {
+		t.Fatal(err)
+	}
+	if _, err := store.Redeem(ctx, other, "iPhone", deviceKey(4), "", []byte{1}); !errors.Is(err, ErrInvalidRecord) {
+		t.Fatal(err)
+	}
+}
+
+// Refusals leave the invite unspent: a key on another user is unauthorized, a
+// key already on the same user and a revoked inviter are pairing_token_invalid,
+// and an expired invite is pairing_token_invalid.
+func TestRedeemInviteRefusals(t *testing.T) {
+	store, clock, _ := openStore(t)
+	mac := inviter(t, store, "owner", 1)
+	stranger := inviter(t, store, "stranger", 2)
+	sibling, err := store.AddDevice(ctx, mac.UserID, "Sibling", deviceKey(3), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, row := invite(t, store, mac.ID)
+	if _, err := store.Redeem(ctx, value, "iPhone", deviceKey(2), "", testBinding); !errors.Is(err, ErrUnauthorized) {
+		t.Fatal(err)
+	}
+	if _, err := store.Redeem(ctx, value, "iPhone", deviceKey(3), "", testBinding); !errors.Is(err, ErrPairingTokenInvalid) {
+		t.Fatal(err)
+	}
+	if tokenState(t, store, row.ID) != PairingLive {
+		t.Fatal("refusal spent the invite")
+	}
+	if d, _ := store.Device(ctx, stranger.ID); d.UserID == mac.UserID {
+		t.Fatal("moved between users")
+	}
+	if d, _ := store.Device(ctx, sibling.ID); d.State != DevicePending {
+		t.Fatal("sibling changed")
+	}
+	redeemInvite(t, store, value, 4)
+
+	// Expired before redemption.
+	value, _ = invite(t, store, mac.ID)
+	clock.Advance(InviteLifetime)
+	if _, err := store.Redeem(ctx, value, "iPhone", deviceKey(5), "", testBinding); !errors.Is(err, ErrPairingTokenInvalid) {
+		t.Fatal(err)
+	}
+
+	// The inviter revoked behind the cascade's back (a direct write) is still
+	// refused at redemption.
+	value, row = invite(t, store, mac.ID)
+	if _, err := store.db.Exec(`UPDATE devices SET state = 'revoked' WHERE id = ?`, mac.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Redeem(ctx, value, "iPhone", deviceKey(6), "", testBinding); !errors.Is(err, ErrPairingTokenInvalid) {
+		t.Fatal(err)
+	}
+	if tokenState(t, store, row.ID) != PairingLive {
+		t.Fatal("refusal spent the invite")
+	}
+	if _, err := store.DeviceByKey(ctx, deviceKey(6)); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
 	}
 }

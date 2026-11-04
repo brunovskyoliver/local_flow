@@ -56,3 +56,7 @@ A JWKS with one RS256 key, `kid` `localflow-test-1`, and its 2048-bit RSA privat
 ## `pairing-vectors.json`
 
 The bytes a `pair` message signs (`label` ‖ `binding`, in `signature_input`), one device signature over them, and the token encoding (`lfp_` and base64url of the server key and 32 random bytes). `server/internal/remote/pair_test.go` and `PairingTokenTests` in LocalFlowCore check it. `go test ./internal/remote -run TestPairingVectors -update` (from `server/`) rewrites it. Every byte string is hex, and every key is test-only.
+
+## `device-code.json`
+
+Vectors for the 6-digit code both devices show during a device invite: `SHA-256(label ‖ inviter_key ‖ new_key ‖ pair_binding)`, first 4 bytes big-endian, mod 1,000,000, zero-padded. `confirm` holds the bytes a `device_confirm` signature covers (`label` ‖ `session_binding` ‖ `invite_id` as 8 bytes big-endian ‖ `new_key` ‖ `pair_binding`). `TestDeviceCodeVectors` in `server/internal/remote/devices_test.go` checks it; clients have no test for it yet. Every byte string is hex, and every key is test-only. See `specs/028-server-users-and-rewrite-warmup/contracts/device-invites.md`.

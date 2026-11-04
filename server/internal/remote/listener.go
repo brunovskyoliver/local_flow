@@ -101,6 +101,9 @@ var sessionStarts = map[string]string{
 	"meeting_job":     "meeting_job",
 	"handoff":         "handoff",
 	"usage":           "usage",
+	"device_invite":   "device_invite",
+	"device_confirm":  "device_confirm",
+	"account_devices": "account_devices",
 }
 
 // SessionCapabilities lists the session operations registered in ops, so the

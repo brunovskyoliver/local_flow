@@ -24,6 +24,8 @@ const REMOTE_KEYS: [&str; 6] = ["remote.serverURL", "remote.alternateAddresses",
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Step {
     Introduction,
+    /// This Mac or the server: only where `Snapshot.can_host_server` (research R9).
+    Role,
     Purpose,
     Ai,
     AiDetails,
@@ -31,7 +33,27 @@ pub enum Step {
     Permissions,
     Personalize,
     Test,
+    /// The server path: models, opening to the network, then the addresses and first token.
+    ServerModels,
+    ServerNetwork,
+    ServerReady,
     Complete,
+}
+
+/// What this Mac is for, stored as `setup.role`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Role {
+    Client,
+    Server,
+}
+
+impl Role {
+    pub fn raw(self) -> &'static str {
+        match self {
+            Role::Client => "client",
+            Role::Server => "server",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -318,6 +340,12 @@ pub struct Snapshot {
     pub installing: bool,
     pub runtime_leased: bool,
     pub controls_available: bool,
+    /// Apple Silicon macOS only; never on Windows (FR-006).
+    pub can_host_server: bool,
+    /// The server's speech and meeting models are all on disk.
+    pub server_models_ready: bool,
+    /// The server runs and another device can reach it: opened to the network or a custom address.
+    pub server_reachable: bool,
 }
 
 impl Default for Snapshot {
@@ -346,6 +374,9 @@ impl Default for Snapshot {
             installing: false,
             runtime_leased: false,
             controls_available: true,
+            can_host_server: false,
+            server_models_ready: false,
+            server_reachable: false,
         }
     }
 }
@@ -420,6 +451,7 @@ pub struct Setup {
     pub step: Step,
     pub purpose: Purpose,
     pub ai_mode: AiMode,
+    pub role: Role,
     pub meetings_requested: bool,
     pub test_armed: bool,
     pub test_succeeded: bool,
@@ -430,6 +462,8 @@ pub struct Setup {
     server_purpose: Option<Purpose>,
     meetings_automatic: bool,
     downloads_started: bool,
+    /// The role step is on the path: set when the introduction is passed.
+    host_server: bool,
 }
 
 impl Setup {
@@ -438,6 +472,7 @@ impl Setup {
             step: Step::Introduction,
             purpose: Purpose::stored(prefs),
             ai_mode: AiMode::Local,
+            role: Role::Client,
             meetings_requested: false,
             test_armed: false,
             test_succeeded: false,
@@ -448,6 +483,7 @@ impl Setup {
             server_purpose: None,
             meetings_automatic: false,
             downloads_started: false,
+            host_server: false,
         }
     }
 
@@ -483,7 +519,14 @@ impl Setup {
     }
 
     pub fn path(&self) -> Vec<Step> {
-        let mut steps = vec![Step::Introduction, Step::Purpose, Step::Ai];
+        if self.host_server && self.role == Role::Server {
+            return vec![Step::Introduction, Step::Role, Step::ServerModels, Step::ServerNetwork, Step::ServerReady];
+        }
+        let mut steps = vec![Step::Introduction];
+        if self.host_server {
+            steps.push(Step::Role);
+        }
+        steps.extend([Step::Purpose, Step::Ai]);
         if self.ai_mode != AiMode::Off {
             steps.push(Step::AiDetails);
         }
@@ -511,7 +554,28 @@ impl Setup {
 
     pub fn advance(&mut self, s: &Snapshot, prefs: &mut Prefs) {
         match self.step {
-            Step::Introduction => self.step = Step::Purpose,
+            Step::Introduction => {
+                self.host_server = s.can_host_server;
+                if !self.host_server {
+                    self.role = Role::Client;
+                }
+                self.step = if self.host_server { Step::Role } else { Step::Purpose };
+            }
+            Step::Role => {
+                prefs.set(crate::server_mode::ROLE_KEY, self.role.raw());
+                self.step = if self.role == Role::Server { Step::ServerModels } else { Step::Purpose };
+            }
+            Step::ServerModels => {
+                if s.server_models_ready {
+                    self.step = Step::ServerNetwork;
+                }
+            }
+            Step::ServerNetwork => {
+                if s.server_reachable {
+                    self.step = Step::ServerReady;
+                }
+            }
+            Step::ServerReady => self.finish(s, prefs),
             Step::Purpose => {
                 prefs.set("setup.purpose", self.purpose.raw());
                 self.abandon_if_changed(prefs);
@@ -1835,5 +1899,99 @@ mod tests {
         assert_eq!((Shortcut::right_control().kind, Shortcut::right_control().modifiers, Shortcut::right_control().device_modifiers), (ShortcutKind::ModifierOnly, CONTROL, Some(0x2000)));
         assert_eq!((Shortcut::right_option().kind, Shortcut::right_option().modifiers, Shortcut::right_option().device_modifiers), (ShortcutKind::ModifierOnly, OPTION, Some(0x40)));
         assert_eq!(Shortcut::fn_globe(), Shortcut::default());
+    }
+
+    // The role step (028 T028, research R9)
+
+    fn walk(setup: &mut Setup, s: &Snapshot, prefs: &mut Prefs) -> Vec<Step> {
+        let mut seen = vec![setup.step];
+        while setup.step != Step::Complete && seen.len() < 20 {
+            setup.advance(s, prefs);
+            seen.push(setup.step);
+        }
+        seen
+    }
+
+    fn client_path() -> Vec<Step> {
+        vec![Step::Introduction, Step::Purpose, Step::Ai, Step::AiDetails, Step::Downloads, Step::Permissions, Step::Personalize, Step::Test]
+    }
+
+    #[test]
+    fn the_role_step_shows_only_where_this_mac_can_host() {
+        let mut prefs = Prefs::memory();
+        let mut setup = Setup::new(&prefs);
+        setup.advance(&Snapshot { can_host_server: false, ..ready() }, &mut prefs);
+        assert_eq!(setup.step, Step::Purpose, "Windows and Intel Macs never see it");
+        assert_eq!(setup.path(), client_path());
+        assert!(!prefs.contains(crate::server_mode::ROLE_KEY));
+
+        let mut setup = Setup::new(&prefs);
+        setup.advance(&Snapshot { can_host_server: true, ..ready() }, &mut prefs);
+        assert_eq!(setup.step, Step::Role);
+        let mut with_role = client_path();
+        with_role.insert(1, Step::Role);
+        assert_eq!(setup.path(), with_role, "This Mac is the default");
+    }
+
+    #[test]
+    fn the_client_role_continues_on_the_existing_path() {
+        let mut prefs = Prefs::memory();
+        let mut setup = Setup::new(&prefs);
+        let s = Snapshot { can_host_server: true, ..ready() };
+        setup.advance(&s, &mut prefs);
+        setup.advance(&s, &mut prefs);
+        assert_eq!((setup.step, prefs.string("setup.role").as_deref()), (Step::Purpose, Some("client")));
+        setup.advance(&s, &mut prefs);
+        setup.advance(&s, &mut prefs);
+        assert_eq!(setup.step, Step::AiDetails);
+    }
+
+    #[test]
+    fn the_server_role_walks_models_network_and_ready() {
+        let mut prefs = Prefs::memory();
+        let mut setup = Setup::new(&prefs);
+        let waiting = Snapshot { can_host_server: true, ..Default::default() };
+        setup.advance(&waiting, &mut prefs);
+        setup.role = Role::Server;
+        assert_eq!(setup.path(), [Step::Introduction, Step::Role, Step::ServerModels, Step::ServerNetwork, Step::ServerReady]);
+        setup.advance(&waiting, &mut prefs);
+        assert_eq!((setup.step, prefs.string("setup.role").as_deref()), (Step::ServerModels, Some("server")));
+        setup.advance(&waiting, &mut prefs);
+        assert_eq!(setup.step, Step::ServerModels, "waits for the models");
+        let models = Snapshot { server_models_ready: true, ..waiting.clone() };
+        setup.advance(&models, &mut prefs);
+        assert_eq!(setup.step, Step::ServerNetwork);
+        setup.advance(&models, &mut prefs);
+        assert_eq!(setup.step, Step::ServerNetwork, "nothing reachable until the owner opens it");
+        let reachable = Snapshot { server_reachable: true, ..models };
+        assert_eq!(walk(&mut setup, &reachable, &mut prefs), [Step::ServerNetwork, Step::ServerReady, Step::Complete]);
+        assert!(is_complete(&prefs));
+        assert!(setup.effects.is_empty(), "no notetaker, downloads or server pairing from the client path");
+    }
+
+    #[test]
+    fn going_back_from_the_server_path_restores_the_client_path() {
+        let mut prefs = Prefs::memory();
+        let mut setup = Setup::new(&prefs);
+        let s = Snapshot { can_host_server: true, server_models_ready: true, ..ready() };
+        setup.advance(&s, &mut prefs);
+        setup.role = Role::Server;
+        setup.advance(&s, &mut prefs);
+        setup.advance(&s, &mut prefs);
+        assert_eq!(setup.step, Step::ServerNetwork);
+        setup.back();
+        setup.back();
+        assert_eq!(setup.step, Step::Role);
+        setup.back();
+        assert_eq!(setup.step, Step::Introduction);
+        setup.advance(&s, &mut prefs);
+        setup.role = Role::Client;
+        setup.advance(&s, &mut prefs);
+        assert_eq!((setup.step, prefs.string("setup.role").as_deref()), (Step::Purpose, Some("client")));
+        let mut with_role = client_path();
+        with_role.insert(1, Step::Role);
+        assert_eq!(setup.path(), with_role);
+        setup.back();
+        assert_eq!(setup.step, Step::Role);
     }
 }

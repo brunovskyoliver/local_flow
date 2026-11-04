@@ -104,6 +104,8 @@ The ID token's `nonce` claim must equal `base64url(binding)` for Google and `hex
 
 Feature 027 adds a `pair` message on the same hello purpose, redeeming a one-time token for the same `enrolled` reply. The message, its signature and its refusals are in [`specs/027-remote-pairing/contracts/pairing.md`](../../027-remote-pairing/contracts/pairing.md).
 
+Feature 028 adds three session operations, `device_invite`, `device_confirm` and `account_devices`, and lets `pair` redeem a device invite to a `pending` `enrolled` reply that carries `inviter_device_key` and `confirm_by`. Servers that offer them list `device_invite` in the identity `features`. The messages, the confirmation code and the refusals are in [`specs/028-server-users-and-rewrite-warmup/contracts/device-invites.md`](../../028-server-users-and-rewrite-warmup/contracts/device-invites.md).
+
 ### Refresh (`purpose: refresh`)
 
 ```json

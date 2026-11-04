@@ -226,7 +226,7 @@ final class AppServices {
         presentationAnchor: { NSApp.keyWindow ?? NSApp.windows.first ?? NSWindow() }),
       identityFetcher: URLSessionIdentityFetcher(),
       transports: URLSessionRemoteTransportOpener(),
-      deviceName: Host.current().localizedName ?? "Mac")
+      deviceName: Host.current().localizedName ?? "Mac", deviceKind: .mac)
     remoteEnrollmentInstance = enrollment
     return enrollment
   }

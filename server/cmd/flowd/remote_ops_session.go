@@ -17,7 +17,8 @@ import (
 
 // sessionOperations starts the speech and meeting worker supervisors and the
 // window scheduler and returns the session channel's operations (dictation,
-// rewrite, analysis, live_window and meeting_job), the meeting worker's live
+// rewrite, analysis, live_window, meeting_job and, with a store, the device
+// invite operations), the meeting worker's live
 // capabilities and a function that stops what they own. The workers run as
 // `<--speech-worker> serve --models <--speech-models>` and
 // `<--speech-worker> meeting --models <--meeting-models> --helper
@@ -105,6 +106,19 @@ func sessionOperations(ctx context.Context, r remoteConfig, store *accounts.Stor
 	if r.analysis != nil {
 		analyzer := remote.NewAnalyzer(remote.AnalysisConfig{Runner: r.analysis, Logger: logger})
 		operations["analysis"] = analyzer.Start
+	}
+	// Device invites and "Your devices" (Feature 028, ADR 0039) need the
+	// account store; the tests that build operations without one get none.
+	if store != nil {
+		for name, start := range remote.DeviceOperations(remote.DevicesConfig{
+			Store: store, ServerKey: r.serverKey, Logger: logger,
+			Reload: func(ctx context.Context) error {
+				_, err := watcher.Poll(ctx)
+				return err
+			},
+		}) {
+			operations[name] = start
+		}
 	}
 	var once sync.Once
 	stop := func() {

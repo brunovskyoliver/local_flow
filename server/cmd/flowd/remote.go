@@ -51,6 +51,9 @@ type remoteConfig struct {
 	// --analysis: the channel's analysis operation shares its slots and gate
 	// and runs on the server's own backend (Feature 018 R8, R9). Not a flag.
 	analysis *analysis.Handler
+	// serverKey is the identity's public key, set by startRemote: device
+	// invites are pairing tokens that carry it. Not a flag.
+	serverKey []byte
 }
 
 // validate checks the remote flags that need no file system or Keychain
@@ -194,6 +197,7 @@ func startRemote(ctx context.Context, r remoteConfig, logger *log.Logger) (*remo
 		store.Close()
 		return nil, err
 	}
+	r.serverKey = identity.PublicKey()
 	operations, meetingCapabilities, stopOperations, err := remoteOperations(ctx, r, store, s.watcher, logger)
 	if err != nil {
 		s.watcher.Close()
@@ -246,12 +250,39 @@ func startRemote(ctx context.Context, r remoteConfig, logger *log.Logger) (*remo
 	go func() {
 		defer close(s.polling)
 		defer ticker.Stop()
-		s.watcher.Run(watchCtx, ticker.C)
+		watchAccounts(watchCtx, s.watcher, store, ticker.C, time.Now, logger)
 	}()
 	s.server = &http.Server{Handler: s.listener, ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 16384,
 		BaseContext: func(net.Listener) context.Context { return ctx }}
 	logger.Printf("remote listening=%s", s.net.Addr())
 	return s, nil
+}
+
+// InviteSweepInterval is how often the accounts loop sweeps invites past
+// their confirmation deadline (ADR 0039).
+const InviteSweepInterval = time.Minute
+
+// watchAccounts is the accounts watcher loop: every tick polls the snapshot,
+// and at most once per InviteSweepInterval by now it first sweeps expired
+// invites, whose deleted pending devices the same poll then sees. The first
+// tick sweeps.
+func watchAccounts(ctx context.Context, watcher *accounts.Watcher, store *accounts.Store, ticks <-chan time.Time,
+	now func() time.Time, logger *log.Logger) {
+	var swept time.Time
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+			if t := now(); swept.IsZero() || t.Sub(swept) >= InviteSweepInterval {
+				swept = t
+				if err := store.ExpireInvites(ctx); err != nil && ctx.Err() == nil {
+					logger.Printf("remote event=invite_sweep_failed")
+				}
+			}
+			_, _ = watcher.Poll(ctx)
+		}
+	}
 }
 
 // shutdown closes every channel, then the listener, watcher and store.

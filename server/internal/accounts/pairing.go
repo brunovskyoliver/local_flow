@@ -54,12 +54,17 @@ type PairingToken struct {
 }
 
 // Pairing is the result of a redemption. The caller sends Refresh to the client.
+// An invite leaves the device pending (State) and carries the inviting
+// device's key and the confirmation deadline.
 type Pairing struct {
 	TokenID          int64
 	UserID           int64
 	DeviceID         int64
+	State            DeviceState
 	Refresh          string
 	RefreshExpiresAt time.Time
+	InviterKey       []byte
+	ConfirmBy        time.Time
 }
 
 // NewPairingToken returns a fresh token for the server's 32-byte public key, and
@@ -213,8 +218,20 @@ func (s *Store) RevokePairingToken(ctx context.Context, id int64, actor string) 
 // kind (may be unknown) is stored on a new device and fills an unknown kind on
 // a device the key already has; a stored kind never changes.
 func (s *Store) RedeemPairingToken(ctx context.Context, token, deviceName string, deviceKey []byte, kind DeviceKind) (Pairing, error) {
+	return s.Redeem(ctx, token, deviceName, deviceKey, kind, nil)
+}
+
+// Redeem is RedeemPairingToken for the pair operation, which also passes the
+// 32-byte binding of the channel that carried pair. An invite (ADR 0039)
+// needs it: redeeming one adds the key as a pending device of the inviting
+// device's user, moves the invite to awaiting_confirm with the binding and a
+// deadline 10 minutes away, and returns the inviting device's key. Its
+// refusals leave the invite unspent: a key enrolled to another user is
+// ErrUnauthorized; a key already on the same user, an invite not live, or an
+// inviting device or user no longer approved is ErrPairingTokenInvalid.
+func (s *Store) Redeem(ctx context.Context, token, deviceName string, deviceKey []byte, kind DeviceKind, binding []byte) (Pairing, error) {
 	if len(deviceName) == 0 || len(deviceName) > maxNameBytes || hasControl(deviceName) || len(deviceKey) != publicKeyBytes || deviceKey[0] != 0x04 ||
-		!kind.Valid() {
+		!kind.Valid() || (binding != nil && len(binding) != 32) {
 		return Pairing{}, ErrInvalidRecord
 	}
 	hash := HashToken(token)
@@ -241,11 +258,11 @@ func (s *Store) RedeemPairingToken(ctx context.Context, token, deviceName string
 	revoked := func(id int64) (Pairing, error) { return refuse(id, "revoked", ErrRevoked) }
 
 	var id, expires int64
-	var label, state string
-	var userID, deviceID sql.NullInt64
+	var label, state, purpose string
+	var userID, deviceID, inviter sql.NullInt64
 	var boundKey []byte
-	err = tx.QueryRowContext(ctx, `SELECT id, label, state, user_id, device_id, device_key, expires_at FROM pairing_tokens WHERE hash = ?`, hash[:]).
-		Scan(&id, &label, &state, &userID, &deviceID, &boundKey, &expires)
+	err = tx.QueryRowContext(ctx, `SELECT id, label, state, user_id, device_id, device_key, expires_at, purpose, inviter_device_id FROM pairing_tokens WHERE hash = ?`, hash[:]).
+		Scan(&id, &label, &state, &userID, &deviceID, &boundKey, &expires, &purpose, &inviter)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return invalid(0)
@@ -253,6 +270,11 @@ func (s *Store) RedeemPairingToken(ctx context.Context, token, deviceName string
 		return Pairing{}, err
 	case now >= expires, PairingState(state) == PairingRevoked:
 		return invalid(id)
+	case purpose == "invite":
+		if PairingState(state) != PairingLive || binding == nil {
+			return invalid(id)
+		}
+		return s.redeemInvite(ctx, tx, now, id, userID.Int64, inviter.Int64, deviceName, deviceKey, kind, binding, refuse)
 	}
 
 	var device Device
@@ -340,5 +362,56 @@ func (s *Store) RedeemPairingToken(ctx context.Context, token, deviceName string
 	if err := tx.Commit(); err != nil {
 		return Pairing{}, err
 	}
-	return Pairing{TokenID: id, UserID: device.UserID, DeviceID: device.ID, Refresh: refresh, RefreshExpiresAt: refreshExpires}, nil
+	return Pairing{TokenID: id, UserID: device.UserID, DeviceID: device.ID, State: DeviceApproved, Refresh: refresh, RefreshExpiresAt: refreshExpires}, nil
+}
+
+// redeemInvite is Redeem's invite path, inside its transaction; refuse writes
+// the pair audit row and commits.
+func (s *Store) redeemInvite(ctx context.Context, tx *sql.Tx, now, id, userID, inviterID int64, deviceName string, deviceKey []byte,
+	kind DeviceKind, binding []byte, refuse func(int64, string, error) (Pairing, error)) (Pairing, error) {
+	invalid := func() (Pairing, error) { return refuse(id, "pairing_token_invalid", ErrPairingTokenInvalid) }
+	var inviterKey []byte
+	var inviterState, userState string
+	if err := tx.QueryRowContext(ctx, `SELECT d.public_key, d.state, u.state FROM devices d JOIN users u ON u.id = d.user_id WHERE d.id = ? AND d.user_id = ?`,
+		inviterID, userID).Scan(&inviterKey, &inviterState, &userState); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return invalid()
+		}
+		return Pairing{}, err
+	}
+	if DeviceState(inviterState) != DeviceApproved || UserState(userState) != UserApproved {
+		return invalid()
+	}
+	var owner int64
+	switch err := tx.QueryRowContext(ctx, `SELECT user_id FROM devices WHERE public_key = ?`, deviceKey).Scan(&owner); {
+	case err == nil && owner != userID:
+		return refuse(id, "unauthorized", ErrUnauthorized)
+	case err == nil:
+		return invalid()
+	case !errors.Is(err, sql.ErrNoRows):
+		return Pairing{}, err
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO devices (user_id, name, kind, public_key, state, enrolled_at, last_seen_at, changed_at) VALUES (?, ?, ?, ?, 'pending', ?, 0, ?)`,
+		userID, deviceName, kind.value(), deviceKey, now, now)
+	if err != nil {
+		return Pairing{}, err
+	}
+	deviceID, _ := result.LastInsertId()
+	confirmBy := now + InviteConfirmWindow.Milliseconds()
+	if _, err := tx.ExecContext(ctx, `UPDATE pairing_tokens SET state = 'awaiting_confirm', changed_at = ?, device_id = ?, device_key = ?, pair_binding = ?, confirm_by = ? WHERE id = ?`,
+		now, deviceID, deviceKey, binding, confirmBy, id); err != nil {
+		return Pairing{}, err
+	}
+	refresh, refreshExpires, err := s.issueRefresh(ctx, tx, deviceID)
+	if err != nil {
+		return Pairing{}, err
+	}
+	if err := insertAudit(ctx, tx, now, AuditEntry{Actor: DeviceActor(deviceID), Action: "pair", Target: TokenTarget(id), Outcome: "ok"}); err != nil {
+		return Pairing{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Pairing{}, err
+	}
+	return Pairing{TokenID: id, UserID: userID, DeviceID: deviceID, State: DevicePending, Refresh: refresh, RefreshExpiresAt: refreshExpires,
+		InviterKey: inviterKey, ConfirmBy: time.UnixMilli(confirmBy)}, nil
 }

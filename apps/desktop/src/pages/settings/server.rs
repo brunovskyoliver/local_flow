@@ -75,7 +75,10 @@ impl SettingsPage {
             }
             body = body.child(hairline(cx)).child(div().id("settings.serverAdvancedRow").test_support().w_full().py(px(10.)).child(advanced));
         }
-        body
+        match self.server_mode_section(window, cx) {
+            Some(server_mode) => v_flex().w_full().gap(px(12.)).child(body).child(server_mode),
+            None => body,
+        }
     }
 
     fn advanced(&self, r: &core::Routing, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {

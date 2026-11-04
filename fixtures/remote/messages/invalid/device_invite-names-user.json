@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "type": "device_invite",
+  "op": 7,
+  "user_id": 2
+}

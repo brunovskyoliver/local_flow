@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -205,8 +206,12 @@ type Identity struct {
 // FeatureDeviceKind in Identity.Features: pair and enroll accept device_kind.
 const FeatureDeviceKind = "device_kind"
 
+// FeatureDeviceInvite in Identity.Features: the device_invite, device_confirm
+// and account_devices session ops exist and pair redeems invites (ADR 0039).
+const FeatureDeviceInvite = "device_invite"
+
 // ServerFeatures is what this flowd lists in its identity.
-var ServerFeatures = []string{FeatureDeviceKind}
+var ServerFeatures = []string{FeatureDeviceKind, FeatureDeviceInvite}
 
 // DeviceKind is the optional device_kind of pair and enroll: mac, windows or
 // iphone. Absent is empty; a present empty string is refused when decoding, so
@@ -256,7 +261,8 @@ var MessageTypes = []string{
 	"window_result", "progress", "dictation_end", "dictation_cancel", "dictation_complete",
 	"cancelled", "rewrite", "rewrite_event", "analysis_part", "analysis", "analysis_event_part",
 	"analysis_event", "live_window", "live_result", "meeting_job", "meeting_progress", "meeting_result",
-	"meeting_cancel", "handoff", "handoff_reply", "usage", "usage_reply", "error",
+	"meeting_cancel", "handoff", "handoff_reply", "usage", "usage_reply", "device_invite", "device_invite_reply",
+	"device_confirm", "device_confirm_reply", "account_devices", "account_devices_reply", "error",
 }
 
 // Ready carries Capabilities on session channels (Feature 018); a ready
@@ -310,10 +316,14 @@ type Pair struct {
 	Signature    Base64     `json:"signature"`
 }
 
+// Enrolled answers enroll and pair. InviterDeviceKey and ConfirmBy are set
+// together, only on a pending reply to an invite redemption (Feature 028).
 type Enrolled struct {
-	Op           int64  `json:"op"`
-	State        string `json:"state"`
-	RefreshToken string `json:"refresh_token,omitempty"`
+	Op               int64  `json:"op"`
+	State            string `json:"state"`
+	RefreshToken     string `json:"refresh_token,omitempty"`
+	InviterDeviceKey Base64 `json:"inviter_device_key,omitempty"`
+	ConfirmBy        string `json:"confirm_by,omitempty"`
 }
 
 type Refresh struct {
@@ -608,6 +618,84 @@ type HandoffMeeting struct {
 	Released      bool   `json:"released,omitempty"`       // the originating device has its result
 }
 
+// Device invites and "Your devices" (Feature 028,
+// specs/028-server-users-and-rewrite-warmup/contracts/device-invites.md). Times
+// are RFC 3339 UTC with second precision, as WireTime writes them.
+type DeviceInvite struct {
+	Op int64 `json:"op"`
+}
+
+type DeviceInviteReply struct {
+	Op           int64  `json:"op"`
+	InviteID     int64  `json:"invite_id"`
+	PairingToken string `json:"pairing_token"`
+	ExpiresAt    string `json:"expires_at"`
+}
+
+// DeviceConfirm's signature is by the inviting device's key over
+// DeviceConfirmParts; a decline carries the same signature.
+type DeviceConfirm struct {
+	Op        int64  `json:"op"`
+	InviteID  int64  `json:"invite_id"`
+	Accept    bool   `json:"accept"`
+	Signature Base64 `json:"signature"`
+}
+
+// DeviceConfirmReply's State is approved or removed.
+type DeviceConfirmReply struct {
+	Op    int64  `json:"op"`
+	State string `json:"state"`
+}
+
+// AccountDevices lists (action list) or revokes (action revoke, DeviceID) the
+// caller's own user's devices.
+type AccountDevices struct {
+	Op       int64  `json:"op"`
+	Action   string `json:"action"`
+	DeviceID int64  `json:"device_id,omitempty"`
+}
+
+type AccountDevicesReply struct {
+	Op      int64           `json:"op"`
+	Devices []AccountDevice `json:"devices"`
+}
+
+// AccountDevice is one of the caller's user's devices. Kind and LastSeenAt are
+// null when unknown or never seen; Invite only on a pending device that
+// redeemed an invite the caller created.
+type AccountDevice struct {
+	ID         int64          `json:"id"`
+	Name       string         `json:"name"`
+	Kind       *string        `json:"kind" remote:"nullable"`
+	State      string         `json:"state"`
+	EnrolledAt string         `json:"enrolled_at"`
+	LastSeenAt *string        `json:"last_seen_at" remote:"nullable"`
+	Connected  bool           `json:"connected"`
+	ThisDevice bool           `json:"this_device"`
+	Invite     *PendingInvite `json:"invite,omitempty"`
+}
+
+type PendingInvite struct {
+	InviteID    int64  `json:"invite_id"`
+	DeviceKey   Base64 `json:"device_key"`
+	PairBinding Base64 `json:"pair_binding"`
+	ConfirmBy   string `json:"confirm_by"`
+}
+
+// MaxAccountDevices bounds AccountDevicesReply.Devices.
+const MaxAccountDevices = 100
+
+// wireTimeLayout is RFC 3339 in UTC with second precision.
+const wireTimeLayout = "2006-01-02T15:04:05Z"
+
+// WireTime formats t as the device invite messages carry times.
+func WireTime(t time.Time) string { return t.UTC().Format(wireTimeLayout) }
+
+func validWireTime(s string) bool {
+	_, err := time.Parse(wireTimeLayout, s)
+	return err == nil && len(s) == len(wireTimeLayout)
+}
+
 // ErrorMessage is the error control message. Op is 0 (absent) for hello errors.
 type ErrorMessage struct {
 	Op      int64     `json:"op,omitempty"`
@@ -620,99 +708,117 @@ func NewError(op int64, code ErrorCode) ErrorMessage {
 	return ErrorMessage{Op: op, Code: code, Message: code.Message()}
 }
 
-func (Ready) MessageType() string             { return "ready" }
-func (Enroll) MessageType() string            { return "enroll" }
-func (Pair) MessageType() string              { return "pair" }
-func (Enrolled) MessageType() string          { return "enrolled" }
-func (Refresh) MessageType() string           { return "refresh" }
-func (Tokens) MessageType() string            { return "tokens" }
-func (DictationStart) MessageType() string    { return "dictation_start" }
-func (DictationAccepted) MessageType() string { return "dictation_accepted" }
-func (WindowResult) MessageType() string      { return "window_result" }
-func (Progress) MessageType() string          { return "progress" }
-func (DictationEnd) MessageType() string      { return "dictation_end" }
-func (DictationCancel) MessageType() string   { return "dictation_cancel" }
-func (DictationComplete) MessageType() string { return "dictation_complete" }
-func (Cancelled) MessageType() string         { return "cancelled" }
-func (Rewrite) MessageType() string           { return "rewrite" }
-func (RewriteEvent) MessageType() string      { return "rewrite_event" }
-func (AnalysisPart) MessageType() string      { return "analysis_part" }
-func (Analysis) MessageType() string          { return "analysis" }
-func (AnalysisEventPart) MessageType() string { return "analysis_event_part" }
-func (AnalysisEvent) MessageType() string     { return "analysis_event" }
-func (LiveWindow) MessageType() string        { return "live_window" }
-func (LiveResult) MessageType() string        { return "live_result" }
-func (MeetingJob) MessageType() string        { return "meeting_job" }
-func (MeetingProgress) MessageType() string   { return "meeting_progress" }
-func (MeetingResult) MessageType() string     { return "meeting_result" }
-func (MeetingCancel) MessageType() string     { return "meeting_cancel" }
-func (Handoff) MessageType() string           { return "handoff" }
-func (HandoffReply) MessageType() string      { return "handoff_reply" }
-func (ErrorMessage) MessageType() string      { return "error" }
+func (Ready) MessageType() string               { return "ready" }
+func (Enroll) MessageType() string              { return "enroll" }
+func (Pair) MessageType() string                { return "pair" }
+func (Enrolled) MessageType() string            { return "enrolled" }
+func (Refresh) MessageType() string             { return "refresh" }
+func (Tokens) MessageType() string              { return "tokens" }
+func (DictationStart) MessageType() string      { return "dictation_start" }
+func (DictationAccepted) MessageType() string   { return "dictation_accepted" }
+func (WindowResult) MessageType() string        { return "window_result" }
+func (Progress) MessageType() string            { return "progress" }
+func (DictationEnd) MessageType() string        { return "dictation_end" }
+func (DictationCancel) MessageType() string     { return "dictation_cancel" }
+func (DictationComplete) MessageType() string   { return "dictation_complete" }
+func (Cancelled) MessageType() string           { return "cancelled" }
+func (Rewrite) MessageType() string             { return "rewrite" }
+func (RewriteEvent) MessageType() string        { return "rewrite_event" }
+func (AnalysisPart) MessageType() string        { return "analysis_part" }
+func (Analysis) MessageType() string            { return "analysis" }
+func (AnalysisEventPart) MessageType() string   { return "analysis_event_part" }
+func (AnalysisEvent) MessageType() string       { return "analysis_event" }
+func (LiveWindow) MessageType() string          { return "live_window" }
+func (LiveResult) MessageType() string          { return "live_result" }
+func (MeetingJob) MessageType() string          { return "meeting_job" }
+func (MeetingProgress) MessageType() string     { return "meeting_progress" }
+func (MeetingResult) MessageType() string       { return "meeting_result" }
+func (MeetingCancel) MessageType() string       { return "meeting_cancel" }
+func (Handoff) MessageType() string             { return "handoff" }
+func (HandoffReply) MessageType() string        { return "handoff_reply" }
+func (ErrorMessage) MessageType() string        { return "error" }
+func (DeviceInvite) MessageType() string        { return "device_invite" }
+func (DeviceInviteReply) MessageType() string   { return "device_invite_reply" }
+func (DeviceConfirm) MessageType() string       { return "device_confirm" }
+func (DeviceConfirmReply) MessageType() string  { return "device_confirm_reply" }
+func (AccountDevices) MessageType() string      { return "account_devices" }
+func (AccountDevicesReply) MessageType() string { return "account_devices_reply" }
 
-func (m Enroll) OpNumber() int64            { return m.Op }
-func (m Pair) OpNumber() int64              { return m.Op }
-func (m Enrolled) OpNumber() int64          { return m.Op }
-func (m Refresh) OpNumber() int64           { return m.Op }
-func (m Tokens) OpNumber() int64            { return m.Op }
-func (m DictationStart) OpNumber() int64    { return m.Op }
-func (m DictationAccepted) OpNumber() int64 { return m.Op }
-func (m WindowResult) OpNumber() int64      { return m.Op }
-func (m Progress) OpNumber() int64          { return m.Op }
-func (m DictationEnd) OpNumber() int64      { return m.Op }
-func (m DictationCancel) OpNumber() int64   { return m.Op }
-func (m DictationComplete) OpNumber() int64 { return m.Op }
-func (m Cancelled) OpNumber() int64         { return m.Op }
-func (m Rewrite) OpNumber() int64           { return m.Op }
-func (m RewriteEvent) OpNumber() int64      { return m.Op }
-func (m AnalysisPart) OpNumber() int64      { return m.Op }
-func (m Analysis) OpNumber() int64          { return m.Op }
-func (m AnalysisEventPart) OpNumber() int64 { return m.Op }
-func (m AnalysisEvent) OpNumber() int64     { return m.Op }
-func (m LiveWindow) OpNumber() int64        { return m.Op }
-func (m LiveResult) OpNumber() int64        { return m.Op }
-func (m MeetingJob) OpNumber() int64        { return m.Op }
-func (m MeetingProgress) OpNumber() int64   { return m.Op }
-func (m MeetingResult) OpNumber() int64     { return m.Op }
-func (m MeetingCancel) OpNumber() int64     { return m.Op }
-func (m Handoff) OpNumber() int64           { return m.Op }
-func (m HandoffReply) OpNumber() int64      { return m.Op }
-func (m ErrorMessage) OpNumber() int64      { return m.Op }
+func (m Enroll) OpNumber() int64              { return m.Op }
+func (m Pair) OpNumber() int64                { return m.Op }
+func (m Enrolled) OpNumber() int64            { return m.Op }
+func (m Refresh) OpNumber() int64             { return m.Op }
+func (m Tokens) OpNumber() int64              { return m.Op }
+func (m DictationStart) OpNumber() int64      { return m.Op }
+func (m DictationAccepted) OpNumber() int64   { return m.Op }
+func (m WindowResult) OpNumber() int64        { return m.Op }
+func (m Progress) OpNumber() int64            { return m.Op }
+func (m DictationEnd) OpNumber() int64        { return m.Op }
+func (m DictationCancel) OpNumber() int64     { return m.Op }
+func (m DictationComplete) OpNumber() int64   { return m.Op }
+func (m Cancelled) OpNumber() int64           { return m.Op }
+func (m Rewrite) OpNumber() int64             { return m.Op }
+func (m RewriteEvent) OpNumber() int64        { return m.Op }
+func (m AnalysisPart) OpNumber() int64        { return m.Op }
+func (m Analysis) OpNumber() int64            { return m.Op }
+func (m AnalysisEventPart) OpNumber() int64   { return m.Op }
+func (m AnalysisEvent) OpNumber() int64       { return m.Op }
+func (m LiveWindow) OpNumber() int64          { return m.Op }
+func (m LiveResult) OpNumber() int64          { return m.Op }
+func (m MeetingJob) OpNumber() int64          { return m.Op }
+func (m MeetingProgress) OpNumber() int64     { return m.Op }
+func (m MeetingResult) OpNumber() int64       { return m.Op }
+func (m MeetingCancel) OpNumber() int64       { return m.Op }
+func (m Handoff) OpNumber() int64             { return m.Op }
+func (m HandoffReply) OpNumber() int64        { return m.Op }
+func (m ErrorMessage) OpNumber() int64        { return m.Op }
+func (m DeviceInvite) OpNumber() int64        { return m.Op }
+func (m DeviceInviteReply) OpNumber() int64   { return m.Op }
+func (m DeviceConfirm) OpNumber() int64       { return m.Op }
+func (m DeviceConfirmReply) OpNumber() int64  { return m.Op }
+func (m AccountDevices) OpNumber() int64      { return m.Op }
+func (m AccountDevicesReply) OpNumber() int64 { return m.Op }
 
 // decoders maps a wire type to a function decoding the strict object (without
 // schema_version and type) and validating it.
 var decoders = map[string]func([]byte) (Message, error){
-	"usage":               decodeAs[Usage],
-	"usage_reply":         decodeAs[UsageReply],
-	"ready":               decodeAs[Ready],
-	"enroll":              decodeAs[Enroll],
-	"pair":                decodeAs[Pair],
-	"enrolled":            decodeAs[Enrolled],
-	"refresh":             decodeAs[Refresh],
-	"tokens":              decodeAs[Tokens],
-	"dictation_start":     decodeAs[DictationStart],
-	"dictation_accepted":  decodeAs[DictationAccepted],
-	"window_result":       decodeAs[WindowResult],
-	"progress":            decodeAs[Progress],
-	"dictation_end":       decodeAs[DictationEnd],
-	"dictation_cancel":    decodeAs[DictationCancel],
-	"dictation_complete":  decodeAs[DictationComplete],
-	"cancelled":           decodeAs[Cancelled],
-	"rewrite":             decodeAs[Rewrite],
-	"rewrite_event":       decodeAs[RewriteEvent],
-	"analysis_part":       decodeAs[AnalysisPart],
-	"analysis":            decodeAs[Analysis],
-	"analysis_event_part": decodeAs[AnalysisEventPart],
-	"analysis_event":      decodeAs[AnalysisEvent],
-	"live_window":         decodeAs[LiveWindow],
-	"live_result":         decodeAs[LiveResult],
-	"meeting_job":         decodeAs[MeetingJob],
-	"meeting_progress":    decodeAs[MeetingProgress],
-	"meeting_result":      decodeAs[MeetingResult],
-	"meeting_cancel":      decodeAs[MeetingCancel],
-	"handoff":             decodeAs[Handoff],
-	"handoff_reply":       decodeAs[HandoffReply],
-	"error":               decodeAs[ErrorMessage],
+	"usage":                 decodeAs[Usage],
+	"usage_reply":           decodeAs[UsageReply],
+	"ready":                 decodeAs[Ready],
+	"enroll":                decodeAs[Enroll],
+	"pair":                  decodeAs[Pair],
+	"enrolled":              decodeAs[Enrolled],
+	"refresh":               decodeAs[Refresh],
+	"tokens":                decodeAs[Tokens],
+	"dictation_start":       decodeAs[DictationStart],
+	"dictation_accepted":    decodeAs[DictationAccepted],
+	"window_result":         decodeAs[WindowResult],
+	"progress":              decodeAs[Progress],
+	"dictation_end":         decodeAs[DictationEnd],
+	"dictation_cancel":      decodeAs[DictationCancel],
+	"dictation_complete":    decodeAs[DictationComplete],
+	"cancelled":             decodeAs[Cancelled],
+	"rewrite":               decodeAs[Rewrite],
+	"rewrite_event":         decodeAs[RewriteEvent],
+	"analysis_part":         decodeAs[AnalysisPart],
+	"analysis":              decodeAs[Analysis],
+	"analysis_event_part":   decodeAs[AnalysisEventPart],
+	"analysis_event":        decodeAs[AnalysisEvent],
+	"live_window":           decodeAs[LiveWindow],
+	"live_result":           decodeAs[LiveResult],
+	"meeting_job":           decodeAs[MeetingJob],
+	"meeting_progress":      decodeAs[MeetingProgress],
+	"meeting_result":        decodeAs[MeetingResult],
+	"meeting_cancel":        decodeAs[MeetingCancel],
+	"handoff":               decodeAs[Handoff],
+	"handoff_reply":         decodeAs[HandoffReply],
+	"error":                 decodeAs[ErrorMessage],
+	"device_invite":         decodeAs[DeviceInvite],
+	"device_invite_reply":   decodeAs[DeviceInviteReply],
+	"device_confirm":        decodeAs[DeviceConfirm],
+	"device_confirm_reply":  decodeAs[DeviceConfirmReply],
+	"account_devices":       decodeAs[AccountDevices],
+	"account_devices_reply": decodeAs[AccountDevicesReply],
 }
 
 type validator interface{ validate() (Message, error) }
@@ -1136,7 +1242,83 @@ func (m Enrolled) validate() (Message, error) {
 	default:
 		return nil, invalid("state unknown")
 	}
+	invite := m.InviterDeviceKey != nil || m.ConfirmBy != ""
+	if invite && (m.State != "pending" || !validDeviceKey(m.InviterDeviceKey) || !validWireTime(m.ConfirmBy)) {
+		return nil, invalid("invite fields")
+	}
 	return m, nil
+}
+
+func validDeviceKey(key []byte) bool {
+	if len(key) != DeviceKeyBytes || key[0] != 0x04 {
+		return false
+	}
+	_, err := ecdh.P256().NewPublicKey(key)
+	return err == nil
+}
+
+func validInviteID(id int64) bool { return id >= 1 && id <= math.MaxInt64>>10 }
+
+func (m DeviceInvite) validate() (Message, error) { return m, nil }
+
+func (m DeviceInviteReply) validate() (Message, error) {
+	if !validInviteID(m.InviteID) || !validPairingToken(m.PairingToken) || !validWireTime(m.ExpiresAt) {
+		return nil, invalid("device_invite_reply fields")
+	}
+	return m, nil
+}
+
+func (m DeviceConfirm) validate() (Message, error) {
+	if !validInviteID(m.InviteID) || len(m.Signature) < 8 || len(m.Signature) > 72 {
+		return nil, invalid("device_confirm fields")
+	}
+	return m, nil
+}
+
+func (m DeviceConfirmReply) validate() (Message, error) {
+	if m.State != "approved" && m.State != "removed" {
+		return nil, invalid("device_confirm_reply state")
+	}
+	return m, nil
+}
+
+func (m AccountDevices) validate() (Message, error) {
+	switch {
+	case m.Action == "list" && m.DeviceID == 0:
+	case m.Action == "revoke" && validInviteID(m.DeviceID):
+	default:
+		return nil, invalid("account_devices action")
+	}
+	return m, nil
+}
+
+func (m AccountDevicesReply) validate() (Message, error) {
+	if m.Devices == nil || len(m.Devices) > MaxAccountDevices {
+		return nil, invalid("account_devices_reply devices")
+	}
+	for _, d := range m.Devices {
+		if !d.valid() {
+			return nil, invalid("account_devices_reply device")
+		}
+	}
+	return m, nil
+}
+
+func (d AccountDevice) valid() bool {
+	switch {
+	case !validInviteID(d.ID) || !textWithin(d.Name, 1, MaxDeviceNameBytes) || !validWireTime(d.EnrolledAt):
+		return false
+	case d.Kind != nil && (*d.Kind == "" || !validDeviceKind(DeviceKind(*d.Kind))):
+		return false
+	case d.State != "pending" && d.State != "approved":
+		return false
+	case d.LastSeenAt != nil && !validWireTime(*d.LastSeenAt):
+		return false
+	}
+	if i := d.Invite; i != nil {
+		return d.State == "pending" && validInviteID(i.InviteID) && validDeviceKey(i.DeviceKey) && len(i.PairBinding) == 32 && validWireTime(i.ConfirmBy)
+	}
+	return true
 }
 
 func (m Refresh) validate() (Message, error) {

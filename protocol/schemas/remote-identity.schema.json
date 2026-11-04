@@ -54,7 +54,7 @@
         "type": "string",
         "pattern": "^[a-z][a-z0-9_]{0,31}$"
       },
-      "description": "Optional (Feature 028). Optional message fields and ops this server accepts: device_kind means pair and enroll accept device_kind. Absent means none; clients ignore names they don't know."
+      "description": "Optional (Feature 028). Optional message fields and ops this server accepts: device_kind means pair and enroll accept device_kind; device_invite means the device_invite, device_confirm and account_devices session ops exist and pair redeems invites. Absent means none; clients ignore names they don't know."
     }
   }
 }

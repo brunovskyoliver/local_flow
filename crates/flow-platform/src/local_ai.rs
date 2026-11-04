@@ -38,6 +38,9 @@ pub struct Install {
     pub resources: PathBuf,
     pub log: PathBuf,
     pub model: LocalAiModel,
+    /// False for server mode (Feature 028): Python, packages and the model only. The client's
+    /// `.mtplx` and `.flowd` agents are neither registered nor started; the server runs its own.
+    pub register_client_agents: bool,
 }
 
 pub fn start(install: Install, agents: impl Agents) {
@@ -56,6 +59,12 @@ fn run(i: &Install, agents: &impl Agents) -> Result<(), String> {
         return Err(AI_ERROR_MISSING.into());
     }
     prepare_folders(i).map_err(|_| AI_ERROR_PACKAGES.to_string())?;
+    if !i.register_client_agents {
+        install_python(i)?;
+        install_packages(i, &requirements)?;
+        report(AiPhase::DownloadingModel(0, i.model.download_bytes));
+        return pull(i).and_then(|path| record_model_path(i, &path).map(|_| ()));
+    }
     // Our services own the ports once loaded; anything else there is a conflict.
     let taken = |port| std::net::TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_secs(1)).is_ok();
     if (!agents.loaded(MTPLX_LABEL) && taken(MTPLX_PORT)) || (!agents.loaded(FLOWD_LABEL) && taken(FLOWD_PORT)) {
@@ -66,11 +75,7 @@ fn run(i: &Install, agents: &impl Agents) -> Result<(), String> {
     install_packages(i, &requirements)?;
     report(AiPhase::DownloadingModel(0, i.model.download_bytes));
     let path = pull(i)?;
-    let model_path = i.root.join("model-path");
-    let changed = std::fs::read_to_string(&model_path).ok().as_deref() != Some(path.as_str());
-    if changed {
-        write_atomic(&model_path, path.as_bytes()).map_err(|_| AI_ERROR_DOWNLOAD.to_string())?;
-    }
+    let changed = record_model_path(i, &path)?;
     write_key_if_missing(&i.root).map_err(|_| AI_ERROR_REGISTRATION.to_string())?;
     report(AiPhase::Starting);
     let was_loaded = agents.loaded(MTPLX_LABEL);
@@ -85,6 +90,16 @@ fn run(i: &Install, agents: &impl Agents) -> Result<(), String> {
         return Err(AI_ERROR_REGISTRATION.into());
     }
     wait_until_serving()
+}
+
+/// Writes `model-path` when it changed. True when it did.
+fn record_model_path(i: &Install, path: &str) -> Result<bool, String> {
+    let model_path = i.root.join("model-path");
+    let changed = std::fs::read_to_string(&model_path).ok().as_deref() != Some(path);
+    if changed {
+        write_atomic(&model_path, path.as_bytes()).map_err(|_| AI_ERROR_DOWNLOAD.to_string())?;
+    }
+    Ok(changed)
 }
 
 fn prepare_folders(i: &Install) -> std::io::Result<()> {
@@ -261,7 +276,7 @@ mod tests {
     fn real_runtime_and_pull() {
         let root = PathBuf::from(std::env::var("LOCALFLOW_AI_TEST_ROOT").unwrap());
         let resources = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/macos/LocalFlow/Resources/LocalAI");
-        let install = Install { log: root.join("setup.log"), root, resources: resources.clone(), model: CATALOG[0] };
+        let install = Install { log: root.join("setup.log"), root, resources: resources.clone(), model: CATALOG[0], register_client_agents: true };
         prepare_folders(&install).unwrap();
         install_python(&install).unwrap();
         install_packages(&install, &resources.join("mtplx-requirements.txt")).unwrap();
@@ -285,8 +300,70 @@ mod tests {
     #[test]
     fn a_bundle_without_the_lock_stops_before_touching_anything() {
         let dir = std::env::temp_dir().join(format!("flow-noai-{}", std::process::id()));
-        let install = Install { root: dir.join("r"), resources: dir.join("none"), log: dir.join("l"), model: CATALOG[0] };
+        let install = Install { root: dir.join("r"), resources: dir.join("none"), log: dir.join("l"), model: CATALOG[0], register_client_agents: true };
         assert_eq!(run(&install, &NoAgents), Err(AI_ERROR_MISSING.to_string()));
         assert!(!dir.exists());
+    }
+
+    /// Records every call. `kickstart` fails for MTPLX so the client path stops before waiting.
+    #[derive(Clone, Default)]
+    struct Recorded(std::sync::Arc<Mutex<Vec<String>>>);
+    impl Agents for Recorded {
+        fn loaded(&self, label: &str) -> bool {
+            self.0.lock().unwrap().push(format!("loaded {label}"));
+            true
+        }
+        fn register(&self, label: &str) -> Result<(), String> {
+            self.0.lock().unwrap().push(format!("register {label}"));
+            Ok(())
+        }
+        fn kickstart(&self, label: &str, _: bool) -> bool {
+            self.0.lock().unwrap().push(format!("kickstart {label}"));
+            label != MTPLX_LABEL
+        }
+    }
+
+    /// A root whose Python, packages and model are already there, and an `mtplx` that answers `pull`.
+    fn installed(name: &str, register_client_agents: bool) -> (PathBuf, Install) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("flow-ai-split-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (root, resources) = (dir.join("LocalAI"), dir.join("Resources"));
+        std::fs::create_dir_all(root.join("python/bin")).unwrap();
+        std::fs::create_dir_all(root.join("venv/bin")).unwrap();
+        std::fs::create_dir_all(dir.join("model")).unwrap();
+        std::fs::create_dir_all(&resources).unwrap();
+        std::fs::write(root.join("python/bin/python3"), "").unwrap();
+        let requirements = resources.join("mtplx-requirements.txt");
+        std::fs::write(&requirements, "mtplx==1 --hash=sha256:00\n").unwrap();
+        std::fs::write(root.join("venv/.localflow-requirements"), sha256(&requirements).unwrap()).unwrap();
+        let mtplx = root.join("venv/bin/mtplx");
+        std::fs::write(&mtplx, format!("#!/bin/sh\necho '{{\"event\":\"result\",\"path\":\"{}\"}}'\n", dir.join("model").display())).unwrap();
+        std::fs::set_permissions(&mtplx, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let install = Install { log: dir.join("setup.log"), root, resources, model: CATALOG[0], register_client_agents };
+        (dir, install)
+    }
+
+    #[test]
+    fn the_server_path_installs_the_model_and_touches_no_client_agent() {
+        let (dir, install) = installed("server", false);
+        let agents = Recorded::default();
+        assert_eq!(run(&install, &agents), Ok(()));
+        assert!(agents.0.lock().unwrap().is_empty(), "no loaded, register or kickstart: {:?}", agents.0.lock().unwrap());
+        assert_eq!(std::fs::read_to_string(install.root.join("model-path")).unwrap(), dir.join("model").to_string_lossy());
+        assert!(!install.root.join("app-pid").exists(), "the client's model isn't claimed");
+        assert!(!install.root.join("api-key").exists(), "the server has its own key");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_client_path_still_starts_both_agents() {
+        let (dir, install) = installed("client", true);
+        let agents = Recorded::default();
+        assert_eq!(run(&install, &agents), Err(AI_ERROR_REGISTRATION.to_string()), "the fake's MTPLX kickstart fails");
+        let calls = agents.0.lock().unwrap().clone();
+        assert!(calls.contains(&format!("kickstart {FLOWD_LABEL}")) && calls.contains(&format!("kickstart {MTPLX_LABEL}")), "{calls:?}");
+        assert!(install.root.join("app-pid").exists() && install.root.join("api-key").exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

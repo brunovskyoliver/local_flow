@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "type": "account_devices",
+  "op": 9,
+  "action": "revoke",
+  "device_id": 9,
+  "user_id": 2
+}

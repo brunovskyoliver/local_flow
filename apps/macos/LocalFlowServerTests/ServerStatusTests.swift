@@ -17,6 +17,14 @@ final class ServerStatusTests: XCTestCase {
   private let health = HealthResponse(
     backend: .init(state: "ready", model: "localflow"), server: .init(version: "0.3.0"))
 
+  func testAdminStatusWithChannelsStillDecodes() throws {
+    let json = """
+      {"version":"0.4.0","started_at":"2026-11-03T08:00:00Z","counters":{"dictation":{"requests":4,"failures":0}},"analysis":{"backend":"","model":""},"channels":{"open":5,"devices":[{"device_id":3,"channels":2}]}}
+      """
+    let status = try JSONDecoder().decode(AdminStatus.self, from: Data(json.utf8))
+    XCTAssertEqual(status.version, "0.4.0")
+  }
+
   func testLaunchctlPrint() {
     XCTAssertEqual(LaunchJob.parse(launchctlPrint), LaunchJob(running: true, pid: 13148))
     XCTAssertEqual(

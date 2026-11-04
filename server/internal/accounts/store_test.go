@@ -678,7 +678,7 @@ func TestMigrateFromVersion3(t *testing.T) {
 	}
 	defer store.Close()
 	var version int
-	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
+	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
 		t.Fatal(version, err)
 	}
 	if users, err := store.Users(ctx); err != nil || len(users) != 2 || users[1].Display != "Anna" || users[1].Provider != "token" {
@@ -744,6 +744,109 @@ func TestMigrateFromVersion3(t *testing.T) {
 	}
 	if entries, _ := filepath.Glob(filepath.Join(dir, PreV4FileName+".*")); len(entries) != 0 {
 		t.Fatalf("temporary copies left: %v", entries)
+	}
+}
+
+// openV4 creates a version 4 database from the v4 schema strings.
+func openV4(t *testing.T, dir string, statements ...string) {
+	t.Helper()
+	openV2(t, dir, append([]string{schemaV3, schemaV4}, statements...)...)
+}
+
+// A v4 database keeps its tokens and audit through the v5 rebuild: old tokens
+// become admin tokens, the token id high-water mark survives a pruned top row,
+// the new states, purposes and audit actions are accepted, the invite checks
+// hold, and a private pre-v5 copy of the v4 file is left beside it.
+func TestMigrateFromVersion4(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	clock := newClock()
+	now := clock.Now().UnixMilli()
+	openV4(t, dir,
+		fmt.Sprintf(`INSERT INTO users VALUES (8, 'token', 'token:1', 'Anna', 'approved', %d, %d)`, now, now),
+		fmt.Sprintf(`INSERT INTO devices (id, user_id, name, kind, public_key, state, enrolled_at, last_seen_at, changed_at)
+			VALUES (4, 8, 'Phone', 'iphone', x'%x', 'approved', %d, %d, %d)`, deviceKey(2), now, now, now),
+		fmt.Sprintf(`INSERT INTO pairing_tokens (id, label, hash, user_id, state, created_at, expires_at, changed_at, device_id, device_key, created_by)
+			VALUES (1, 'Anna', x'%064x', 8, 'redeemed', %d, %d, %d, 4, x'%x', 'admin:oliver'),
+			(2, 'Spare', x'%064x', NULL, 'live', %d, %d, %d, NULL, NULL, 'admin:oliver'),
+			(3, 'Pruned', x'%064x', NULL, 'live', %d, %d, %d, NULL, NULL, 'admin:oliver')`,
+			1, now, now+time.Hour.Milliseconds(), now, deviceKey(2), 2, now, now+time.Hour.Milliseconds(), now, 3, now, now, now),
+		`DELETE FROM pairing_tokens WHERE id = 3`,
+		fmt.Sprintf(`INSERT INTO audit VALUES (11, %d, 'admin:oliver', 'user_create', 'user:8', 'ok')`, now),
+	)
+
+	store, err := Open(dir, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var version int
+	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
+		t.Fatal(version, err)
+	}
+	tokens, err := store.PairingTokens(ctx)
+	if err != nil || len(tokens) != 2 || tokens[0].State != PairingRedeemed || tokens[0].DeviceID != 4 || tokens[1].State != PairingLive {
+		t.Fatalf("%+v %v", tokens, err)
+	}
+	var purposes string
+	if err := store.db.QueryRow(`SELECT group_concat(purpose) FROM pairing_tokens`).Scan(&purposes); err != nil || purposes != "admin,admin" {
+		t.Fatal(purposes, err)
+	}
+	if entries, err := store.AuditLog(ctx, 5); err != nil || len(entries) != 1 || entries[0].ID != 11 {
+		t.Fatalf("%+v %v", entries, err)
+	}
+	if devices, err := store.Devices(ctx, 8); err != nil || len(devices) != 1 || devices[0].Kind != KindIPhone {
+		t.Fatalf("%+v %v", devices, err)
+	}
+	// The pruned id 3 is not handed out again.
+	_, row, err := store.CreatePairingToken(ctx, testServerKey, "Next", 0, time.Hour, AdminActor("oliver"))
+	if err != nil || row.ID != 4 {
+		t.Fatalf("%+v %v", row, err)
+	}
+	var violations int
+	if err := store.db.QueryRow(`SELECT count(*) FROM pragma_foreign_key_check`).Scan(&violations); err != nil || violations != 0 {
+		t.Fatal(violations, err)
+	}
+	for _, action := range []string{"invite_create", "invite_confirm", "invite_decline", "invite_expire"} {
+		if err := store.Audit(ctx, AuditEntry{Actor: DeviceActor(4), Action: action, Target: TokenTarget(1), Outcome: "ok"}); err != nil {
+			t.Fatal(action, err)
+		}
+	}
+	insert := func(purpose, state string, inviter any, binding string) error {
+		_, err := store.db.Exec(`INSERT INTO pairing_tokens (label, hash, user_id, state, created_at, expires_at, changed_at, created_by, purpose, inviter_device_id, pair_binding)
+			VALUES ('x', randomblob(32), 8, ?, 0, 0, 0, 'device:4', ?, ?, `+binding+`)`, state, purpose, inviter)
+		return err
+	}
+	if err := insert("invite", "awaiting_confirm", 4, "randomblob(32)"); err != nil {
+		t.Fatal(err)
+	}
+	for name, err := range map[string]error{
+		"invite without inviter": insert("invite", "live", nil, "NULL"),
+		"admin with inviter":     insert("admin", "live", 4, "NULL"),
+		"admin awaiting_confirm": insert("admin", "awaiting_confirm", nil, "NULL"),
+		"unknown purpose":        insert("guest", "live", 4, "NULL"),
+		"short binding":          insert("invite", "live", 4, "randomblob(16)"),
+		"inviter not a device":   insert("invite", "live", 99, "NULL"),
+		"unknown state":          insert("invite", "expired", 4, "NULL"),
+	} {
+		if err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+
+	copyPath := filepath.Join(dir, PreV5FileName)
+	info, err := os.Stat(copyPath)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatal(info, err)
+	}
+	db, err := sql.Open("sqlite", "file:"+copyPath+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var copied, audit int
+	if err := db.QueryRow(`SELECT (SELECT user_version FROM pragma_user_version), (SELECT count(*) FROM pairing_tokens), (SELECT count(*) FROM audit)`).
+		Scan(&version, &copied, &audit); err != nil || version != 4 || copied != 2 || audit != 1 {
+		t.Fatal(version, copied, audit, err)
 	}
 }
 

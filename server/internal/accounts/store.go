@@ -29,7 +29,8 @@ const (
 	FileName         = "flowd-remote.sqlite"
 	PreV3FileName    = "flowd-remote.pre-v3.sqlite"
 	PreV4FileName    = "flowd-remote.pre-v4.sqlite"
-	schemaVersion    = 4
+	PreV5FileName    = "flowd-remote.pre-v5.sqlite"
+	schemaVersion    = 5
 	MaxPendingUsers  = 100
 	MaxAuditRows     = 10000
 	LastSeenInterval = time.Minute
@@ -305,9 +306,75 @@ DROP TABLE audit_v3;
 PRAGMA user_version = 4;
 `
 
+// schemaV5 adds device invites (specs/028-server-users-and-rewrite-warmup/
+// data-model.md, ADR 0039): pairing_tokens gains purpose, the awaiting_confirm
+// and declined states, the inviting device, the redeeming channel's binding and
+// the confirmation deadline, and audit the invite actions. SQLite can't alter a
+// CHECK, so both are rebuilt. Nothing references pairing_tokens, so dropping it
+// needs no deferred foreign keys, but dropping it also drops its sqlite_sequence
+// row: the old high-water mark is put back so a pruned id is never reused (see
+// schemaV3).
+const schemaV5 = `
+CREATE TABLE pairing_tokens_seq AS SELECT seq FROM sqlite_sequence WHERE name = 'pairing_tokens';
+CREATE TABLE pairing_tokens_v4 AS SELECT * FROM pairing_tokens;
+DROP TABLE pairing_tokens;
+CREATE TABLE pairing_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  label TEXT NOT NULL CHECK (length(CAST(label AS BLOB)) BETWEEN 1 AND 64),
+  hash BLOB NOT NULL UNIQUE CHECK (length(hash) = 32),
+  user_id INTEGER REFERENCES users(id),
+  state TEXT NOT NULL CHECK (state IN ('live', 'redeemed', 'revoked', 'awaiting_confirm', 'declined')),
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  changed_at INTEGER NOT NULL,
+  device_id INTEGER REFERENCES devices(id),
+  device_key BLOB CHECK (device_key IS NULL OR length(device_key) = 65),
+  created_by TEXT NOT NULL,
+  purpose TEXT NOT NULL DEFAULT 'admin' CHECK (purpose IN ('admin', 'invite')),
+  inviter_device_id INTEGER REFERENCES devices(id),
+  pair_binding BLOB CHECK (pair_binding IS NULL OR length(pair_binding) = 32),
+  confirm_by INTEGER,
+  CHECK ((purpose = 'invite') = (inviter_device_id IS NOT NULL)),
+  CHECK (purpose = 'invite' OR state IN ('live', 'redeemed', 'revoked'))
+);
+INSERT INTO pairing_tokens (id, label, hash, user_id, state, created_at, expires_at, changed_at, device_id, device_key, created_by)
+  SELECT id, label, hash, user_id, state, created_at, expires_at, changed_at, device_id, device_key, created_by FROM pairing_tokens_v4;
+DROP TABLE pairing_tokens_v4;
+CREATE INDEX pairing_tokens_inviter ON pairing_tokens(inviter_device_id) WHERE inviter_device_id IS NOT NULL;
+UPDATE sqlite_sequence SET seq = max(seq, (SELECT seq FROM pairing_tokens_seq))
+  WHERE name = 'pairing_tokens' AND EXISTS (SELECT 1 FROM pairing_tokens_seq);
+INSERT INTO sqlite_sequence (name, seq) SELECT 'pairing_tokens', seq FROM pairing_tokens_seq
+  WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'pairing_tokens');
+DROP TABLE pairing_tokens_seq;
+CREATE TABLE audit_v4 AS SELECT * FROM audit;
+DROP TABLE audit;
+CREATE TABLE audit (
+  id INTEGER PRIMARY KEY,
+  at INTEGER NOT NULL,
+  actor TEXT NOT NULL CHECK (
+    actor = 'system'
+    OR (actor GLOB 'admin:?*' AND length(actor) <= 70)
+    OR (actor GLOB 'user:[0-9]*' AND substr(actor, 6) NOT GLOB '*[^0-9]*')
+    OR (actor GLOB 'device:[0-9]*' AND substr(actor, 8) NOT GLOB '*[^0-9]*')),
+  action TEXT NOT NULL CHECK (action IN ('sign_in', 'enroll', 'approve', 'reject', 'revoke', 'refresh',
+    'refresh_reuse', 'cross_user_attempt', 'rate_limited', 'pin_rejected', 'token_create', 'token_revoke', 'pair',
+    'user_create', 'rename', 'invite_create', 'invite_confirm', 'invite_decline', 'invite_expire')),
+  target TEXT CHECK (target IS NULL
+    OR (target GLOB 'user:[0-9]*' AND substr(target, 6) NOT GLOB '*[^0-9]*')
+    OR (target GLOB 'device:[0-9]*' AND substr(target, 8) NOT GLOB '*[^0-9]*')
+    OR (target GLOB 'token:[0-9]*' AND substr(target, 7) NOT GLOB '*[^0-9]*')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'unauthorized', 'token_expired', 'not_approved', 'revoked',
+    'busy', 'invalid_message', 'unsupported_version', 'limit_exceeded', 'worker_unavailable', 'internal',
+    'pairing_token_invalid'))
+);
+INSERT INTO audit SELECT * FROM audit_v4;
+DROP TABLE audit_v4;
+PRAGMA user_version = 5;
+`
+
 // migrations[v] brings a version v database to v+1. A new version appends its
 // step here and raises schemaVersion; migrate writes the pre-v<N> copy itself.
-var migrations = []string{schema, schemaV2, schemaV3, schemaV4}
+var migrations = []string{schema, schemaV2, schemaV3, schemaV4, schemaV5}
 
 // firstCopiedVersion is the oldest version that gets a copy before migrating.
 // Version 1 predates the copies, and an empty file has nothing to keep.
@@ -735,7 +802,8 @@ func allowed[T comparable](table map[T][]T, from, to T) bool {
 var stateActions = map[string]string{"approved": "approve", "rejected": "reject", "revoked": "revoke"}
 
 // SetUserState applies an admin transition and audits it in one transaction.
-// Device rows are left as they are.
+// Device rows are left as they are, except that revoking a user revokes its
+// live invites and deletes the pending devices waiting on its invites.
 func (s *Store) SetUserState(ctx context.Context, id int64, to UserState, actor string) error {
 	return s.transition(ctx, "user", id, string(to), actor, func(from string) bool {
 		return allowed(userTransitions, UserState(from), to)
@@ -745,7 +813,10 @@ func (s *Store) SetUserState(ctx context.Context, id int64, to UserState, actor 
 // SetDeviceState applies an admin transition and audits it in one
 // transaction. Revocation clears the refresh, previous refresh and access
 // hashes; the access hash is kept only as revoked_access_hash so the token is
-// recognized as revoked.
+// recognized as revoked. Revoking a device revokes its live invites and
+// deletes the pending devices waiting on them; revoking a pending invited
+// device deletes it and declines its invite; approving one confirms its
+// invite.
 func (s *Store) SetDeviceState(ctx context.Context, id int64, to DeviceState, actor string) error {
 	return s.transition(ctx, "device", id, string(to), actor, func(from string) bool {
 		return allowed(deviceTransitions, DeviceState(from), to)
@@ -774,11 +845,32 @@ func (s *Store) transition(ctx context.Context, kind string, id int64, to, actor
 	}
 	now := s.millis()
 	update, args := `UPDATE `+table+` SET state = ?, changed_at = ? WHERE id = ?`, []any{to, now, id}
-	if kind == "device" && to == string(DeviceRevoked) {
+	// The invite cascade (ADR 0039) runs in the same transaction: revoking a
+	// device or user ends its invites and deletes the devices waiting on them,
+	// and approving an invited pending device confirms its invite.
+	switch {
+	case kind == "device" && to == string(DeviceRevoked):
 		update, args = revokeDevice, []any{now, id}
+		deleted, err := cascadeDeviceRevoke(ctx, tx, now, actor, id)
+		if err != nil {
+			return err
+		}
+		if deleted {
+			update = ""
+		}
+	case kind == "device" && to == string(DeviceApproved):
+		if _, err := tx.ExecContext(ctx, `UPDATE pairing_tokens SET state = 'redeemed', changed_at = ? WHERE device_id = ? AND state = 'awaiting_confirm'`, now, id); err != nil {
+			return err
+		}
+	case kind == "user" && to == string(UserRevoked):
+		if err := cascadeUserRevoke(ctx, tx, now, actor, id); err != nil {
+			return err
+		}
 	}
-	if _, err := tx.ExecContext(ctx, update, args...); err != nil {
-		return err
+	if update != "" {
+		if _, err := tx.ExecContext(ctx, update, args...); err != nil {
+			return err
+		}
 	}
 	entry := AuditEntry{Actor: actor, Action: stateActions[to], Target: kind + ":" + strconv.FormatInt(id, 10), Outcome: "ok"}
 	if err := insertAudit(ctx, tx, now, entry); err != nil {
@@ -828,6 +920,7 @@ var (
 		"sign_in": true, "enroll": true, "approve": true, "reject": true, "revoke": true, "refresh": true,
 		"refresh_reuse": true, "cross_user_attempt": true, "rate_limited": true, "pin_rejected": true,
 		"token_create": true, "token_revoke": true, "pair": true, "user_create": true, "rename": true,
+		"invite_create": true, "invite_confirm": true, "invite_decline": true, "invite_expire": true,
 	}
 	auditOutcomes = map[string]bool{
 		"ok": true, "unauthorized": true, "token_expired": true, "not_approved": true, "revoked": true, "busy": true,

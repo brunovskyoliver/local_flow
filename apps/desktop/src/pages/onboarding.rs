@@ -2,6 +2,9 @@
 mod parts;
 mod remote;
 mod scenario;
+/// `server.rs`; `server` is `flow_core::settings` here.
+#[path = "onboarding/server.rs"]
+pub(crate) mod server_mode;
 mod steps;
 #[cfg(test)]
 mod tests;
@@ -54,6 +57,8 @@ pub struct OnboardingPage {
     pub frozen: bool,
     pending_credential_clear: bool,
     pub pair: crate::remote::PairForm,
+    /// The server path's state; the owner's token lives only here (T031).
+    pub(crate) server: server_mode::ServerUi,
     endpoint_input: Entity<InputState>,
     credential_input: Entity<InputState>,
     focus: FocusHandle,
@@ -241,6 +246,7 @@ impl OnboardingPage {
             frozen: false,
             pending_credential_clear: false,
             pair,
+            server: Default::default(),
             endpoint_input,
             credential_input,
             focus: cx.focus_handle(),
@@ -315,6 +321,7 @@ impl OnboardingPage {
         next.shortcut = Shortcut::load(&core.prefs).for_platform(s.has_globe_key());
         next.storage_available = core.db.is_some();
         next.speech_model = speech_model_name().to_string();
+        self.server_snapshot(&mut next, cx);
         let resume = self.ai_phase == AiPhase::Failed(AI_ERROR_APPROVAL.into()) && s.background_services_enabled();
         if let Some(phase) = ai_report {
             self.local_ai_finished(phase, cx);
@@ -330,6 +337,13 @@ impl OnboardingPage {
         if next != self.snap {
             self.snap = next;
             cx.notify();
+        }
+        if matches!(self.setup.step, Step::ServerModels | Step::ServerNetwork | Step::ServerReady) {
+            server_mode::refresh_status(self, cx);
+            // The download's progress lives outside the snapshot.
+            if self.server.busy {
+                cx.notify();
+            }
         }
         if resume {
             self.start_local_ai(cx);
@@ -352,6 +366,7 @@ impl OnboardingPage {
     /// After any coordinator call: run what it asked for, apply step-entry rules, redraw.
     pub fn after(&mut self, cx: &mut Context<Self>) {
         self.effects(cx);
+        self.server_step_entered(cx);
         // `.task(id: step)`: Right Control is the first-run default; a saved shortcut stays.
         if self.setup.step == Step::Personalize && !self.meeting_only() && !Shortcut::is_saved(&cx.global::<Core>().prefs) {
             self.configure_shortcut(Shortcut::right_control(), cx);
@@ -420,7 +435,11 @@ impl OnboardingPage {
 
     pub fn can_advance(&self, cx: &App) -> bool {
         match self.setup.step {
-            Step::Introduction | Step::Purpose | Step::Ai => true,
+            Step::Introduction | Step::Role | Step::Purpose | Step::Ai => true,
+            Step::ServerModels if !self.server.models_started => self.server_plan(cx).is_some_and(|p| p.fits()),
+            Step::ServerModels => self.snap.server_models_ready,
+            Step::ServerNetwork => self.snap.server_reachable && !self.server.busy,
+            Step::ServerReady => !self.server.busy,
             Step::AiDetails if self.setup.ai_mode == AiMode::Remote => self.server_ready(cx),
             Step::AiDetails => self.selected_model().fits(self.memory),
             Step::Downloads => self.setup.downloads_ready(&self.snap),
@@ -435,7 +454,8 @@ impl OnboardingPage {
             Step::Introduction => "Get started".into(),
             Step::AiDetails if self.setup.ai_mode == AiMode::Remote => "Use this server".into(),
             Step::AiDetails => format!("{} {}", if self.downloaded[self.selection] { "Use" } else { "Download" }, self.selected_model().name),
-            Step::Test => "Finish setup".into(),
+            Step::Test | Step::ServerReady => "Finish setup".into(),
+            Step::ServerModels if !self.server.models_started => "Download".into(),
             Step::Personalize if self.meeting_only() => "Finish setup".into(),
             _ => "Continue".into(),
         }
@@ -444,6 +464,8 @@ impl OnboardingPage {
     pub fn hint(&self, cx: &App) -> Option<String> {
         match self.setup.step {
             Step::AiDetails if self.setup.ai_mode == AiMode::Remote && !self.server_ready(cx) => Some("Pair to continue".into()),
+            Step::ServerModels if self.server.models_started && !self.snap.server_models_ready => Some("Waiting for the models…".into()),
+            Step::ServerNetwork if !self.snap.server_reachable => Some("Open the server to continue".into()),
             Step::Downloads if !self.snap.model_installed => Some("Waiting for speech recognition…".into()),
             Step::Downloads if !self.setup.downloads_ready(&self.snap) => Some("Waiting for meeting models…".into()),
             Step::Permissions | Step::Personalize if self.meeting_only() => self.snap.meeting_blocked_reason().map(str::to_string),
@@ -454,6 +476,10 @@ impl OnboardingPage {
 
     pub fn primary(&mut self, cx: &mut Context<Self>) {
         if !self.can_advance(cx) {
+            return;
+        }
+        if self.setup.step == Step::ServerModels && !self.server.models_started {
+            self.start_server_models(cx);
             return;
         }
         if self.setup.step == Step::AiDetails && self.setup.ai_mode == AiMode::Remote {

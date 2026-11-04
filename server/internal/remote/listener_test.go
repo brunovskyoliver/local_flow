@@ -456,7 +456,7 @@ func TestIdentityEndpointAndRoutes(t *testing.T) {
 	if !strings.Contains(string(body), `"server_key":"`+b64(h.identity.PublicKey())+`"`) {
 		t.Fatal("server_key must be base64url without padding")
 	}
-	if !strings.Contains(string(body), `"features":["device_kind"]`) || len(identity.Features) != 1 {
+	if !strings.Contains(string(body), `"features":["device_kind","device_invite"]`) || len(identity.Features) != 2 {
 		t.Fatalf("features: %s", body)
 	}
 	for _, request := range []struct{ method, path string }{
