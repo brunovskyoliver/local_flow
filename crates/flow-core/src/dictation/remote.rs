@@ -476,7 +476,7 @@ pub(super) mod tests {
         let keys = Arc::new(MemoryDeviceKeys::default());
         let (handle, _) = keys.create().unwrap();
         secrets.write("device-key", &handle).unwrap();
-        let e = Enrollment::new(Parts { secrets, keys, identity: Arc::new(crate::remote::enrollment::HttpIdentity), transports: Arc::new(script), now: Box::new(system_now), device_name: "T".into() });
+        let e = Enrollment::new(Parts { secrets, keys, identity: Arc::new(crate::remote::enrollment::HttpIdentity), transports: Arc::new(script), now: Box::new(system_now), device_name: "T".into(), device_kind: None });
         e.load(RemoteSettings { origin: Some("http://127.0.0.1:9".into()), state: "approved".into(), notice: None, alternates: vec![] });
         (Arc::new(e), counters)
     }

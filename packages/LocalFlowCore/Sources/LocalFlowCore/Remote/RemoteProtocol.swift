@@ -182,7 +182,7 @@ public struct RemoteBoost: Codable, Sendable, Equatable {
 }
 
 /// Feature 028: the `device_kind` of `pair` and `enroll` (contracts/device-kind.md).
-public enum RemoteDeviceKind: String, Sendable, Equatable {
+public enum RemoteDeviceKind: String, Codable, Sendable, Equatable {
   case mac, windows, iphone
 }
 
@@ -212,6 +212,8 @@ public enum RemoteClientMessage: Sendable, Equatable {
   /// A handed-off meeting: upload, start, poll, download or delete (one reply each).
   case handoff(op: Int, request: RemoteHandoffRequest)
   case usage(op: Int, request: UsageRequest)
+  /// Feature 028: lists the caller's user's devices, or revokes `revokeDeviceID` first.
+  case accountDevices(op: Int, revokeDeviceID: Int? = nil)
 
   public func encoded() throws -> Data {
     var object: [String: Any] = ["schema_version": RemoteProtocol.schemaVersion]
@@ -280,6 +282,10 @@ public enum RemoteClientMessage: Sendable, Equatable {
         "type": "usage", "op": op,
         "request": try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)),
       ]) { $1 }
+    case .accountDevices(let op, let revoke):
+      let action = revoke == nil ? "list" : "revoke"
+      object.merge(["type": "account_devices", "op": op, "action": action]) { $1 }
+      if let revoke { object["device_id"] = revoke }
     case .handoff(let op, let request):
       object.merge(["type": "handoff", "op": op, "action": request.action.rawValue]) { $1 }
       if let meeting = request.meeting { object["meeting"] = meeting.uuidString }
@@ -449,10 +455,78 @@ public struct RemoteWindowCollector: Sendable {
   }
 }
 
+/// Feature 028: what a pending reply to an invite redemption adds (contracts/device-invites.md).
+public struct RemotePendingInvite: Sendable, Equatable {
+  /// The inviting device's 65-byte X9.63 key, one input of the comparison code.
+  public let inviterDeviceKey: Data
+  public let confirmBy: Date
+
+  public init(inviterDeviceKey: Data, confirmBy: Date) {
+    self.inviterDeviceKey = inviterDeviceKey
+    self.confirmBy = confirmBy
+  }
+}
+
+/// Feature 028: one row of `account_devices_reply`, the caller's own user's devices.
+public struct RemoteAccountDevice: Decodable, Sendable, Equatable, Identifiable {
+  public enum State: String, Decodable, Sendable { case pending, approved }
+  public let id: Int
+  public let name: String
+  /// nil for a device that predates `device_kind`.
+  public let kind: RemoteDeviceKind?
+  public let state: State
+  public let enrolledAt: Date
+  public let lastSeenAt: Date?
+  public let connected: Bool
+  public let thisDevice: Bool
+
+  public enum CodingKeys: String, CodingKey {
+    case id, name, kind, state
+    case enrolledAt = "enrolled_at"
+    case lastSeenAt = "last_seen_at"
+    case connected
+    case thisDevice = "this_device"
+  }
+
+  public init(
+    id: Int, name: String, kind: RemoteDeviceKind?, state: State, enrolledAt: Date,
+    lastSeenAt: Date?, connected: Bool, thisDevice: Bool
+  ) {
+    self.id = id
+    self.name = name
+    self.kind = kind
+    self.state = state
+    self.enrolledAt = enrolledAt
+    self.lastSeenAt = lastSeenAt
+    self.connected = connected
+    self.thisDevice = thisDevice
+  }
+
+  /// The reply's `devices`. Times are RFC 3339 UTC to the second; an `invite` appears only on
+  /// a pending device. The invite's own fields are for the inviting device, which this isn't.
+  static func list(_ value: Any?) throws -> [RemoteAccountDevice] {
+    guard let rows = value as? [[String: Any]], rows.count <= 100,
+      rows.allSatisfy({ $0["invite"] == nil || $0["state"] as? String == "pending" })
+    else { throw RemoteProtocolError.invalidMessage }
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let devices = try decoder.decode(
+      [RemoteAccountDevice].self,
+      from: JSONSerialization.data(withJSONObject: rows.map { $0.filter { $0.key != "invite" } }))
+    guard devices.allSatisfy({ $0.id > 0 && !$0.name.isEmpty && $0.name.utf8.count <= 64 }) else {
+      throw RemoteProtocolError.invalidMessage
+    }
+    return devices
+  }
+}
+
 /// A message flowd sends.
 public enum RemoteServerMessage: Sendable {
   case ready(RemoteCapabilities)
-  case enrolled(op: Int, state: RemoteEnrollmentState, refreshToken: String?)
+  /// `invite` only on a pending reply to an invite redemption (Feature 028).
+  case enrolled(
+    op: Int, state: RemoteEnrollmentState, refreshToken: String?,
+    invite: RemotePendingInvite? = nil)
   case tokens(op: Int, accessToken: String, expiresIn: Int, refreshToken: String)
   case dictationAccepted(op: Int, windowSamples: Int, model: RemoteModelIdentity)
   case windowResult(RemoteWindowResult)
@@ -471,16 +545,17 @@ public enum RemoteServerMessage: Sendable {
     op: Int, result: RemoteMeetingResult, processingMs: Int, model: RemoteCapabilities.Model)
   case handoffReply(op: Int, reply: RemoteHandoffReply)
   case usageReply(op: Int, response: UsageResponse)
+  case accountDevicesReply(op: Int, devices: [RemoteAccountDevice])
   case error(op: Int?, code: RemoteErrorCode)
 
   public var op: Int? {
     switch self {
     case .ready: nil
-    case .enrolled(let op, _, _), .tokens(let op, _, _, _), .dictationAccepted(let op, _, _),
+    case .enrolled(let op, _, _, _), .tokens(let op, _, _, _), .dictationAccepted(let op, _, _),
       .progress(let op, _), .dictationComplete(let op, _), .cancelled(let op),
       .rewriteEvent(let op, _), .analysisEventPart(let op, _, _), .analysisEvent(let op, _, _, _),
       .liveResult(let op, _, _), .meetingProgress(let op, _, _), .meetingResult(let op, _, _, _),
-      .handoffReply(let op, _), .usageReply(let op, _):
+      .handoffReply(let op, _), .usageReply(let op, _), .accountDevicesReply(let op, _):
       op
     case .windowResult(let result): result.op
     case .error(let op, _): op
@@ -525,11 +600,16 @@ public enum RemoteServerMessage: Sendable {
           throw RemoteProtocolError.invalidMessage
         }
         // Feature 028: an invite's pending reply carries both fields, and only a pending one.
-        let invite = (object["inviter_device_key"] != nil, object["confirm_by"] != nil)
-        guard invite.0 == invite.1, !invite.0 || state == .pending else {
-          throw RemoteProtocolError.invalidMessage
+        var invite: RemotePendingInvite?
+        if object["inviter_device_key"] != nil || object["confirm_by"] != nil {
+          guard state == .pending,
+            let key = Data(base64URL: try string("inviter_device_key")), key.count == 65,
+            key.first == 0x04,
+            let confirmBy = ISO8601DateFormatter().date(from: try string("confirm_by"))
+          else { throw RemoteProtocolError.invalidMessage }
+          invite = RemotePendingInvite(inviterDeviceKey: key, confirmBy: confirmBy)
         }
-        return .enrolled(op: try op(), state: state, refreshToken: refresh)
+        return .enrolled(op: try op(), state: state, refreshToken: refresh, invite: invite)
       case "tokens":
         return .tokens(
           op: try op(), accessToken: try string("access_token"), expiresIn: try int("expires_in"),
@@ -614,6 +694,9 @@ public enum RemoteServerMessage: Sendable {
           response: try JSONDecoder().decode(
             UsageResponse.self,
             from: JSONSerialization.data(withJSONObject: value)))
+      case "account_devices_reply":
+        return .accountDevicesReply(
+          op: try op(), devices: try RemoteAccountDevice.list(object["devices"]))
       case "handoff_reply":
         return .handoffReply(op: try op(), reply: try RemoteHandoffReply(object))
       case "error":

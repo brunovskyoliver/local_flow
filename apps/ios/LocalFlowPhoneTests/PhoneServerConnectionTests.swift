@@ -17,28 +17,55 @@ private final class FakePhoneFlowd: @unchecked Sendable {
   var sessionError: String?
   private(set) var refreshCount = 0
   private(set) var sessionTokens: [String?] = []
+  /// Feature 028: the `device_kind` of each `pair` and `enroll`, nil when absent.
+  private(set) var deviceKinds: [String?] = []
+  /// Set: `pair` redeems an invite from this inviting key and answers pending.
+  var inviterKey: Data?
+  /// The binding and device key of the last `pair`, for the code the phone should show.
+  private(set) var pairBinding = Data()
+  private(set) var pairDeviceKey = Data()
+  /// `ready` offers `account_devices` with these rows; nil leaves it out.
+  var accountDevices: [[String: Any]]?
+  private(set) var revokedDevices: [Int] = []
 
   func transport(server: FakeRemoteServer = FakeRemoteServer()) -> FakeRemoteTransport {
-    FakeRemoteTransport(server: server) { [self] event in
+    var binding = Data()
+    return FakeRemoteTransport(server: server) { [self] event in
       lock.withLock {
         switch event {
-        case .hello(let purpose, let token, _):
+        case .hello(let purpose, let token, let hello):
+          binding = hello
           if purpose == "session" {
             sessionTokens.append(token)
             if let sessionError { return [.message(["type": "error", "code": sessionError])] }
+            if accountDevices != nil {
+              return [.message(["type": "ready", "capabilities": ["ops": ["account_devices"]]])]
+            }
           }
           return [.message(["type": "ready"])]
         case .control(let object):
           let op = object["op"] as? Int ?? 0
           switch object["type"] as? String {
           case "enroll":
+            deviceKinds.append(object["device_kind"] as? String)
             var message: [String: Any] = ["type": "enrolled", "op": op, "state": enrollState]
             if enrollState != "rejected" { message["refresh_token"] = "lfr_initial" }
             return [.message(message)]
           case "pair":
             pairTokens.append(object["pairing_token"] as? String ?? "")
+            deviceKinds.append(object["device_kind"] as? String)
             if let pairError {
               return [.message(["type": "error", "op": op, "code": pairError])]
+            }
+            if let inviterKey {
+              pairBinding = binding
+              pairDeviceKey = Data(base64URL: object["device_key"] as? String ?? "") ?? Data()
+              return [
+                .message([
+                  "type": "enrolled", "op": op, "state": "pending", "refresh_token": "lfr_initial",
+                  "inviter_device_key": inviterKey.base64URL, "confirm_by": "2026-11-03T10:24:30Z",
+                ])
+              ]
             }
             return [
               .message([
@@ -55,6 +82,14 @@ private final class FakePhoneFlowd: @unchecked Sendable {
                 "type": "tokens", "op": op, "access_token": "lfa_\(refreshCount)",
                 "expires_in": 900, "refresh_token": "lfr_\(refreshCount)",
               ])
+            ]
+          case "account_devices":
+            if let id = object["device_id"] as? Int {
+              revokedDevices.append(id)
+              accountDevices?.removeAll { $0["id"] as? Int == id }
+            }
+            return [
+              .message(["type": "account_devices_reply", "op": op, "devices": accountDevices ?? []])
             ]
           default:
             return [.message(["type": "error", "op": op, "code": "invalid_message"])]
@@ -514,5 +549,97 @@ final class PhoneServerConnectionTests: XCTestCase {
     XCTAssertEqual(settings.serverAddress, "https://server.example")
     XCTAssertEqual(connection.state, .approved)
     XCTAssertTrue(flowd.pairTokens.isEmpty)
+  }
+
+  // MARK: Device kind (Feature 028, T042)
+
+  func testThePhoneDeclaresItselfAnIPhone() async {
+    fetcher.features = ["device_kind"]
+    await enroll(as: "approved")
+    await connection.signOut()
+    connection.requestPairing()
+    connection.addressDraft = "https://server.example"
+    connection.pairingToken = tokenValue
+    await connection.pair()
+    XCTAssertEqual(flowd.deviceKinds, ["iphone", "iphone"])
+
+    // A server that doesn't list the feature never sees the field.
+    fetcher.features = nil
+    await connection.signOut()
+    await enroll(as: "approved")
+    XCTAssertEqual(flowd.deviceKinds, ["iphone", "iphone", nil])
+  }
+
+  // MARK: Invites and "Your devices" (Feature 028, T063)
+
+  func testARedeemedInviteShowsTheCodeUntilConfirmed() async throws {
+    let inviter = P256.Signing.PrivateKey().publicKey.x963Representation
+    flowd.inviterKey = inviter
+    connection.requestPairing()
+    connection.addressDraft = "https://server.example"
+    connection.pairingToken = tokenValue
+    await connection.pair()
+    XCTAssertNil(connection.error)
+    XCTAssertEqual(connection.status, .waitingForApproval)
+    let code = DeviceCode.code(
+      inviterKey: inviter, newKey: flowd.pairDeviceKey, pairBinding: flowd.pairBinding)
+    XCTAssertEqual(connection.inviteCode, DeviceCode.grouped(code))
+    XCTAssertNotNil(try credentials.read(.refreshToken))
+    for key in PhoneServerSettings.keys {
+      XCTAssertFalse("\(defaults.object(forKey: key) ?? "")".contains(code))
+    }
+
+    // The inviting device confirmed: the next refresh approves, and the code goes.
+    await connection.refresh()
+    XCTAssertEqual(connection.status, .approved)
+    XCTAssertNil(connection.inviteCode)
+  }
+
+  private func device(_ id: Int, this: Bool = false) -> [String: Any] {
+    let kind: Any = id == 3 ? "mac" : NSNull()
+    return [
+      "id": id, "name": "Device \(id)", "kind": kind, "state": "approved",
+      "enrolled_at": "2026-11-01T09:00:00Z", "last_seen_at": NSNull(), "connected": false,
+      "this_device": this,
+    ]
+  }
+
+  func testYourDevicesListsAndRemovesWithoutTheMeetingsSwitch() async throws {
+    await enroll(as: "approved")
+    XCTAssertFalse(settings.processMeetings)
+    await connection.loadDevices()
+    XCTAssertNil(connection.devices, "hidden when the server doesn't offer it")
+
+    flowd.accountDevices = [device(3), device(4, this: true)]
+    await connection.loadDevices()
+    XCTAssertEqual(connection.devices?.map(\.id), [3, 4])
+    XCTAssertEqual(connection.devices?.first?.kind, .mac)
+
+    let mac = try XCTUnwrap(connection.devices?.first)
+    await connection.remove(mac)
+    XCTAssertEqual(flowd.revokedDevices, [3])
+    XCTAssertEqual(connection.devices?.map(\.id), [4])
+    XCTAssertEqual(connection.status, .approved)
+  }
+
+  func testThisWasntMeRevokesThisIPhone() async throws {
+    await enroll(as: "approved")
+    flowd.accountDevices = [device(3), device(4, this: true)]
+    await connection.loadDevices()
+    let me = try XCTUnwrap(connection.devices?.last)
+    await connection.remove(me)
+    XCTAssertEqual(flowd.revokedDevices, [4])
+    XCTAssertEqual(connection.status, .revoked)
+    XCTAssertNil(connection.devices)
+    XCTAssertNil(try credentials.read(.refreshToken))
+  }
+
+  func testNoDevicesWhilePending() async {
+    await enroll(as: "pending")
+    flowd.accountDevices = [device(3)]
+    let opened = opener.openCount
+    await connection.loadDevices()
+    XCTAssertNil(connection.devices)
+    XCTAssertEqual(opener.openCount, opened)
   }
 }

@@ -160,7 +160,8 @@ impl Crypto {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ServerMessage {
     Ready(Option<Capabilities>),
-    Enrolled { op: i64, state: String, refresh_token: Option<String> },
+    /// `invite`: the inviting device's X9.63 key and `confirm_by`, only on a pending invite redemption.
+    Enrolled { op: i64, state: String, refresh_token: Option<String>, invite: Option<(Vec<u8>, String)> },
     Tokens { op: i64, access_token: String, refresh_token: String },
     Error { code: String },
     Other(Value),
@@ -184,7 +185,16 @@ pub fn decode(json: &[u8]) -> Result<ServerMessage, ChannelError> {
             if !["pending", "approved", "rejected"].contains(&state.as_str()) || (state == "rejected") != refresh_token.is_none() {
                 return Err(bad);
             }
-            ServerMessage::Enrolled { op, state, refresh_token }
+            // Both invite fields or neither, and only on a pending device.
+            let invite = match (text("inviter_device_key"), text("confirm_by")) {
+                (None, None) => None,
+                (Some(key), Some(by)) if state == "pending" => {
+                    let key = crate::settings::base64url_decode(&key).filter(|k| k.len() == 65 && k[0] == 4).ok_or(ChannelError::Protocol)?;
+                    Some((key, by))
+                }
+                _ => return Err(bad),
+            };
+            ServerMessage::Enrolled { op, state, refresh_token, invite }
         }
         "tokens" => {
             object.get("expires_in").and_then(Value::as_i64).ok_or(ChannelError::Protocol)?;
@@ -622,8 +632,14 @@ mod tests {
     fn enrolled_and_tokens_must_be_well_formed() {
         let m = |v: Value| decode(v.to_string().as_bytes());
         let ok = serde_json::json!({"schema_version": 1, "type": "enrolled", "op": 1, "state": "approved", "refresh_token": "lfr_x"});
-        assert_eq!(m(ok), Ok(ServerMessage::Enrolled { op: 1, state: "approved".into(), refresh_token: Some("lfr_x".into()) }));
-        assert_eq!(m(serde_json::json!({"schema_version": 1, "type": "enrolled", "op": 1, "state": "rejected"})), Ok(ServerMessage::Enrolled { op: 1, state: "rejected".into(), refresh_token: None }));
+        assert_eq!(m(ok), Ok(ServerMessage::Enrolled { op: 1, state: "approved".into(), refresh_token: Some("lfr_x".into()), invite: None }));
+        assert_eq!(m(serde_json::json!({"schema_version": 1, "type": "enrolled", "op": 1, "state": "rejected"})), Ok(ServerMessage::Enrolled { op: 1, state: "rejected".into(), refresh_token: None, invite: None }));
+        let invite = m(serde_json::from_str(include_str!("../../../../fixtures/remote/messages/valid/enrolled-invite.json")).unwrap()).unwrap();
+        assert!(matches!(invite, ServerMessage::Enrolled { invite: Some((key, by)), .. } if key.len() == 65 && by == "2026-11-03T10:24:30Z"));
+        for name in ["enrolled-invite-approved", "enrolled-invite-key-only"] {
+            let path = format!("{}/../../fixtures/remote/messages/invalid/{name}.json", env!("CARGO_MANIFEST_DIR"));
+            assert_eq!(m(serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()), Err(ChannelError::Protocol), "{name}");
+        }
         for bad in [
             serde_json::json!({"schema_version": 1, "type": "enrolled", "op": 1, "state": "approved"}),
             serde_json::json!({"schema_version": 1, "type": "enrolled", "op": 1, "state": "rejected", "refresh_token": "x"}),

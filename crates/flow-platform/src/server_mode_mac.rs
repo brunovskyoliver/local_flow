@@ -201,6 +201,59 @@ impl ServerAdmin {
         }
         serde_json::from_slice::<serde_json::Value>(&body).ok().filter(|v| v.is_object()).ok_or(AdminError::Invalid)
     }
+
+    // The Users page (T044, T045)
+
+    /// `list --json`, `token list --json`, `audit --limit 50 --json` and the status's channels,
+    /// merged. Without the loopback status nobody shows as connected; the list still loads.
+    pub fn users_page(&self, now_ms: i64) -> Result<flow_core::server_admin::Model, flow_core::server_admin::ReadError> {
+        use flow_core::server_admin::*;
+        let read = |args: &[&str]| self.run(args);
+        let list = read(&["list", "--json"]);
+        let list = decode_list(list.status, &list.output, &list.error)?;
+        let tokens = read(&["token", "list", "--json"]);
+        let tokens = decode_tokens(tokens.status, &tokens.output, &tokens.error)?;
+        let audit = read(&["audit", "--limit", "50", "--json"]);
+        let audit = decode_audit(audit.status, &audit.output, &audit.error)?;
+        let live = self.admin_status().map(|s| connected(&s)).unwrap_or_default();
+        Ok(merge(list, &live, tokens, audit, now_ms))
+    }
+
+    /// Approve, reject, revoke, rename, `user create` or `token revoke`. A failure reports stderr.
+    pub fn act(&self, action: &flow_core::server_admin::Action) -> Result<(), String> {
+        use flow_core::server_admin::Action::*;
+        let id = |n: &i64| n.to_string();
+        let args: Vec<String> = match action {
+            Approve(kind, n) => vec!["approve".into(), kind.word().into(), id(n)],
+            Reject(n) => vec!["reject".into(), "user".into(), id(n)],
+            Revoke(kind, n) => vec!["revoke".into(), kind.word().into(), id(n)],
+            Rename(kind, n, name) => vec!["rename".into(), kind.word().into(), id(n), "--name".into(), name.clone()],
+            CreateUser(name) => vec!["user".into(), "create".into(), "--name".into(), name.clone(), "--json".into()],
+            RevokeToken(n) => vec!["token".into(), "revoke".into(), id(n)],
+        };
+        let result = self.run(&args.iter().map(String::as_str).collect::<Vec<_>>());
+        if result.succeeded() { Ok(()) } else { Err(result.reason()) }
+    }
+
+    /// `token create --label <label> [--user <id>] --ttl 24h --address <origin>… --json`. `user` is
+    /// `None` only when the owner asked for a new person. The token reaches only the returned value.
+    pub fn create_token(&self, label: &str, user: Option<i64>, addresses: &[String]) -> Result<OwnerToken, String> {
+        let user = user.map(|u| u.to_string());
+        let mut args = vec!["token", "create", "--label", label];
+        if let Some(user) = &user {
+            args.extend(["--user", user.as_str()]);
+        }
+        args.extend(["--ttl", "24h"]);
+        for address in addresses {
+            args.extend(["--address", address.as_str()]);
+        }
+        args.push("--json");
+        let result = self.run(&args);
+        if !result.succeeded() {
+            return Err(format!("flowd admin token create failed: {}", result.reason()));
+        }
+        OwnerToken::parse(&result.output).ok_or_else(|| "flowd admin token create gave no token.".into())
+    }
 }
 
 // The controller (T025): Swift's `ServerModeController`, with the pure parts in flow_core.
@@ -701,16 +754,7 @@ impl ServerMode {
     /// The token reaches only the returned value: the runner's arguments carry the label and
     /// addresses, and a failure reports stderr, which has no token.
     pub fn create_owner_token(&self, label: &str, addresses: &[String]) -> Result<OwnerToken, String> {
-        let mut args = vec!["token", "create", "--label", label, "--ttl", "24h"];
-        for address in addresses {
-            args.extend(["--address", address.as_str()]);
-        }
-        args.push("--json");
-        let result = self.admin.run(&args);
-        if !result.succeeded() {
-            return Err(format!("flowd admin token create failed: {}", result.reason()));
-        }
-        OwnerToken::parse(&result.output).ok_or_else(|| "flowd admin token create gave no token.".into())
+        self.admin.create_token(label, None, addresses)
     }
 }
 
@@ -764,6 +808,15 @@ impl crate::ServerHost for ServerMode {
     fn launch(&self) {
         self.recover_interrupted_open();
         self.resync_if_updated();
+    }
+    fn users_page(&self) -> Result<flow_core::server_admin::Model, flow_core::server_admin::ReadError> {
+        self.admin.users_page(flow_core::history::now_ms())
+    }
+    fn admin_act(&self, action: &flow_core::server_admin::Action) -> Result<(), String> {
+        self.admin.act(action)
+    }
+    fn create_device_token(&self, label: &str, user: Option<i64>, addresses: &[String]) -> Result<OwnerToken, String> {
+        self.admin.create_token(label, user, addresses)
     }
 }
 
@@ -954,6 +1007,76 @@ mod tests {
         assert_eq!(admin.admin_status(), Err(AdminError::Refused(403)));
         runner.answer_gets(|_| Ok((200, b"[1]".to_vec())));
         assert_eq!(admin.admin_status(), Err(AdminError::Invalid));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    /// T045: each owner action runs the data directory's flowd with exactly these arguments.
+    #[test]
+    fn admin_actions_pass_exact_arguments() {
+        use flow_core::server_admin::{Action::*, Kind};
+        let (home, paths) = dev_home("actions");
+        let runner = RecordingRunner::new();
+        runner.answer_runs(|_, args| match args.iter().position(|a| a == "create") {
+            Some(_) if args.contains(&"token".to_string()) => ProcessResult::ok(r#"{"id":4,"label":"x","expires_at":"2026-11-05T10:00:00Z","token":"lfp_secret","link":"localflow://pair#token=lfp_secret"}"#),
+            _ if args.last().is_some_and(|a| a == "9") => ProcessResult::failed(2, "device 9 not found"),
+            _ => ProcessResult::ok(""),
+        });
+        let admin = ServerAdmin::new(paths.clone(), runner.clone());
+        for action in [Approve(Kind::User, 1), Approve(Kind::Device, 2), Reject(3), Revoke(Kind::User, 4), Revoke(Kind::Device, 5), Rename(Kind::Device, 6, "Ana's Mac; rm -rf".into()), Rename(Kind::User, 7, "Ana".into()), CreateUser("Ben".into()), RevokeToken(8)] {
+            assert_eq!(admin.act(&action), Ok(()), "{action:?}");
+        }
+        assert_eq!(admin.act(&Approve(Kind::Device, 9)), Err("device 9 not found".into()));
+        let token = admin.create_token("Ana's iPhone", Some(7), &["https://m.example".into()]).unwrap();
+        assert_eq!(token.token, "lfp_secret");
+        admin.create_token("New person", None, &[]).unwrap();
+        let prefix = ["admin".to_string(), "--data-dir".into(), paths.data_dir().to_string_lossy().into_owned(), "--dev".into()];
+        let tails: Vec<Vec<String>> = runner.runs().into_iter().map(|(program, args)| {
+            assert_eq!(program, paths.flowd());
+            assert_eq!(args[..4], prefix);
+            args[4..].to_vec()
+        }).collect();
+        let want: Vec<Vec<&str>> = vec![
+            vec!["approve", "user", "1"],
+            vec!["approve", "device", "2"],
+            vec!["reject", "user", "3"],
+            vec!["revoke", "user", "4"],
+            vec!["revoke", "device", "5"],
+            vec!["rename", "device", "6", "--name", "Ana's Mac; rm -rf"],
+            vec!["rename", "user", "7", "--name", "Ana"],
+            vec!["user", "create", "--name", "Ben", "--json"],
+            vec!["token", "revoke", "8"],
+            vec!["approve", "device", "9"],
+            vec!["token", "create", "--label", "Ana's iPhone", "--user", "7", "--ttl", "24h", "--address", "https://m.example", "--json"],
+            vec!["token", "create", "--label", "New person", "--ttl", "24h", "--json"],
+        ];
+        assert_eq!(tails, want);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    /// T044: the page reads the three `--json` outputs and the live channels; an old flowd is
+    /// "needs updating", and a missing admin token still shows the list.
+    #[test]
+    fn the_users_page_reads_json_and_channels() {
+        use flow_core::server_admin::ReadError;
+        let (home, paths) = dev_home("users");
+        let runner = RecordingRunner::new();
+        runner.answer_runs(|_, args| match args[4].as_str() {
+            "list" => ProcessResult::ok(include_str!("../../../fixtures/server-admin/list.json")),
+            "token" => ProcessResult::ok(include_str!("../../../fixtures/server-admin/tokens.json")),
+            _ => ProcessResult::ok(include_str!("../../../fixtures/server-admin/audit.json")),
+        });
+        runner.answer_gets(|_| Ok((200, br#"{"channels":{"open":1,"devices":[{"device_id":2,"channels":1}]}}"#.to_vec())));
+        let admin = ServerAdmin::new(paths.clone(), runner.clone());
+        let page = admin.users_page(0).unwrap();
+        assert!(!page.users[0].devices[1].connected, "no admin token yet, so nobody shows as connected");
+        write_token(&paths, 0o600);
+        let page = admin.users_page(0).unwrap();
+        assert!(page.users[0].devices[1].connected && !page.users[0].devices[0].connected);
+        assert_eq!(page.tokens.len(), 2);
+        let args: Vec<Vec<String>> = runner.runs().into_iter().take(3).map(|(_, a)| a[4..].to_vec()).collect();
+        assert_eq!(args, [vec!["list", "--json"], vec!["token", "list", "--json"], vec!["audit", "--limit", "50", "--json"]]);
+        runner.answer_runs(|_, _| ProcessResult::failed(1, "flowd: usage: flowd admin …"));
+        assert_eq!(admin.users_page(0), Err(ReadError::NeedsUpdate));
         std::fs::remove_dir_all(home).unwrap();
     }
 

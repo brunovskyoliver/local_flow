@@ -2,10 +2,12 @@ import LocalFlowCore
 import SwiftUI
 
 /// Settings › Server (contracts/phone-ui.md): address, identity check and Confirm,
-/// Sign in with Google, the state line, Sign out, and the two meeting switches.
+/// Sign in with Google, the state line, Sign out, the two meeting switches, and (Feature 028)
+/// the invite code while pending and "Your devices".
 struct ServerSettingsView: View {
   @Bindable var connection: PhoneServerConnection
   @State private var confirmSignOut = false
+  @State private var removing: RemoteAccountDevice?
   @FocusState private var addressFocused: Bool
 
   var body: some View {
@@ -72,6 +74,12 @@ struct ServerSettingsView: View {
               Text(connection.status.text)
             }
           }
+          if let code = connection.inviteCode {
+            LabeledContent("Code") {
+              Text(code).font(.title2.monospacedDigit()).textSelection(.enabled)
+            }
+            .accessibilityIdentifier("server.inviteCode")
+          }
           if let fingerprint = connection.pinnedFingerprint, connection.identity == nil {
             LabeledContent("Fingerprint") {
               Text(fingerprint).font(.caption.monospaced()).textSelection(.enabled)
@@ -98,6 +106,35 @@ struct ServerSettingsView: View {
         }
         .sottoRow()
 
+        if let devices = connection.devices {
+          Section {
+            ForEach(devices) { device in
+              HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                  Text(device.thisDevice ? "\(device.name) (this iPhone)" : device.name)
+                  Text(Self.detail(device)).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(device.thisDevice ? "This wasn't me" : "Remove", role: .destructive) {
+                  removing = device
+                }
+                .buttonStyle(.borderless)
+                .disabled(connection.busy)
+                .accessibilityIdentifier(
+                  device.thisDevice ? "server.yourDeviceNotMe" : "server.yourDeviceRemove")
+              }
+            }
+          } header: {
+            Text("Your devices")
+          } footer: {
+            Text(
+              "Remove a device you no longer use. If you didn't add this iPhone, tap This wasn't me."
+            )
+          }
+          .accessibilityIdentifier("server.yourDevices")
+          .sottoRow()
+        }
+
         Section {
           Toggle(
             "Process meetings on this server",
@@ -122,7 +159,20 @@ struct ServerSettingsView: View {
     .navigationBarTitleDisplayMode(.inline)
     .task(id: connection.state) {
       await connection.refresh()
+      await connection.loadDevices()
       await connection.watchApproval(every: .seconds(5))
+    }
+    .confirmationDialog(
+      removing?.thisDevice == true ? "Remove this iPhone from the account?" : "Remove this device?",
+      isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+      titleVisibility: .visible, presenting: removing
+    ) { device in
+      Button("Remove", role: .destructive) { Task { await connection.remove(device) } }
+    } message: { device in
+      Text(
+        device.thisDevice
+          ? "This iPhone stops using the server at once. Your recordings stay here."
+          : "\(device.name) stops using the server at once.")
     }
     .confirmationDialog(
       "Sign out of this server?", isPresented: $confirmSignOut, titleVisibility: .visible
@@ -138,8 +188,32 @@ struct ServerSettingsView: View {
     Task { await connection.checkIdentity() }
   }
 
+  /// Kind, then whether it's pending, connected or when it was last seen.
+  static func detail(_ device: RemoteAccountDevice) -> String {
+    let kind =
+      switch device.kind {
+      case .mac: "Mac"
+      case .windows: "Windows PC"
+      case .iphone: "iPhone"
+      case nil: "Unknown"
+      }
+    let seen =
+      if device.state == .pending {
+        "Waiting for confirmation"
+      } else if device.connected {
+        "Connected now"
+      } else if let last = device.lastSeenAt {
+        "Last seen \(last.formatted(.relative(presentation: .named)))"
+      } else {
+        "Never connected"
+      }
+    return "\(kind) · \(seen)"
+  }
+
   private var stateFooter: String? {
     switch connection.status {
+    case .waitingForApproval where connection.inviteCode != nil:
+      "Check that your other device shows the same code, then confirm there. Nothing is sent until then."
     case .waitingForApproval:
       "Approve this iPhone on the server. Meetings wait here until then."
     case .rejected: "The server's administrator rejected this iPhone."

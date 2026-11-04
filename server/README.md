@@ -122,7 +122,7 @@ FluidAudio and term-boosting code; flowd loads no weights. Contracts:
 
 | Flag | Meaning |
 | --- | --- |
-| `--remote-listen 127.0.0.1:8090` | IP literal address for the remote listener (development 18090). The install script and server mode in the app bind 0.0.0.0:8090, so LAN, Tailscale and a local proxy all reach it. Only this listener leaves loopback; `--listen` and `--admin-listen` stay on 127.0.0.1 |
+| `--remote-listen 127.0.0.1:8090` | IP literal address for the remote listener (development 18090). The install script binds 127.0.0.1:8090; server mode in the Swift app binds 0.0.0.0:8090, and server mode in the Rust app binds 127.0.0.1:8090 until the owner opens it to the network. Only this listener leaves loopback; `--listen` and `--admin-listen` stay on 127.0.0.1 |
 | `--data-dir <dir>` | holds `flowd-remote.sqlite`; must be owned by this user, mode 0700 |
 | `--speech-worker <path>` | worker executable, default `flowd-speech` next to flowd |
 | `--speech-models <dir>` | models the worker verifies, default `<data-dir>/Models` |
@@ -146,9 +146,26 @@ DATA="$HOME/Library/Application Support/LocalFlow Server"
 `flowd admin token create --label L [--user ID] [--ttl 1h|24h|7d] [--address ORIGIN] [--json]`
 makes a one-time pairing token, which approves one device with no sign-in; `token list` and
 `token revoke <id>` manage them. The value is printed once and stored only as a hash. On a client,
-`http://` works only on private addresses and names (FR-012a of Feature 027). Server mode, turning
-it off with `launchctl disable` and how to undo that, the auto-login need and the missing
-`flowd-meeting` are in the guide below.
+`http://` works only on private addresses and names (FR-012a of Feature 027).
+
+Feature 028 adds `list --json` and `audit --json` (structured output, `schema_version` 1),
+`user create --name N [--json]` and `rename user|device <id> --name N`
+([admin-cli.md](../specs/028-server-users-and-rewrite-warmup/contracts/admin-cli.md)); text
+`list` output is unchanged. `pair` and `enroll` take an optional `device_kind` (`mac`, `windows`,
+`iphone`) when the identity lists `device_kind` in `features`, stored once per device
+([device-kind.md](../specs/028-server-users-and-rewrite-warmup/contracts/device-kind.md)).
+`GET /v1/admin/status` reports live channel counts per device
+([admin-status.md](../specs/028-server-users-and-rewrite-warmup/contracts/admin-status.md)).
+An approved device can invite another device into its own user over its session channel
+(`device_invite`, `device_confirm`, `account_devices`; ADR 0039,
+[device-invites.md](../specs/028-server-users-and-rewrite-warmup/contracts/device-invites.md)):
+the invite redeems into a pending device that the inviting device confirms with its device key.
+The account database moves to schema version 5. Before migrating, flowd writes one copy named
+after the first version it migrates to (`flowd-remote.pre-v4.sqlite` from version 3,
+`flowd-remote.pre-v5.sqlite` from version 4), since an older flowd refuses the newer schema.
+
+Server mode in the Swift and Rust apps, turning it off with `launchctl disable` and how to undo
+that, the auto-login need, the Users page and device invites are in the guide below.
 
 Step-by-step setup, tunnel, administration and uninstall: [docs/distribution/remote-server.md](../docs/distribution/remote-server.md).
 

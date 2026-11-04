@@ -421,3 +421,18 @@ SET-419	service	service:accounts, this-device-only and the 16,384 byte bound tes
 SET-420	service	service:Sparkle, Feature 028
 SET-421	auto	test:known_speakers_model
 SET-422	auto	test:stored_values_drive_the_readers ; note:Rust has no dev variant yet, so separate dev services are not implemented
+SET-423	auto	test:server_mode_is_hidden_where_this_mac_cant_host
+SET-424	auto	test:server_mode_turns_on_opens_and_off_without_touching_the_client
+SET-425	auto	test:an_adopted_server_says_so_and_downloads_its_models
+SET-426	auto	test:the_sidebar_shows_users_only_in_server_mode
+SET-427	auto	test:lists_users_with_their_devices
+SET-428	auto	test:actions_reach_the_server_and_reload
+SET-429	auto	test:add_device_targets_the_user_by_default
+SET-430	auto	test:polls_only_while_visible ; test:due_rules
+SET-431	auto	test:an_old_server_needs_updating
+SET-432	auto	test:your_devices_remove_and_this_wasnt_me
+SET-433	auto	test:add_another_device_shows_the_invite_polls_and_confirms_with_the_code
+SET-434	auto	test:a_server_without_invites_hides_your_devices
+SET-435	auto	test:a_redeemed_invite_shows_the_code_until_confirmed
+SET-436	not-run	not-run:owner hardware, specs/028-server-users-and-rewrite-warmup/acceptance/hardware.md items 6 and 7
+SET-437	not-run	not-run:owner hardware, specs/028-server-users-and-rewrite-warmup/acceptance/hardware.md item 8

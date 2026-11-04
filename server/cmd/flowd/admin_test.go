@@ -731,6 +731,48 @@ func TestAdminListJSON(t *testing.T) {
 	}
 }
 
+// A device that redeemed an invite lists the inviting device in invited_by;
+// every other device has null.
+func TestAdminListJSONInvitedBy(t *testing.T) {
+	s := seedAccounts(t)
+	store, err := accounts.Open(s.dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, _, err := store.CreateInvite(context.Background(), make([]byte, 32), s.macbook.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := bytes.Repeat([]byte{9}, 65)
+	key[0] = 0x04
+	phone, err := store.Redeem(context.Background(), value, "iPhone", key, accounts.KindIPhone, bytes.Repeat([]byte{1}, 32))
+	store.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminEnv(t, time.Now(), s.zone, "oliver")
+	out, err := admin("--data-dir", s.dir, "list", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed adminListJSON
+	if err := json.Unmarshal([]byte(out), &listed); err != nil {
+		t.Fatal(err)
+	}
+	invited := map[int64]*int64{}
+	for _, u := range listed.Users {
+		for _, d := range u.Devices {
+			invited[d.ID] = d.InvitedBy
+		}
+	}
+	if by := invited[phone.DeviceID]; by == nil || *by != s.macbook.ID {
+		t.Fatalf("invited_by %v: %s", by, out)
+	}
+	if invited[s.macbook.ID] != nil || invited[s.studio.ID] != nil {
+		t.Fatal(out)
+	}
+}
+
 // list --json stops at 500 users or 500 devices and says so; only the last
 // listed user can have devices missing.
 func TestAdminListJSONCaps(t *testing.T) {
@@ -759,21 +801,21 @@ func TestAdminListJSONCaps(t *testing.T) {
 		}
 		return n
 	}
-	if l := listJSON(users(500), nil, ""); len(l.Users) != 500 || l.Truncated {
+	if l := listJSON(users(500), nil, nil, ""); len(l.Users) != 500 || l.Truncated {
 		t.Fatal(len(l.Users), l.Truncated)
 	}
-	if l := listJSON(users(501), nil, ""); len(l.Users) != 500 || !l.Truncated || l.Users[499].ID != 500 {
+	if l := listJSON(users(501), nil, nil, ""); len(l.Users) != 500 || !l.Truncated || l.Users[499].ID != 500 {
 		t.Fatal(len(l.Users), l.Truncated)
 	}
-	if l := listJSON(users(2), devicesOf(map[int64]int{1: 250, 2: 250}), ""); total(l) != 500 || l.Truncated {
+	if l := listJSON(users(2), devicesOf(map[int64]int{1: 250, 2: 250}), nil, ""); total(l) != 500 || l.Truncated {
 		t.Fatal(total(l), l.Truncated)
 	}
-	l := listJSON(users(3), devicesOf(map[int64]int{1: 499, 2: 3, 3: 1}), "")
+	l := listJSON(users(3), devicesOf(map[int64]int{1: 499, 2: 3, 3: 1}), nil, "")
 	if len(l.Users) != 2 || total(l) != 500 || len(l.Users[1].Devices) != 1 || !l.Truncated {
 		t.Fatal(len(l.Users), total(l), l.Truncated)
 	}
 	// Cut exactly at a user boundary: a later user with devices is cut, one without isn't missing anything.
-	l = listJSON(users(3), devicesOf(map[int64]int{1: 500, 2: 0, 3: 1}), "")
+	l = listJSON(users(3), devicesOf(map[int64]int{1: 500, 2: 0, 3: 1}), nil, "")
 	if len(l.Users) != 2 || total(l) != 500 || !l.Truncated {
 		t.Fatal(len(l.Users), total(l), l.Truncated)
 	}

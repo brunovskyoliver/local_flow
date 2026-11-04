@@ -46,6 +46,7 @@ struct Seen {
     closed: usize,
     messages: Vec<Value>,
     binding: [u8; 32],
+    bindings: Vec<[u8; 32]>,
 }
 
 #[derive(Clone)]
@@ -63,6 +64,10 @@ impl Counters {
     }
     pub fn binding(&self) -> [u8; 32] {
         self.0.lock().unwrap().binding
+    }
+    /// Every channel's binding, in the order they opened.
+    pub fn bindings(&self) -> Vec<[u8; 32]> {
+        self.0.lock().unwrap().bindings.clone()
     }
 }
 
@@ -117,7 +122,11 @@ impl Transport for End {
             let reply_key = <Kem as hpke::Kem>::PublicKey::from_bytes(&base64url_decode(hello["reply_key"].as_str().unwrap()).unwrap()).unwrap();
             let mut s2c = [0; 32];
             receiver.export(b"localflow v1 s2c info", &mut s2c).unwrap();
-            receiver.export(b"localflow v1 binding", &mut self.seen.lock().unwrap().binding).unwrap();
+            let mut seen = self.seen.lock().unwrap();
+            receiver.export(b"localflow v1 binding", &mut seen.binding).unwrap();
+            let binding = seen.binding;
+            seen.bindings.push(binding);
+            drop(seen);
             let (enc_s2c, sender) = hpke::setup_sender::<Aead, Kdf, Kem, _>(&OpModeS::Base, &reply_key, &s2c, &mut OsRng.unwrap_err()).unwrap();
             self.sender = Some(sender);
             self.enc = Some(enc_s2c.to_bytes().to_vec());

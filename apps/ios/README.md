@@ -110,7 +110,17 @@ The address can change later with **Update address**, without pairing again, as 
 
 `https://` works on any host. `http://` works only for private and Tailscale literals and for `.local`, `*.ts.net` and single-label names, and the app says the connection is not TLS while content stays encrypted. The app has `NSAllowsLocalNetworking`, a `ts.net` exception and `NSLocalNetworkUsageDescription` for this. `ws://` has been tested on the Simulator only; RFC 1918 and Tailscale literals on a real iPhone are on `specs/027-remote-pairing/acceptance/hardware.md`.
 
-A server created by the Mac app's server mode has no `flowd-meeting`, so meeting handoff from the phone isn't available there. Install with `scripts/install-remote-server.sh` for that.
+A server created by the Mac app's server mode before Feature 028 has no `flowd-meeting`, so meeting handoff from the phone isn't available there until server mode is turned off and on with a Feature 028 build. Both Mac apps now bundle it.
+
+### Added from another device (Feature 028)
+
+A token can also be an invite from one of the owner's own devices: in the Rust Mac app, Settings › Server › Your devices › Add Another Device (ADR 0039). The phone pairs with it the same way, but stays pending. Settings › Server then shows a 6-digit code; the owner checks that the Mac shows the same code and confirms there. Until then the phone sends nothing. The phone can't create or confirm invites itself.
+
+The phone declares itself as `iphone` (`device_kind`) when it pairs or signs in, but only to a server whose identity lists `device_kind`. The identity is held in memory, so a sign-in after the app relaunched sends no kind and the server shows "Unknown".
+
+### Your devices
+
+Once the phone is approved, Settings › Server lists the account's devices with kind and whether each is connected now. **Remove** revokes another device after a confirmation. **This wasn't me**, on this iPhone's own row, revokes this iPhone and stops it using the server at once; the recordings stay. The list opens its own channel, which needs approval but not **Process meetings on this server**, because no audio or text is sent. It is hidden while the phone is pending and when the server doesn't offer `account_devices`.
 
 ### Tailscale
 

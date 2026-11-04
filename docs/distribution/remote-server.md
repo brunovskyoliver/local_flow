@@ -225,30 +225,66 @@ A pairing token lets a device join with no Apple or Google sign-in and no finger
 
 `--user <id>` adds the device to an existing user instead of creating a new one. `--address` adds a link to the output; the token works without one, because the client asks for the address. `--json` prints the same fields for a script. The value is shown once, by `create`, and neither the database nor the log holds it. `token list` shows states and expiry only. To remove a device that has already paired, use `revoke device <id>`. The tokens control who gets in, so send one over a private channel. Whoever uses it first gets the device slot, and the real holder then sees it refused.
 
-The same commands sit behind Settings › Server › Pairing tokens in LocalFlow and the Pairing tab in LocalFlow Server. Both show a QR code when an address was chosen. Pasting the token is safer than opening a link on an iPhone: any installed app can register the `localflow://` scheme and claim the link.
+The same commands sit behind Settings › Server › Pairing tokens in the Swift LocalFlow app, the Users page of the Rust LocalFlow app in server mode, and the Pairing tab in LocalFlow Server. Each shows a QR code when an address was chosen. Pasting the token is safer than opening a link on an iPhone: any installed app can register the `localflow://` scheme and claim the link.
 
 ## Routes (Feature 027)
 
-A client stores a server's key, so the address can change without pairing again. `--remote-listen` takes any IP literal. The install script still binds 127.0.0.1, and a server created from the app binds 0.0.0.0:8090, all networks. Existing installs keep their bind until you choose **Open to the network** in LocalFlow, which changes only that flag, keeps the previous plist and restores it if the server isn't healthy within 60 seconds.
+A client stores a server's key, so the address can change without pairing again. `--remote-listen` takes any IP literal. The install script still binds 127.0.0.1. A server created from the Swift app binds 0.0.0.0:8090, all networks; one created from the Rust app binds 127.0.0.1:8090 until the owner chooses **Open to the network**. Existing installs keep their bind until you choose **Open to the network** in LocalFlow, which changes only that flag, keeps the previous plist and restores it if the server isn't healthy within 60 seconds.
 
 Clients accept `https://` on any host. They accept `http://` only for loopback, RFC 1918, link-local, IPv6 unique-local and Tailscale (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) literals, and for `.local`, `*.ts.net` and single-label names. They refuse `http://` anywhere else before connecting. With `http://` the client says the connection is not TLS; content stays encrypted by the channel either way. flowd generates no certificates.
 
 A reverse proxy must pass WebSocket upgrades and leave the path alone. If it doesn't, the client reports that the address isn't a usable LocalFlow route and changes nothing.
 
-## Server mode (Feature 027)
+## Server mode (Features 027 and 028)
 
-Settings › Server › Server mode turns any Mac with LocalFlow into a server, with no script. It copies the bundled helpers into the data directory, runs `flowd admin init`, loads the agent, and shows the addresses, fingerprint and anything missing. Models download only after you confirm.
+Server mode turns a Mac with LocalFlow into a server, with no script. The Swift app has it in Settings › Server › Server mode (Feature 027). The Rust app has it on Apple silicon Macs only, never on Windows, in two places (Feature 028): the "This is the server" choice in onboarding, and Settings › Server › Server mode. Both copy the bundled helpers (`flowd`, `flowd-speech`, `FluidAudio_FluidAudio.bundle`, `localflow-whisper-engine` and `flowd-meeting`) into `$DATA/bin`, run `flowd admin init`, write and load the same two agents with the same labels, ports and folders as the install script, and show the addresses, fingerprint and anything missing. Models download only after you confirm.
 
 - **The Mac has to stay logged in.** The agent runs in the login session and its key is in the login Keychain. A server-mode Mac that restarts unattended needs automatic login.
 - **Turning off uses `launchctl disable`**, after `bootout`, so the server stays off across logins. Accounts, tokens, models and the identity stay. Turning server mode on again undoes it. So do `scripts/install-remote-server.sh`, which runs `launchctl enable` before it loads an agent, and Restart in LocalFlow Server. By hand: `launchctl enable "gui/$(id -u)/org.localflow.LocalFlow.remote"`, and the same for `.remote.mtplx`, then `launchctl bootstrap`.
-- **An existing server is adopted, not rewritten.** Its plist, binaries and flags stay, including `--google-client-id`.
-- **`flowd-meeting` isn't bundled**, so a server created from the app can't process meetings sent from a phone, and Settings says so. Meetings from a Mac are not affected. Install with the script if you need phone meeting handoff.
+- **An existing server is adopted, not rewritten.** Its plist, binaries and flags stay, including `--google-client-id`. The app starts, stops and administers it, and the Rust app refuses to open an adopted server to the network.
+- **Phone meeting handoff.** Both apps now bundle `flowd-meeting` and pass `--meeting-processor` when it is there. A server set up before that shows "Meetings sent from a phone: turn server mode off and on"; doing so writes the plist again with the flag.
 - **Memory.** The server loads its own models beside the local ones, so one Mac doing both uses more memory. This has not been measured yet.
 - **macOS Firewall** may block flowd. If no client has connected, Settings points to it.
 
+What the Rust app does differently:
+
+- **Loopback first.** A new server listens on 127.0.0.1:8090 only. **Open to the network** changes only `--remote-listen`, keeps the previous plist and restores it unless the server is healthy within 60 seconds. If the app quits during those 60 seconds, the next launch restores the previous plist.
+- **Models.** The server path lists Parakeet v3, Whisper large-v3-turbo, the offline diarization models, the MTPLX runtime and a language model sized for the Mac's memory, each with its size and the total, checks them against free disk and memory, and offers a smaller model or starting without rewriting when they don't fit. It installs the language model without registering the client's own `.mtplx` and `.flowd` agents, then fetches the speech models with `flowd-speech provision --models "$DATA/Models" --meeting`.
+- **First token.** The last onboarding step creates one token with `token create --label <owner's name> --ttl 24h --address <origin> --json` and shows it as text, link and QR code. The value stays in memory for that step only.
+- **State.** Server-mode settings live in `server-mode.json` in the app's data folder, with the Swift key names (`serverMode.enabled`, `serverMode.customAddress`, `serverMode.plistSHA256`, `serverMode.openPending`, `serverMode.helpersStamp`). A plist whose hash isn't the one recorded there, including one the Swift app wrote, is treated as adopted.
+- **Admin.** Every admin call runs the data directory's own `bin/flowd admin --data-dir "$DATA" [--dev]`, never the app's copy, so a newer app can't migrate an adopted server's database past what that server can open. Development builds touch only the `.dev` labels and ports 18090-18093.
+
+## Users and devices (Feature 028)
+
+`flowd admin` has structured output and two user commands (contract: `specs/028-server-users-and-rewrite-warmup/contracts/admin-cli.md`):
+
+```sh
+"$F" "${A[@]}" list --json                       # users with nested devices, schema_version 1
+"$F" "${A[@]}" audit --limit 50 --json           # newest first
+"$F" "${A[@]}" user create --name "Ana" [--json] # an approved user with no sign-in, for token pairing
+"$F" "${A[@]}" rename user <id> --name "Ana B"
+"$F" "${A[@]}" rename device <id> --name "Ana's iPhone"
+```
+
+`list --json` gives each device's `kind` (`mac`, `windows`, `iphone`, or `null` for "Unknown"), RFC 3339 UTC times, and `invited_by` for a device added through an invite. It stops at 500 users or 500 devices and then sets `truncated`. It never prints keys, token hashes or provider subjects. `list` without `--json` prints exactly what it printed before. An older flowd given `--json` exits 1 with its usage line, and readers take that as "this server needs updating".
+
+Clients declare their kind when they pair or enroll, but only to a server whose `/v1/remote/identity` lists `device_kind` in `features`. The Rust app sends `mac` or `windows`, the Swift Mac app `mac`, and the iPhone app `iphone`. A stored kind never changes; devices that paired before stay "Unknown" until they enroll again. Schema version 4 adds `devices.kind` and the audit actions `user_create` and `rename`.
+
+`GET /v1/admin/status` on the admin port gains `channels`: the number of open channels and, per device, its authenticated channels. It is `null` without `--remote-listen` and carries device IDs and counts only.
+
+The **Users page** in the Rust app is in the sidebar only while server mode is on. It shows each user with name, sign-in kind, state and creation date, and that user's devices with name, kind, dates, "Added from <device>" for invited devices, and whether each is connected now. It approves, rejects, revokes and renames users and devices (reject and revoke ask first), creates users by name, and has **Add device…** per user, which creates a 24-hour token for that user (`token create --user <id>`). **New person…** is a separate choice that creates a token without `--user`. Below are the live tokens with their target user and expiry, and the last 20 audit rows. The page reads `list --json`, `token list --json`, `audit --json` and the status every 5 s while it and its window are visible, not at all otherwise, and again right after each action.
+
+## Device invites (Feature 028, ADR 0039)
+
+An approved device can add another device to its own user without any step on the server Mac. In the Rust app, Settings › Server › Your devices › **Add Another Device** asks the server for an invite and shows it as text, link and QR code. The invite is a pairing token that works once, for 10 minutes, and only for the inviting device's user. The new device pairs with it as with any token, but it lands as pending. Both screens then show the same 6-digit code; the owner compares them and presses **Confirm** on the inviting device, which signs the confirmation with its device key. **Decline**, or 10 minutes without a confirmation, removes the pending device.
+
+Limits: at most 3 open invites per user and 10 invites per device per hour, and the server-wide cap of 100 live tokens counts invites too. Past any of them the server answers `busy`. Revoking the inviting device or its user revokes its open invites and deletes their pending devices. Schema version 5 adds the token `purpose`, the invite states and the audit actions `invite_create`, `invite_confirm`, `invite_decline` and `invite_expire`. Before migrating, flowd copies the database once, named after the first version it migrates to (`flowd-remote.pre-v4.sqlite` from version 3, `flowd-remote.pre-v5.sqlite` from version 4); an older flowd refuses the newer schema, so that copy is the way back. flowd sweeps expired invites at most once a minute.
+
+**Your devices**, on the Rust app and the iPhone app, lists the user's devices (not revoked ones) with kind and whether each is connected. **Remove** revokes another device; **This Wasn't Me**, on this device's own row, revokes this device. A device can't see or touch another user's devices. Only the Rust app can create and confirm invites; the iPhone app can redeem one, shows the code while it waits, and has "Your devices". Both apps hide "Your devices" when the server doesn't offer `account_devices` (an older flowd answers `not_offered`).
+
 ## The LocalFlow Server app
 
-`scripts/install-server-app.sh <ssh-host>` builds the LocalFlow Server menu bar app on a Mac with Xcode and installs it in the server's `/Applications` (ADR 0032). It shows flowd, both speech workers, MTPLX and oMLX as Ready, Loading or Down, restarts flowd and MTPLX, tails `flowd.log`, keeps request stats that survive log rotation, approves and revokes devices with the commands above, creates and revokes pairing tokens on its Pairing tab (it runs in the GUI session, so the Keychain is unlocked), and switches the rewrite model and the summaries backend with a rollback if the agent doesn't come back healthy. The installer starts flowd with `--admin-listen 127.0.0.1:8093` for it; the token is in `$DATA/admin-token` (0600), and the admin routes are not on 8090 or 8091. See [server-app.md](server-app.md).
+`scripts/install-server-app.sh <ssh-host>` builds the LocalFlow Server menu bar app on a Mac with Xcode and installs it in the server's `/Applications` (ADR 0032). It shows flowd, both speech workers, MTPLX and oMLX as Ready, Loading or Down, restarts flowd and MTPLX, tails `flowd.log`, keeps request stats that survive log rotation, approves and revokes devices with the commands above (it reads `list --json` and shows each device's kind, and falls back to the text `list` against an older flowd), creates and revokes pairing tokens on its Pairing tab (it runs in the GUI session, so the Keychain is unlocked), and switches the rewrite model and the summaries backend with a rollback if the agent doesn't come back healthy. The installer starts flowd with `--admin-listen 127.0.0.1:8093` for it; the token is in `$DATA/admin-token` (0600), and the admin routes are not on 8090 or 8091. See [server-app.md](server-app.md).
 
 ## Uninstall
 

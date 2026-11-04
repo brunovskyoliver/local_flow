@@ -628,6 +628,21 @@ pub struct Identity {
     pub suite: String,
     pub server_key: String,
     pub fingerprint: String,
+    /// Optional capabilities such as `device_kind` (Feature 028). Absent, or not a list, is none;
+    /// names that aren't strings are skipped. Unknown identity keys are ignored.
+    #[serde(default, deserialize_with = "lenient_names")]
+    pub features: Vec<String>,
+}
+
+fn lenient_names<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let value = Value::deserialize(d)?;
+    Ok(value.as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect())
+}
+
+impl Identity {
+    pub fn has_feature(&self, name: &str) -> bool {
+        self.features.iter().any(|f| f == name)
+    }
 }
 
 /// First 16 bytes of SHA-256 over the raw key, as eight groups of four hex digits.
@@ -2812,13 +2827,26 @@ mod tests {
             out
         };
         assert_eq!(base64url_decode(&encoded).unwrap(), key);
-        let good = Identity { schema_version: 1, server: serde_json::json!({}), protocol_versions: vec![1], suite: IDENTITY_SUITE.into(), server_key: encoded, fingerprint: fp };
+        let good = Identity { schema_version: 1, server: serde_json::json!({}), protocol_versions: vec![1], suite: IDENTITY_SUITE.into(), server_key: encoded, fingerprint: fp, features: vec![] };
         assert_eq!(good.validated_key().unwrap(), key);
         assert_eq!(Identity { fingerprint: "0".into(), ..good.clone() }.validated_key(), None);
         assert_eq!(Identity { schema_version: 2, ..good.clone() }.validated_key(), None);
         assert_eq!(Identity { protocol_versions: vec![2], ..good.clone() }.validated_key(), None);
         assert_eq!(Identity { suite: "x".into(), ..good.clone() }.validated_key(), None);
         assert_eq!(Identity { server_key: "AAAA".into(), ..good }.validated_key(), None);
+    }
+
+    /// T041: `features` is optional and lenient, and unknown identity keys are ignored.
+    #[test]
+    fn identity_features_are_lenient() {
+        let base = r#""schema_version":1,"server":"flowd/1","protocol_versions":[1],"suite":"s","server_key":"k","fingerprint":"f""#;
+        let parse = |extra: &str| serde_json::from_str::<Identity>(&format!("{{{base}{extra}}}")).unwrap();
+        assert!(parse("").features.is_empty(), "an older server");
+        let newer = parse(r#","features":["device_kind","device_invite"],"something_new":{"a":1}"#);
+        assert!(newer.has_feature("device_kind") && newer.has_feature("device_invite") && !newer.has_feature("x"));
+        assert_eq!(parse(r#","features":["device_kind",7,null]"#).features, ["device_kind"]);
+        assert!(parse(r#","features":"device_kind""#).features.is_empty());
+        assert!(parse(r#","features":null"#).features.is_empty());
     }
 
     fn speaker(db: &Db, id: &str, name: &str) {

@@ -66,7 +66,7 @@ impl Remote {
 
     pub fn native(credentials: Arc<dyn Credentials>) -> Arc<Remote> {
         let platform = Arc::new(Platform(credentials.clone()));
-        Remote::new(Enrollment::new(Parts { secrets: platform.clone(), keys: platform, identity: Arc::new(HttpIdentity), transports: Arc::new(WebSockets::default()), now: Box::new(system_now), device_name: credentials.device_name() }))
+        Remote::new(Enrollment::new(Parts { secrets: platform.clone(), keys: platform, identity: Arc::new(HttpIdentity), transports: Arc::new(WebSockets::default()), now: Box::new(system_now), device_name: credentials.device_name(), device_kind: credentials.device_kind() }))
     }
 }
 
@@ -75,15 +75,20 @@ impl Remote {
 // ponytail: the last operation to finish writes all of `remote.*`; pages keep one running through
 // `busy` and the refresh loop skips while one runs, a per-field merge if that ever loses a state.
 pub fn run<V: 'static, T: Send + 'static>(cx: &mut Context<V>, op: impl FnOnce(&Enrollment) -> T + Send + 'static, done: impl FnOnce(&mut V, T, &mut Context<V>) + 'static) {
+    run_remote(cx, move |r| op(&r.enrollment), done);
+}
+
+/// `run` with the pool too, for session operations such as `account_devices`.
+pub fn run_remote<V: 'static, T: Send + 'static>(cx: &mut Context<V>, op: impl FnOnce(&Remote) -> T + Send + 'static, done: impl FnOnce(&mut V, T, &mut Context<V>) + 'static) {
     let remote = cx.global_mut::<Core>().remote();
     remote.enrollment.load(RemoteSettings::from_prefs(&cx.global::<Core>().prefs));
     let generation = remote.enrollment.generation();
     cx.spawn(async move |this, cx| {
-        let enrollment = remote.enrollment.clone();
+        let shared = remote.clone();
         let (answer, after) = cx
             .background_spawn(async move {
-                let answer = op(&enrollment);
-                (answer, enrollment.settings())
+                let answer = op(&shared);
+                (answer, shared.enrollment.settings())
             })
             .await;
         let _ = this.update(cx, |this, cx| {
@@ -310,6 +315,8 @@ pub struct PairForm {
     pub sheet: Option<Sheet>,
     pub busy: bool,
     pub error: Option<String>,
+    /// An invite redeemed: the code this device shows until the inviting device confirms it.
+    pub code: Option<String>,
     /// This attempt turned the feature on, so Cancel turns it off again.
     turned_on: bool,
     /// Where the sheet opened: a background answer has no window to clear the fields with.
@@ -322,7 +329,7 @@ fn text(input: &Entity<InputState>, cx: &App) -> String {
 
 impl PairForm {
     pub fn new<V: 'static>(window: &mut Window, cx: &mut Context<V>) -> PairForm {
-        PairForm { address: cx.new(|cx| InputState::new(window, cx)), token: cx.new(|cx| InputState::new(window, cx).masked(true)), sheet: None, busy: false, error: None, turned_on: false, window: None }
+        PairForm { address: cx.new(|cx| InputState::new(window, cx)), token: cx.new(|cx| InputState::new(window, cx).masked(true)), sheet: None, busy: false, error: None, code: None, turned_on: false, window: None }
     }
 
     fn valid(&self, cx: &App) -> bool {
@@ -415,7 +422,7 @@ fn confirm_pair<V: RemotePage>(this: &mut V, cx: &mut Context<V>) {
     form.busy = true;
     form.error = None;
     cx.notify();
-    run(cx, move |e| e.pair(&token), finish);
+    run(cx, move |e| e.pair(&token).map(|()| e.invite_code()), finish);
 }
 
 fn confirm_address<V: RemotePage>(this: &mut V, cx: &mut Context<V>) {
@@ -427,14 +434,20 @@ fn confirm_address<V: RemotePage>(this: &mut V, cx: &mut Context<V>) {
     form.busy = true;
     form.error = None;
     cx.notify();
-    run(cx, move |e| e.update_address(&draft), finish);
+    run(cx, move |e| e.update_address(&draft).map(|()| None), finish);
 }
 
-fn finish<V: RemotePage>(this: &mut V, result: Result<(), EnrollError>, cx: &mut Context<V>) {
+fn finish<V: RemotePage>(this: &mut V, result: Result<Option<String>, EnrollError>, cx: &mut Context<V>) {
     let form = this.form();
     form.busy = false;
     match result {
-        Ok(()) => {
+        // Redeemed an invite: the sheet shows the code until the other device confirms.
+        Ok(Some(code)) => {
+            form.code = Some(code);
+            clear(form, cx);
+            wait_for_confirmation(cx);
+        }
+        Ok(None) => {
             form.sheet = None;
             form.turned_on = false;
             clear(form, cx);
@@ -442,6 +455,43 @@ fn finish<V: RemotePage>(this: &mut V, result: Result<(), EnrollError>, cx: &mut
         // The sheet went with the turn off.
         Err(EnrollError::TurnedOff) => {}
         Err(error) => form.error = Some(failure_message(&error).to_string()),
+    }
+    this.remote_changed(cx);
+}
+
+/// Every 2 s while the code shows: a refresh, which succeeds once the inviting device confirmed.
+fn wait_for_confirmation<V: RemotePage>(cx: &mut Context<V>) {
+    cx.spawn(async move |this, cx| {
+        cx.background_executor().timer(Duration::from_secs(2)).await;
+        let _ = this.update(cx, |this, cx| {
+            if this.form_ref().code.is_some() {
+                run(cx, |e| {
+                    e.refresh_now();
+                    e.invite_code()
+                }, confirmation_checked);
+            }
+        });
+    })
+    .detach();
+}
+
+fn confirmation_checked<V: RemotePage>(this: &mut V, code: Option<String>, cx: &mut Context<V>) {
+    let approved = settings::remote_state(&cx.global::<Core>().prefs) == "approved";
+    let form = this.form();
+    // Cancelled meanwhile.
+    if form.code.is_none() {
+        return;
+    }
+    if code.is_some() {
+        wait_for_confirmation(cx);
+        return;
+    }
+    form.code = None;
+    if approved {
+        form.sheet = None;
+        form.turned_on = false;
+    } else {
+        form.error = Some("The other device declined, or the time to confirm ran out. Ask it for a new invite.".into());
     }
     this.remote_changed(cx);
 }
@@ -462,6 +512,7 @@ pub fn cancel<V: RemotePage>(this: &mut V, window: &mut Window, cx: &mut Context
     form.sheet = None;
     form.busy = false;
     form.error = None;
+    form.code = None;
     form.token.update(cx, |s, cx| s.set_value("", window, cx));
     form.address.update(cx, |s, cx| s.set_value("", window, cx));
     if std::mem::take(&mut form.turned_on) {
@@ -487,6 +538,14 @@ pub fn sheet_view<V: RemotePage>(this: &V, window: &Window, cx: &mut Context<V>)
     let address_input = surface("server.rack", "https://a.example, https://b.example", Input::new(&form.address).id("settings.remoteServerURL").aria_label("Server address").accessibility_id("settings.remoteServerURL"), &form.address, cx);
     let notice = address::list_notice(&draft);
     let mut body = v_flex().w(px(460.)).p(px(24.)).gap(px(12.));
+    if let Some(code) = &form.code {
+        return Some(
+            body.child(t("Confirm on your other device").font(17.0, 500.))
+                .child(div().id("settings.remoteInviteCode").child(t(flow_core::remote::devices::grouped(code)).font(28., 600.)).test_support())
+                .child(t("Your other device shows a code too. If it's the same, confirm there. This waits until you do.").size(13.).line_spacing(3.).swift_lines())
+                .child(h_flex().w_full().justify_end().child(button("settings.remotePairCancel", "Cancel", cx).on_click(cx.listener(|this, _, w, cx| cancel(this, w, cx))))),
+        );
+    }
     match sheet {
         Sheet::Pair => {
             let consent = settings::consent_text(&cx.global::<Core>().prefs);
@@ -555,9 +614,9 @@ pub(crate) mod testing {
         if pinned {
             secrets.write("server-key", &key).unwrap();
         }
-        let identity = Identity { schema_version: 1, server: serde_json::json!({}), protocol_versions: vec![1], suite: "x25519-hkdfsha256-chacha20poly1305".into(), server_key: base64url_encode(&key), fingerprint: fingerprint_of(&key) };
+        let identity = Identity { schema_version: 1, server: serde_json::json!({}), protocol_versions: vec![1], suite: "x25519-hkdfsha256-chacha20poly1305".into(), server_key: base64url_encode(&key), fingerprint: fingerprint_of(&key), features: vec![] };
         let keys = Arc::new(MemoryDeviceKeys::default());
-        let remote = Remote::new(Enrollment::new(Parts { secrets: secrets.clone(), keys: keys.clone(), identity: Arc::new(Fixed(identity)), transports: Arc::new(script), now: Box::new(system_now), device_name: "Test".into() }));
+        let remote = Remote::new(Enrollment::new(Parts { secrets: secrets.clone(), keys: keys.clone(), identity: Arc::new(Fixed(identity)), transports: Arc::new(script), now: Box::new(system_now), device_name: "Test".into(), device_kind: None }));
         cx.global_mut::<Core>().remote = Some(remote);
         Installed { counters, key, secrets, keys }
     }

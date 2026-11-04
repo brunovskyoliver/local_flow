@@ -12,6 +12,10 @@ pub(crate) enum Modal {
     Context(ContextKind),
     TurnOff,
     Download,
+    /// "Add another device".
+    AddDevice,
+    /// Remove a device from "Your devices": its ID and whether it's this one.
+    RemoveDevice(i64, bool),
 }
 
 /// An installed app's name and icon, or the bundle ID and no icon.
@@ -59,6 +63,7 @@ impl SettingsPage {
         match modal {
             Some(Modal::TurnOff) => self.confirm_turn_off(cx),
             Some(Modal::Download) => self.run("download", cx),
+            Some(Modal::RemoveDevice(id, this_device)) => self.remove_device(id, this_device, cx),
             _ => {}
         }
         cx.notify();
@@ -106,6 +111,7 @@ impl SettingsPage {
         }
         match (key, self.modal) {
             ("escape", None) => window.focus(&self.focus, cx),
+            ("escape", Some(Modal::AddDevice)) => self.close_add_device(cx),
             ("escape", Some(_)) => self.close_modal(cx),
             ("enter", Some(Modal::ConsentUpdate)) => self.confirm_consent_update(cx),
             ("enter", Some(Modal::Context(_))) => self.close_modal(cx),
@@ -128,8 +134,18 @@ impl SettingsPage {
                 let (title, message) = self.download_copy();
                 self.alert(title, message, false, "Download", cx).into_any_element()
             }
+            Modal::AddDevice => self.add_device_sheet(cx).into_any_element(),
+            Modal::RemoveDevice(id, this_device) => {
+                let name = self.devices.list.iter().flatten().find(|d| d.id == id).map_or("this device".to_string(), |d| d.name.clone());
+                let (title, message, action) = if this_device {
+                    (format!("Remove {name}?"), "Use this if you didn't add this device. It stops using your server now and needs a new invite or token to come back.".to_string(), "Remove")
+                } else {
+                    (format!("Remove {name}?"), "It stops using your server now. Adding it again needs a new invite.".to_string(), "Remove")
+                };
+                self.alert(title, message, true, action, cx).into_any_element()
+            }
         };
-        if matches!(modal, Modal::TurnOff | Modal::Download) {
+        if matches!(modal, Modal::TurnOff | Modal::Download | Modal::RemoveDevice(..)) {
             return Some(sheet_overlay("settings.modal", window, cx, body).into_any_element());
         }
         // The context sheet sets its own surface; the consent sheet stays on the native sheet's fill.
@@ -333,7 +349,7 @@ const KIND_ERROR: &str = "Enter a bundle ID such as com.example.App. At most 200
 
 /// A SwiftUI default `Button` in a sheet, which doesn't inherit the page's button style: 24 high,
 /// 208 on white in light and 68 on 27 in dark, sampled from `audit/mac/settings/consent-*-ref.png`.
-fn sheet_button(id: impl Into<ElementId>, label: &'static str, cx: &App) -> FlowButton {
+pub(super) fn sheet_button(id: impl Into<ElementId>, label: &'static str, cx: &App) -> FlowButton {
     let pl = pal(cx);
     native_button(id, label).fill(pl.ink.opacity(0.2)).text_color(pl.ink)
 }

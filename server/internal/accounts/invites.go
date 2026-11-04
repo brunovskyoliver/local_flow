@@ -385,3 +385,23 @@ func (s *Store) RevokeAccountDevice(ctx context.Context, callerID, targetID int6
 	}
 	return err
 }
+
+// Inviters maps each device that redeemed an invite to the device that created
+// it, for flowd admin list --json. A declined invite has no device left.
+func (s *Store) Inviters(ctx context.Context) (map[int64]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id, inviter_device_id FROM pairing_tokens
+		WHERE purpose = 'invite' AND device_id IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	inviters := map[int64]int64{}
+	for rows.Next() {
+		var device, inviter int64
+		if err := rows.Scan(&device, &inviter); err != nil {
+			return nil, err
+		}
+		inviters[device] = inviter
+	}
+	return inviters, rows.Err()
+}

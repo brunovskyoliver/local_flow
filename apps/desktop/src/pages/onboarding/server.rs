@@ -378,7 +378,7 @@ impl OnboardingPage {
             body.push(any(h_flex().w_full().gap(px(8.)).child(div().flex_1().child(t(error.clone()).size(12.).color(p.warning))).child(prototype_button("onboarding.serverTokenRetry", "Retry").on_click(retry))));
         }
         body.extend(self.server_messages(cx));
-        body.push(any(note("lock.shield", "The token isn't saved anywhere. Make another in Settings › Server when you need one.".into(), cx)));
+        body.push(any(note("lock.shield", "The token isn't saved anywhere. Make another on the Users page when you need one.".into(), cx)));
         body
     }
 

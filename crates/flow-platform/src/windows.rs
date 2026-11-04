@@ -171,6 +171,9 @@ impl crate::Credentials for WinCredentials {
     fn open_url(&self, url: &str) -> Result<(), Unavailable> {
         crate::win::system::open_url(url)
     }
+    fn device_kind(&self) -> Option<String> {
+        Some("windows".into())
+    }
     fn secret_data(&self, name: &str) -> Result<Option<Vec<u8>>, Unavailable> {
         crate::win::secrets::read(name)
     }

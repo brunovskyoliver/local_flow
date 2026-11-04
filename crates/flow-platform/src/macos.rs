@@ -1109,6 +1109,9 @@ impl crate::Credentials for MacCredentials {
     fn device_key_delete(&self, _: &[u8]) -> Result<(), Unavailable> {
         Ok(())
     }
+    fn device_kind(&self) -> Option<String> {
+        Some("mac".into())
+    }
     fn device_name(&self) -> String {
         unsafe extern "C" {
             fn gethostname(name: *mut std::ffi::c_char, length: usize) -> i32;

@@ -1529,12 +1529,14 @@ fn answer(cx: &mut TestAppContext, win: Win, title: &str, button: &str) {
     frame(cx, win);
 }
 
+// parity: SET-423
 #[flow_ui::gpui::test]
 async fn server_mode_is_hidden_where_this_mac_cant_host(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
     assert!(!has(cx, r.win, "settings.serverMode"), "Windows, Intel Macs and a redirected data folder");
 }
 
+// parity: SET-424
 #[flow_ui::gpui::test]
 async fn server_mode_turns_on_opens_and_off_without_touching_the_client(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
@@ -1570,6 +1572,7 @@ async fn server_mode_turns_on_opens_and_off_without_touching_the_client(cx: &mut
     std::fs::remove_file(file).unwrap();
 }
 
+// parity: SET-425
 #[flow_ui::gpui::test]
 async fn an_adopted_server_says_so_and_downloads_its_models(cx: &mut TestAppContext) {
     let r = rig(cx, "", |_| {});
@@ -1592,4 +1595,139 @@ async fn an_adopted_server_says_so_and_downloads_its_models(cx: &mut TestAppCont
     click(cx, r.win, "settings.serverMode");
     answer(cx, r.win, "Start the server on this Mac?", "Start");
     assert!(!has(cx, r.win, "settings.serverModeOpen"), "an adopted server is never rewritten");
+}
+
+// Feature 028 US4: device invites and "Your devices".
+
+/// A fixture message from `fixtures/remote/messages/valid`, with `op` set and `edit` applied.
+fn wire(name: &str, op: i64, edit: impl FnOnce(&mut serde_json::Value)) -> Reply {
+    let path = format!("{}/../../fixtures/remote/messages/valid/{name}.json", env!("CARGO_MANIFEST_DIR"));
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    v["op"] = op.into();
+    edit(&mut v);
+    Reply::Json(v)
+}
+
+/// An approved device on a scripted server: one refresh, then `replies` on one session channel.
+fn devices_rig(cx: &mut TestAppContext, replies: Vec<Reply>) -> (Rig, crate::remote::testing::Installed) {
+    use flow_core::remote::{DeviceKeys, Secrets};
+    let r = rig(cx, "", |_| {});
+    let server = cx.update(|cx| install(cx, [vec![Reply::ready(), Reply::tokens("lfa_1", "lfr_2"), Reply::ready()], replies].concat(), true));
+    let (handle, _) = server.keys.create().unwrap();
+    server.secrets.write("device-key", &handle).unwrap();
+    server.secrets.write("refresh-token", b"lfr_1").unwrap();
+    cx.update(|cx| {
+        let p = &mut cx.global_mut::<Core>().prefs;
+        p.set("remote.enabled", true);
+        p.set("remote.serverURL", "https://flow.example.com");
+        p.set("remote.state", "approved");
+        p.set("remote.consentVersion", 2);
+    });
+    set(cx, r.win, |p, _, cx| p.refresh(cx));
+    (r, server)
+}
+
+fn only_this_device(v: &mut serde_json::Value) {
+    v["devices"].as_array_mut().unwrap().truncate(1);
+}
+
+fn wait(cx: &mut TestAppContext, win: Win, seconds: u64) {
+    cx.executor().advance_clock(Duration::from_secs(seconds));
+    frame(cx, win);
+}
+
+// parity: SET-433
+#[flow_ui::gpui::test]
+async fn add_another_device_shows_the_invite_polls_and_confirms_with_the_code(cx: &mut TestAppContext) {
+    let (r, server) = devices_rig(cx, vec![
+        wire("account_devices_reply", 1, only_this_device),
+        wire("device_invite_reply", 2, |_| {}),
+        wire("account_devices_reply", 3, only_this_device),
+        wire("account_devices_reply", 4, |_| {}),
+        wire("device_confirm_reply", 5, |_| {}),
+        wire("account_devices_reply", 6, |v| v["devices"][1].as_object_mut().unwrap().remove("invite").map_or((), |_| ())),
+        wire("account_devices_reply", 7, |_| {}),
+    ]);
+    let w = r.win;
+    assert!(has(cx, w, "settings.yourDevices"));
+    assert_saw(&["Your devices", "Oliver's MacBook (this device)", "Mac · Connected"]);
+    click(cx, w, "settings.addDevice");
+    assert!(has(cx, w, "settings.addDeviceQR"));
+    assert_saw(&["localflow://pair?address=https%3A%2F%2Fflow.example.com#token=lfp_"]);
+    let lists = |s: &crate::remote::testing::Installed| s.counters.messages().iter().filter(|m| m["type"] == "account_devices").count();
+    assert_eq!(lists(&server), 1);
+    wait(cx, w, 2);
+    assert_eq!(lists(&server), 2, "polled while the sheet shows");
+    assert!(!has(cx, w, "settings.addDeviceCode"), "nobody redeemed yet");
+    wait(cx, w, 2);
+    let own = flow_core::remote::DeviceKeys::public_key(&*server.keys, &[1]).unwrap();
+    let key = core::base64url_decode("BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU").unwrap();
+    let code = flow_core::remote::devices::device_code(&own, &key, &[0x33; 32]);
+    assert!(has(cx, w, "settings.addDeviceCode"));
+    assert_saw(&[&flow_core::remote::devices::grouped(&code), "Confirm only if it's the same"]);
+    click(cx, w, "settings.addDeviceConfirm");
+    let sent = server.counters.messages();
+    let confirm = sent.iter().find(|m| m["type"] == "device_confirm").unwrap();
+    assert_eq!((confirm["invite_id"].as_i64(), confirm["accept"].as_bool()), (Some(12), Some(true)));
+    assert_saw(&["Added. The other device can use your server now."]);
+    let before = lists(&server);
+    wait(cx, w, 4);
+    assert_eq!(lists(&server), before, "no polling once confirmed");
+    click(cx, w, "settings.addDeviceDone");
+    assert_eq!(read(cx, w, |p, _| p.modal), None);
+    wait(cx, w, 4);
+    assert_eq!(lists(&server), before + 1, "one list on closing, then nothing");
+}
+
+// parity: SET-432
+#[flow_ui::gpui::test]
+async fn your_devices_remove_and_this_wasnt_me(cx: &mut TestAppContext) {
+    let approved = |v: &mut serde_json::Value| {
+        v["devices"][1]["state"] = "approved".into();
+        v["devices"][1].as_object_mut().unwrap().remove("invite");
+    };
+    let (r, server) = devices_rig(cx, vec![wire("account_devices_reply", 1, approved), wire("account_devices_reply", 2, only_this_device), wire("account_devices_reply-empty", 3, |_| {})]);
+    let w = r.win;
+    assert_saw(&["Oliver's iPhone", "Unknown · Never seen"]);
+    click(cx, w, "settings.yourDeviceRemove.9");
+    assert_saw(&["Remove Oliver's iPhone?"]);
+    click(cx, w, "settings.alert.confirm");
+    let last = server.counters.messages().last().cloned().unwrap();
+    assert_eq!((last["action"].as_str(), last["device_id"].as_i64()), (Some("revoke"), Some(9)));
+    assert!(!has(cx, w, "settings.yourDeviceRemove.9"));
+    click(cx, w, "settings.yourDeviceNotMe.3");
+    click(cx, w, "settings.alert.confirm");
+    let last = server.counters.messages().last().cloned().unwrap();
+    assert_eq!((last["action"].as_str(), last["device_id"].as_i64()), (Some("revoke"), Some(3)));
+    assert_eq!(pref_s(cx, "remote.state").as_deref(), Some("revoked"), "this device's own removal");
+    assert!(!has(cx, w, "settings.yourDevices"));
+}
+
+// parity: SET-434
+#[flow_ui::gpui::test]
+async fn a_server_without_invites_hides_your_devices(cx: &mut TestAppContext) {
+    let (r, _server) = devices_rig(cx, vec![Reply::error("not_offered")]);
+    assert!(!has(cx, r.win, "settings.yourDevices"));
+    assert!(!has(cx, r.win, "settings.addDevice"));
+}
+
+// parity: SET-435
+#[flow_ui::gpui::test]
+async fn a_redeemed_invite_shows_the_code_until_confirmed(cx: &mut TestAppContext) {
+    let r = rig(cx, "", |_| {});
+    let w = r.win;
+    let server = cx.update(|cx| install(cx, vec![Reply::ready(), wire("enrolled-invite", 1, |_| {}), Reply::ready(), Reply::error("not_approved"), Reply::ready(), Reply::error("not_approved"), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")], false));
+    click(cx, w, "settings.remotePairWithToken");
+    fill_pair(cx, w, "https://flow.example.com", &server.token());
+    click(cx, w, "settings.remotePairConfirm");
+    frame(cx, w);
+    assert_eq!(pref_s(cx, "remote.state").as_deref(), Some("pending"));
+    assert!(has(cx, w, "settings.remoteInviteCode"));
+    assert_saw(&["Confirm on your other device"]);
+    assert_eq!(read(cx, w, |p, cx| p.pair.token.read(cx).value().to_string()), "", "the token left the field");
+    wait(cx, w, 2);
+    assert!(has(cx, w, "settings.remoteInviteCode"), "still waiting");
+    wait(cx, w, 2);
+    assert_eq!(pref_s(cx, "remote.state").as_deref(), Some("approved"));
+    assert_eq!(read(cx, w, |p, _| p.pair.sheet), None);
 }

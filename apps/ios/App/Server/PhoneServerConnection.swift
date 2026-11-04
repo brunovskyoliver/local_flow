@@ -96,8 +96,8 @@ final class PhoneServerSettings: RemoteEnrollmentSettings {
 }
 
 /// This iPhone's link to the owner's LocalFlow server (User Story 4): enrollment with
-/// Google, the pinned identity, the state line, sign-out, and the channel pool meetings
-/// use. Every session channel is refused unless `settings.sendsMeetings` holds.
+/// Google, the pinned identity, the state line, sign-out, "Your devices" and the channel pool
+/// meetings use. Every meeting channel is refused unless `settings.sendsMeetings` holds.
 @MainActor
 @Observable
 final class PhoneServerConnection {
@@ -165,6 +165,8 @@ final class PhoneServerConnection {
   private(set) var reachable = true
   /// What the server offered in its last `ready`.
   private(set) var capabilities: RemoteCapabilities?
+  /// Feature 028: "Your devices", nil until loaded or when the server doesn't offer it.
+  private(set) var devices: [RemoteAccountDevice]?
   /// Feature 020: the enrollment state or a switch changed; the meeting queue looks again.
   @ObservationIgnored var onChange: (() -> Void)?
 
@@ -233,6 +235,10 @@ final class PhoneServerConnection {
   var needsSignIn: Bool { settings.origin != nil && state == .pinned && identity == nil }
   /// Anything to sign out of: an address, a pin or credentials.
   var signedIn: Bool { settings.origin != nil && state != .off }
+
+  /// Feature 028: the code to compare with the inviting device while this iPhone waits for
+  /// its confirmation, as `123 456`.
+  var inviteCode: String? { enrollment.pendingInvite.map { DeviceCode.grouped($0.code) } }
 
   var status: Status {
     if settings.remoteNotice == .updateRequired { return .updateRequired }
@@ -428,18 +434,67 @@ final class PhoneServerConnection {
     error = nil
     reachable = true
     capabilities = nil
+    devices = nil
     addressDraft = ""
     await pool.closeAll()
     onChange?()
     Self.log.notice("Signed out of the server")
   }
 
+  // MARK: Your devices (Feature 028)
+
+  /// Lists this account's devices. Hidden (nil) unless approved and the server offers it.
+  func loadDevices() async {
+    guard state == .approved else {
+      devices = nil
+      return
+    }
+    do {
+      devices = try await accountDevices()
+    } catch {
+      devices = nil
+    }
+  }
+
+  /// Remove, or "This wasn't me" on this iPhone's own row: the server revokes it and this
+  /// iPhone stops as it does for any revocation.
+  func remove(_ device: RemoteAccountDevice) async {
+    busy = true
+    defer { busy = false }
+    error = nil
+    do {
+      devices = try await accountDevices(revoke: device.id)
+      guard device.thisDevice else { return }
+      enrollment.apply(.revoked)
+      devices = nil
+      await pool.closeAll()
+      onChange?()
+    } catch {
+      self.error = "The device could not be removed. Try again."
+    }
+  }
+
+  /// One `account_devices` exchange on its own channel. It carries no audio or text, so it
+  /// needs approval but not the meetings switch.
+  private func accountDevices(revoke id: Int? = nil) async throws -> [RemoteAccountDevice]? {
+    let channel = try await openSessionChannel(forMeetings: false)
+    defer { Task { await channel.close() } }
+    guard await channel.capabilities.offers(op: "account_devices") else { return nil }
+    try await channel.send(.accountDevices(op: 1, revokeDeviceID: id))
+    switch try await channel.receive() {
+    case .accountDevicesReply(1, let devices): return devices
+    case .error(_, let code): throw RemoteChannelError.server(code)
+    default: throw RemoteChannelError.protocolError
+    }
+  }
+
   // MARK: Channels
 
-  /// A session channel for meeting work. Refused without opening anything unless the
-  /// device is approved and the switch is on; an expired token is refreshed once.
-  func openSessionChannel() async throws -> RemoteChannel {
-    guard settings.sendsMeetings, let origin = settings.origin,
+  /// A session channel. Refused without opening anything unless the device is approved and,
+  /// for meeting work, the switch is on; an expired token is refreshed once.
+  func openSessionChannel(forMeetings: Bool = true) async throws -> RemoteChannel {
+    var allowed: Bool { forMeetings ? settings.sendsMeetings : state == .approved }
+    guard allowed, let origin = settings.origin,
       let url = RemoteEnrollment.channelURL(origin: origin), let key = enrollment.pinnedKey
     else { throw RemoteChannelError.closed }
     guard var token = await enrollment.accessToken() else {
@@ -449,7 +504,7 @@ final class PhoneServerConnection {
     var retried = false
     while true {
       // The state may have changed while the token was fetched.
-      guard settings.sendsMeetings else { throw RemoteChannelError.closed }
+      guard allowed else { throw RemoteChannelError.closed }
       let channel: RemoteChannel
       do {
         channel = try RemoteChannel(transport: try await transports.open(url), serverKey: key)

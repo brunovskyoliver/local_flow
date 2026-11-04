@@ -2,7 +2,7 @@
 //! view model standing in for Swift's `AppServices` until capture and models exist.
 use crate::core::Core;
 use crate::insertion::{self, Delivery, Insertion, Phase, Quality, ReviewEntry};
-use crate::pages::{Page, dictionary::DictionaryPage, history::HistoryPage, insights::InsightsPage, notetaker::NotetakerPage, onboarding::OnboardingPage, settings::SettingsPage};
+use crate::pages::{Page, dictionary::DictionaryPage, history::HistoryPage, insights::InsightsPage, notetaker::NotetakerPage, onboarding::OnboardingPage, settings::SettingsPage, users::UsersPage};
 use crate::pill::Pill;
 use flow_platform::{Permission, PermissionState, SessionCommand};
 use flow_ui::components::prototype_nav;
@@ -100,6 +100,13 @@ const NAV: [(Page, &str, &str, &str); 5] = [
     (Page::Dictionary, "Dictionary", "text.book.closed", "navigation.dictionary"),
     (Page::Settings, "Settings", "gearshape", "navigation.settings"),
 ];
+/// Under Dictionary while server mode is on (Feature 028 US3 scenario 5).
+const USERS: (Page, &str, &str, &str) = (Page::Users, "Users", "person.2", "navigation.users");
+
+/// `serverMode.enabled` on a Mac that can host a server.
+fn server_mode_on(cx: &App) -> bool {
+    cx.global::<Core>().server.as_ref().is_some_and(|h| h.enabled())
+}
 
 pub const SETUP_STARTING: &str = "Starting…";
 pub const SETUP_FAILED: &str = "Setup could not finish. Check app storage and the model manifest.";
@@ -321,6 +328,7 @@ fn page_named(n: &str) -> Option<Page> {
         "history" => Page::History,
         "insights" => Page::Insights,
         "dictionary" => Page::Dictionary,
+        "users" => Page::Users,
         "settings" => Page::Settings,
         _ => return None,
     })
@@ -542,6 +550,7 @@ pub struct Shell {
     history: Entity<HistoryPage>,
     insights: Entity<InsightsPage>,
     dictionary: Entity<DictionaryPage>,
+    users: Entity<UsersPage>,
     settings: Entity<SettingsPage>,
     onboarding: Entity<OnboardingPage>,
     focus: FocusHandle,
@@ -588,6 +597,7 @@ impl Shell {
             history: cx.new(|cx| HistoryPage::new(window, cx)),
             insights: cx.new(|cx| InsightsPage::new(window, cx)),
             dictionary: cx.new(|cx| DictionaryPage::new(window, cx)),
+            users: cx.new(|cx| UsersPage::new(window, cx)),
             settings: cx.new(|cx| SettingsPage::new(window, cx)),
             onboarding: cx.new(|cx| OnboardingPage::new(window, cx)),
             focus: cx.focus_handle(),
@@ -651,7 +661,8 @@ impl Shell {
             .child(
                 v_flex()
                     .gap(px(5.))
-                    .children(NAV[..4].iter().map(|row| self.nav_item(*row, cx).into_any_element()).collect::<Vec<_>>()),
+                    .children(NAV[..4].iter().map(|row| self.nav_item(*row, cx).into_any_element()).collect::<Vec<_>>())
+                    .when(server_mode_on(cx), |d| d.child(self.nav_item(USERS, cx))),
             )
             .child(div().flex_1())
             .children(self.active_note(cx))
@@ -740,6 +751,8 @@ impl Shell {
             Page::Insights => self.unavailable("Insights unavailable", cx),
             Page::Dictionary if stores => self.dictionary.clone().into_any_element(),
             Page::Dictionary => self.unavailable("Dictionary unavailable", cx),
+            Page::Users if server_mode_on(cx) => self.users.clone().into_any_element(),
+            Page::Users => self.unavailable("Server mode is off", cx),
             Page::Settings => self.settings.clone().into_any_element(),
         }
     }

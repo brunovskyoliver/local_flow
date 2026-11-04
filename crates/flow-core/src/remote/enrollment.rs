@@ -136,6 +136,9 @@ pub struct Parts {
     /// Includes time asleep, as Swift's `ContinuousClock` does; a token doesn't stop ageing.
     pub now: Box<dyn Fn() -> Duration + Send + Sync>,
     pub device_name: String,
+    /// `mac`, `windows` or `iphone`, chosen by the platform; sent only to a server whose identity
+    /// lists `device_kind` (Feature 028, contracts/device-kind.md).
+    pub device_kind: Option<String>,
 }
 
 /// Wall time since the epoch: unlike `Instant` on macOS it keeps counting through sleep.
@@ -151,6 +154,9 @@ struct Inner {
     /// The token being redeemed and its device key, kept until a definite answer: a lost reply can
     /// only be retried with the same key.
     pair_attempt: Option<(PairingToken, Vec<u8>, Vec<u8>)>,
+    /// A redeemed invite waiting for the inviting device: its key, this device's key and the binding
+    /// of the channel that carried `pair`. Memory only; the code is all that's shown.
+    invite_wait: Option<(Vec<u8>, Vec<u8>, [u8; 32])>,
 }
 
 pub struct Enrollment {
@@ -250,6 +256,7 @@ impl Enrollment {
         self.drop_device_key();
         self.parts.secrets.remove_all()?;
         inner.access_issued_at = None;
+        inner.invite_wait = None;
         self.parts.secrets.write("server-key", &key)?;
         inner.settings.notice = None;
         inner.settings.state = "pinned".into();
@@ -395,9 +402,15 @@ impl Enrollment {
     fn pair_with(&self, token: &PairingToken, identity: &Identity, origin: &str, handle: &[u8], public: &[u8], generation: u64) -> Result<(), EnrollError> {
         let mut channel = self.open_checked(origin, &token.server_key)?;
         let signature = self.parts.keys.sign(&signature_input(b"localflow-v1-pair", &channel.binding(), &[]), handle).map_err(|_| EnrollError::DeviceKeyUnavailable)?;
-        channel.send(json!({"type": "pair", "op": 1, "pairing_token": token.value, "device_name": device_name(&self.parts.device_name), "device_key": base64url_encode(public), "signature": base64url_encode(&signature)}))?;
+        let mut pair = json!({"type": "pair", "op": 1, "pairing_token": token.value, "device_name": device_name(&self.parts.device_name), "device_key": base64url_encode(public), "signature": base64url_encode(&signature)});
+        // Older servers refuse unknown fields, so only one that advertises it gets the kind.
+        if let Some(kind) = self.parts.device_kind.as_ref().filter(|_| identity.has_feature("device_kind")) {
+            pair["device_kind"] = json!(kind);
+        }
+        channel.send(pair)?;
         match channel.receive()? {
-            ServerMessage::Enrolled { op: 1, state, refresh_token: Some(refresh) } if state == "approved" => {
+            // An invite leaves the device pending until the inviting device confirms it.
+            ServerMessage::Enrolled { op: 1, state, refresh_token: Some(refresh), invite } if state == "approved" || state == "pending" => {
                 // One guard: a turn off comes wholly before this, or removes all of it afterwards.
                 let mut inner = self.inner();
                 if generation != self.generation() {
@@ -408,12 +421,32 @@ impl Enrollment {
                 self.parts.secrets.write("refresh-token", refresh.as_bytes())?;
                 inner.pair_attempt = None;
                 inner.settings.promote(origin);
-                inner.settings.state = "approved".into();
+                inner.settings.state = state;
+                inner.invite_wait = invite.map(|(inviter, _)| (inviter, public.to_vec(), channel.binding()));
                 Ok(())
             }
             ServerMessage::Error { code } => Err(ChannelError::Server(code).into()),
             _ => Err(EnrollError::Protocol),
         }
+    }
+
+    /// The 6-digit code this device shows while a redeemed invite waits for confirmation.
+    pub fn invite_code(&self) -> Option<String> {
+        let inner = self.inner();
+        let (inviter, own, binding) = inner.invite_wait.as_ref().filter(|_| inner.settings.state == "pending")?;
+        Some(super::devices::device_code(inviter, own, binding))
+    }
+
+    /// This device's X9.63 key, for the code the inviting device shows.
+    pub fn device_public_key(&self) -> Option<Vec<u8>> {
+        let handle = self.parts.secrets.read("device-key").ok()??;
+        self.parts.keys.public_key(&handle)
+    }
+
+    /// A DER signature by this device's key, for `device_confirm`.
+    pub fn device_sign(&self, input: &[u8]) -> Option<Vec<u8>> {
+        let handle = self.parts.secrets.read("device-key").ok()??;
+        self.parts.keys.sign(input, &handle).ok()
     }
 
     // MARK: Tokens
@@ -503,6 +536,7 @@ impl Enrollment {
                 self.parts.secrets.write("refresh-token", refresh_token.as_bytes()).ok()?;
                 self.parts.secrets.write("access-token", access_token.as_bytes()).ok()?;
                 inner.access_issued_at = Some((self.parts.now)());
+                inner.invite_wait = None;
                 inner.settings.notice = None;
                 inner.settings.state = "approved".into();
                 Some(access_token)
@@ -598,6 +632,7 @@ impl Enrollment {
         self.credentials.fetch_add(1, Ordering::SeqCst);
         inner.settings = RemoteSettings::default();
         inner.access_issued_at = None;
+        inner.invite_wait = None;
         if let Some(attempt) = inner.pair_attempt.take() {
             let _ = self.parts.keys.delete(&attempt.1);
         }
@@ -619,7 +654,7 @@ mod tests {
         }
     }
     pub(crate) fn identity_of(key: &[u8]) -> Identity {
-        Identity { schema_version: 1, server: json!({}), protocol_versions: vec![1], suite: "x25519-hkdfsha256-chacha20poly1305".into(), server_key: base64url_encode(key), fingerprint: fingerprint_of(key) }
+        Identity { schema_version: 1, server: json!({}), protocol_versions: vec![1], suite: "x25519-hkdfsha256-chacha20poly1305".into(), server_key: base64url_encode(key), fingerprint: fingerprint_of(key), features: vec![] }
     }
 
     struct Fx {
@@ -645,6 +680,7 @@ mod tests {
             transports: Arc::new(script),
             now: Box::new(move || Duration::from_secs(now.load(Ordering::SeqCst))),
             device_name: "Test".into(),
+            device_kind: None,
         });
         e.load(RemoteSettings { origin: Some("https://flow.example.com".into()), state: "off".into(), notice: None, alternates: vec![] });
         Fx { e, secrets, keys, counters, key, clock }
@@ -668,6 +704,33 @@ mod tests {
         f.secrets.write("refresh-token", b"lfr_old").unwrap();
         f.e.load(RemoteSettings { state: "approved".into(), ..f.e.settings() });
         f
+    }
+
+    /// T041: `device_kind` goes in `pair` only when the identity lists the feature.
+    #[test]
+    fn device_kind_is_sent_only_when_advertised() {
+        let pair = |features: &[&str], kind: Option<&str>| {
+            let script = Script::new(vec![Reply::ready(), Reply::enrolled("approved", Some("lfr_1")), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")]);
+            let (counters, key) = (script.counters(), script.public_key());
+            let identity = Identity { features: features.iter().map(|f| f.to_string()).collect(), ..identity_of(&key) };
+            let e = Enrollment::new(Parts {
+                secrets: Arc::new(MemorySecrets::default()),
+                keys: Arc::new(MemoryDeviceKeys::default()),
+                identity: Arc::new(FakeIdentity(Mutex::new(Ok(identity)))),
+                transports: Arc::new(script),
+                now: Box::new(|| Duration::from_secs(1000)),
+                device_name: "Test".into(),
+                device_kind: kind.map(String::from),
+            });
+            e.load(RemoteSettings { origin: Some("https://flow.example.com".into()), state: "off".into(), notice: None, alternates: vec![] });
+            e.pair(&pair_token(&key)).unwrap();
+            counters.messages()[1].clone()
+        };
+        assert_eq!(pair(&["device_kind"], Some("mac"))["device_kind"], "mac");
+        assert_eq!(pair(&["device_invite", "device_kind", "later"], Some("windows"))["device_kind"], "windows");
+        assert!(pair(&[], Some("mac")).get("device_kind").is_none(), "an older server refuses unknown fields");
+        assert!(pair(&["device_invite"], Some("mac")).get("device_kind").is_none());
+        assert!(pair(&["device_kind"], None).get("device_kind").is_none(), "a platform without a kind");
     }
 
     #[test]
@@ -706,6 +769,22 @@ mod tests {
         let m = &f.counters.messages()[1];
         assert_eq!(m["type"], "pair");
         assert_eq!(f.counters.messages()[0]["purpose"], "enroll");
+    }
+
+    /// An invite: pending with a code until a refresh finds the device confirmed.
+    #[test]
+    fn an_invite_waits_with_the_code_until_confirmed() {
+        let inviter = [&[4u8][..], &[7; 64]].concat();
+        let enrolled = json!({"schema_version": 1, "type": "enrolled", "op": 1, "state": "pending", "refresh_token": "lfr_1", "inviter_device_key": base64url_encode(&inviter), "confirm_by": "2026-11-03T10:24:30Z"});
+        let f = fx(vec![Reply::ready(), Reply::Json(enrolled), Reply::ready(), Reply::error("not_approved"), Reply::ready(), Reply::tokens("lfa_1", "lfr_2")]);
+        f.e.pair(&pair_token(&f.key)).unwrap();
+        assert_eq!(f.e.settings().state, "pending");
+        assert_eq!(item(&f, "refresh-token").unwrap(), b"lfr_1");
+        let own = f.e.device_public_key().unwrap();
+        assert_eq!(f.e.invite_code(), Some(super::super::devices::device_code(&inviter, &own, &f.counters.bindings()[0])));
+        f.e.refresh_now();
+        assert_eq!(f.e.settings().state, "approved");
+        assert_eq!(f.e.invite_code(), None, "gone once confirmed");
     }
 
     #[test]
@@ -856,6 +935,7 @@ mod tests {
             transports: Arc::new(Midway { script, during: during.clone() }),
             now: Box::new(|| Duration::from_secs(1000)),
             device_name: "Test".into(),
+            device_kind: None,
         }));
         e.load(RemoteSettings { origin: Some("https://flow.example.com".into()), state: "approved".into(), notice: None, alternates: vec![] });
         e.pin(&identity_of(&key)).unwrap();
@@ -904,6 +984,7 @@ mod tests {
             transports: Arc::new(script),
             now: Box::new(|| Duration::from_secs(1000)),
             device_name: "Test".into(),
+            device_kind: None,
         }));
         e.load(RemoteSettings { origin: Some("https://flow.example.com".into()), state: "off".into(), notice: None, alternates: vec![] });
         let (off, done) = (e.clone(), Arc::new(AtomicBool::new(false)));
@@ -1022,6 +1103,7 @@ mod tests {
             transports: Arc::new(NetTransports(net.clone(), script)),
             now: Box::new(|| Duration::from_secs(1000)),
             device_name: "Test".into(),
+            device_kind: None,
         });
         e.load(RemoteSettings { origin: Some(current.into()), state: "off".into(), notice: None, alternates: others.iter().map(|o| o.to_string()).collect() });
         (Fx { e, secrets, keys, counters, key, clock: Arc::default() }, net)
@@ -1206,6 +1288,7 @@ mod tests {
             transports: Arc::new(OffDuring(slot.clone(), script)),
             now: Box::new(|| Duration::ZERO),
             device_name: "T".into(),
+            device_kind: None,
         }));
         *slot.lock().unwrap() = Some(e.clone());
         e.load(RemoteSettings { origin: Some("https://x.example".into()), state: "off".into(), notice: None, alternates: vec![] });
@@ -1216,7 +1299,7 @@ mod tests {
     #[test]
     fn identity_failures_map() {
         let f = fx(vec![]);
-        let identity = |r| Enrollment::new(Parts { secrets: f.secrets.clone(), keys: f.keys.clone(), identity: Arc::new(FakeIdentity(Mutex::new(r))), transports: Arc::new(Script::new(vec![])), now: Box::new(|| Duration::ZERO), device_name: "T".into() });
+        let identity = |r| Enrollment::new(Parts { secrets: f.secrets.clone(), keys: f.keys.clone(), identity: Arc::new(FakeIdentity(Mutex::new(r))), transports: Arc::new(Script::new(vec![])), now: Box::new(|| Duration::ZERO), device_name: "T".into(), device_kind: None });
         assert_eq!(identity(Err(IdentityError::Unreachable)).fetch_at("https://x.example").err(), Some(EnrollError::Unreachable));
         assert_eq!(identity(Err(IdentityError::Invalid)).fetch_at("https://x.example").err(), Some(EnrollError::InvalidIdentity));
     }
@@ -1272,6 +1355,7 @@ pub(crate) mod flowd_tests {
             transports: Arc::new(WebSockets::default()),
             now: Box::new(system_now),
             device_name: "Conformance Mac".into(),
+            device_kind: None,
         });
         e.load(RemoteSettings { origin: Some(origin.into()), state: "off".into(), notice: None, alternates: vec![] });
         (e, secrets)

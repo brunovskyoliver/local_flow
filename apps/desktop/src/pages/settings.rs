@@ -99,6 +99,7 @@ pub struct SettingsPage {
     // Server mode (Feature 028)
     pub(super) server_mode: crate::pages::onboarding::server_mode::ServerUi,
     pub(super) server_custom: Entity<InputState>,
+    pub(super) devices: server::Devices,
     _subs: Vec<Subscription>,
     _poll: Task<()>,
 }
@@ -281,6 +282,7 @@ impl SettingsPage {
             kind_error: None,
             server_mode: Default::default(),
             server_custom,
+            devices: Default::default(),
             _subs: subs,
             _poll: poll,
         };
@@ -300,6 +302,7 @@ impl SettingsPage {
         self.secrets_seen.borrow_mut().clear();
         self.pin_seen = None;
         self.poll(cx);
+        self.load_devices(cx);
     }
 
     /// `refresh` with what the store last said: assigned only if it changed.

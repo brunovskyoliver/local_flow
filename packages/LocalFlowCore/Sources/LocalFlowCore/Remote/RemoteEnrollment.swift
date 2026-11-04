@@ -207,6 +207,8 @@ public final class RemoteEnrollment {
   /// The token being redeemed and its device key, kept until a definite answer: a lost
   /// reply can only be retried with the same key (contracts/pairing.md).
   private var pairAttempt: (token: PairingToken, handle: Data, publicKey: Data)?
+  /// Feature 028: the code for an invite this device redeemed, in memory only.
+  private var invite: (code: String, confirmBy: Date)?
   private let log = Logger(subsystem: "org.localflow.LocalFlow", category: "remote")
 
   public init(
@@ -228,6 +230,12 @@ public final class RemoteEnrollment {
   }
 
   public var state: RemoteDictationState { preferences.remoteState }
+
+  /// The comparison code and deadline while this device waits for the inviting device to
+  /// confirm it (ADR 0039); nil once it is no longer pending.
+  public var pendingInvite: (code: String, confirmBy: Date)? {
+    preferences.remoteState == .pending ? invite : nil
+  }
 
   /// `wss://<host>/v1/remote/channel`, or `ws://` for an `http://` origin; nil for anything
   /// `RemoteDictationSettings.origin` refuses, so a refused address never gets a socket.
@@ -259,6 +267,7 @@ public final class RemoteEnrollment {
     guard let key = identity.validatedKey() else { throw RemoteEnrollmentError.invalidIdentity }
     try credentials.removeAll()
     accessIssuedAt = nil
+    invite = nil
     try credentials.write(.serverKey, key)
     pinnedIdentity = identity
     preferences.remoteNotice = nil
@@ -337,7 +346,7 @@ public final class RemoteEnrollment {
           op: 1, provider: provider, idToken: token, deviceName: deviceName, deviceKind: kind,
           deviceKey: device.publicKey, signature: signature))
       switch try await channel.receive() {
-      case .enrolled(1, let state, let refresh):
+      case .enrolled(1, let state, let refresh, nil):
         try credentials.write(.deviceKey, device.handle)
         try? credentials.remove(.accessToken)
         accessIssuedAt = nil
@@ -403,7 +412,7 @@ public final class RemoteEnrollment {
           deviceKind: deviceKind.flatMap { identity.deviceKind($0) }, deviceKey: device.publicKey,
           signature: signature))
       switch try await channel.receive() {
-      case .enrolled(1, .approved, let refresh?):
+      case .enrolled(1, .approved, let refresh?, nil):
         try pin(identity)
         try credentials.write(.deviceKey, device.handle)
         try credentials.write(.refreshToken, Data(refresh.utf8))
@@ -411,6 +420,19 @@ public final class RemoteEnrollment {
         preferences.remoteState = .approved
         log.notice("Pairing finished")
         _ = await refreshNow()
+      case .enrolled(1, .pending, let refresh?, let pending?):
+        // An invite: pending until the inviting device confirms after comparing the code.
+        try pin(identity)
+        try credentials.write(.deviceKey, device.handle)
+        try credentials.write(.refreshToken, Data(refresh.utf8))
+        pairAttempt = nil
+        invite = (
+          DeviceCode.code(
+            inviterKey: pending.inviterDeviceKey, newKey: device.publicKey,
+            pairBinding: await channel.binding), pending.confirmBy
+        )
+        preferences.remoteState = .pending
+        log.notice("Pairing redeemed an invite; waiting for confirmation")
       case .error(_, let code):
         throw RemoteChannelError.server(code)
       default:
@@ -509,6 +531,7 @@ public final class RemoteEnrollment {
         accessIssuedAt = clock.now()
         credentials.accessTokenIssuedAt = accessIssuedAt
         preferences.remoteNotice = nil
+        invite = nil
         if preferences.remoteState != .approved { preferences.remoteState = .approved }
         scheduleRefresh()
         return access
@@ -606,6 +629,7 @@ public final class RemoteEnrollment {
     scheduledRefresh = nil
     accessIssuedAt = nil
     pairAttempt = nil
+    invite = nil
     try? credentials.removeAll()
     preferences.resetRemote()
   }

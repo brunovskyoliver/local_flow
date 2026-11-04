@@ -160,10 +160,14 @@ sources plus `Core/SpeechBoundaries.swift` and `Core/ModelWorkloadBoundaries.swi
 - The Mac must stay logged in, because the agent runs in the login session and its key is in the login Keychain. Turn on automatic login if it restarts unattended.
 - Turning it off runs `launchctl bootout` and `launchctl disable`, and deletes nothing. Turning it on, `scripts/install-remote-server.sh` or Restart in LocalFlow Server each undo the disable.
 - **Pairing tokens › Manage…** creates, shows once, lists and revokes tokens through `flowd admin token`. Closing the sheet forgets the value.
-- `flowd-meeting` isn't bundled, so phone meeting handoff isn't available on a server made here.
+- `flowd-meeting` is bundled since Feature 028 and flowd gets `--meeting-processor`, so a server made here takes phone meetings. A server made before that asks to turn server mode off and on, which writes the plist again with the flag.
 - The server's models load beside this Mac's, so one Mac doing both uses more memory. Not measured yet.
 
-The Rust client has no pairing yet; it comes after Features 025 and 026.
+## Users, device kind and invites (Feature 028)
+
+- The app declares itself as `mac` (`device_kind`) when it pairs or enrolls, but only to a server whose identity lists `device_kind` in `features`. The fetched identity is kept in memory only, so a sign-in (`enroll`) after the app relaunched sends no kind and flowd stores "Unknown".
+- LocalFlow Server (`LocalFlowServer/Admin.swift`) reads `flowd admin list --json` and shows each device's kind ("Unknown" when the server has none). Against an older flowd that exits 1 without JSON it falls back to the text `list` parser.
+- The Swift app doesn't create or confirm device invites and has no Users page. Both are in the Rust app (`apps/desktop`): server mode in onboarding and Settings, the Users page, and Settings › Server › Your devices with Add Another Device. See `docs/distribution/remote-server.md`.
 
 ## One server (Feature 018)
 

@@ -347,6 +347,8 @@ final class FakeIdentitySignIn: IdentitySignIn, @unchecked Sendable {
 
 final class FakeIdentityFetcher: RemoteIdentityFetching, @unchecked Sendable {
   var key: Data
+  /// Feature 028: the identity's `features`.
+  var features: [String]?
   private(set) var fetches = 0
   init(key: Data) { self.key = key }
   func fetch(origin: URL) async throws -> RemoteServerIdentity {
@@ -354,6 +356,6 @@ final class FakeIdentityFetcher: RemoteIdentityFetching, @unchecked Sendable {
     return RemoteServerIdentity(
       schemaVersion: 1, server: "flowd/test", protocolVersions: [1],
       suite: RemoteProtocol.suite, serverKey: key.base64URL,
-      fingerprint: RemoteServerIdentity.fingerprint(of: key))
+      fingerprint: RemoteServerIdentity.fingerprint(of: key), features: features)
   }
 }

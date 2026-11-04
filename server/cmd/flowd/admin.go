@@ -288,7 +288,11 @@ func adminList(ctx context.Context, a *adminContext, args []string) error {
 		devices[d.UserID] = append(devices[d.UserID], d)
 	}
 	if asJSON {
-		return a.writeJSON(listJSON(users, devices, state))
+		inviters, err := store.Inviters(ctx)
+		if err != nil {
+			return err
+		}
+		return a.writeJSON(listJSON(users, devices, inviters, state))
 	}
 	var userRows, deviceRows [][]string
 	var blocks [][2]int // per shown user: its row and how many device rows follow
@@ -353,7 +357,7 @@ type (
 		EnrolledAt string  `json:"enrolled_at"`
 		LastSeenAt *string `json:"last_seen_at"`
 		ChangedAt  string  `json:"changed_at"`
-		InvitedBy  *int64  `json:"invited_by"` // always null before schema v5
+		InvitedBy  *int64  `json:"invited_by"` // the device whose invite this one redeemed
 	}
 )
 
@@ -367,7 +371,7 @@ const (
 // devices by id, up to the caps. When the device cap cuts a user's devices, no
 // later user is listed, so only the last user can have devices missing; either
 // cut sets truncated.
-func listJSON(users []accounts.User, devices map[int64][]accounts.Device, state string) adminListJSON {
+func listJSON(users []accounts.User, devices map[int64][]accounts.Device, inviters map[int64]int64, state string) adminListJSON {
 	out := adminListJSON{SchemaVersion: 1, Users: []adminUserJSON{}}
 	budget := maxListDevices
 	for _, u := range users {
@@ -399,6 +403,9 @@ func listJSON(users []accounts.User, devices map[int64][]accounts.Device, state 
 			if d.Kind != accounts.KindUnknown {
 				kind := string(d.Kind)
 				device.Kind = &kind
+			}
+			if inviter, ok := inviters[d.ID]; ok {
+				device.InvitedBy = &inviter
 			}
 			row.Devices = append(row.Devices, device)
 		}

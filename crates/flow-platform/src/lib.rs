@@ -453,6 +453,12 @@ pub trait ServerHost: Send + Sync {
     fn create_owner_token(&self, label: &str, addresses: &[String]) -> Result<flow_core::server_mode::OwnerToken, String>;
     /// At app launch: undoes an interrupted open and copies updated helpers to a managed server.
     fn launch(&self);
+    /// The Users page's data (T044): users, devices, live tokens, recent audit, connected now.
+    fn users_page(&self) -> Result<flow_core::server_admin::Model, flow_core::server_admin::ReadError>;
+    /// One owner action on a user, device or token (T045).
+    fn admin_act(&self, action: &flow_core::server_admin::Action) -> Result<(), String>;
+    /// A 24-hour pairing token that adds a device to `user`, or a new person when `None` (T047).
+    fn create_device_token(&self, label: &str, user: Option<i64>, addresses: &[String]) -> Result<flow_core::server_mode::OwnerToken, String>;
 }
 
 /// A `ServerHost` for tests: a server that starts on loopback, records each call and answers as
@@ -466,6 +472,7 @@ pub struct FakeServer {
     pub token: std::sync::Mutex<Result<flow_core::server_mode::OwnerToken, String>>,
     pub plan: std::sync::Mutex<flow_core::server_mode::PlanInput>,
     pub ai_phase: std::sync::Mutex<Option<flow_core::onboarding::AiPhase>>,
+    pub page: std::sync::Mutex<Result<flow_core::server_admin::Model, flow_core::server_admin::ReadError>>,
     pub calls: std::sync::Mutex<Vec<String>>,
 }
 
@@ -482,6 +489,7 @@ impl Default for FakeServer {
             token: std::sync::Mutex::new(Ok(token)),
             plan: std::sync::Mutex::new(flow_core::server_mode::PlanInput { physical_memory: 64 << 30, ..Default::default() }),
             ai_phase: Default::default(),
+            page: std::sync::Mutex::new(Ok(Default::default())),
             calls: Default::default(),
         }
     }
@@ -580,6 +588,19 @@ impl ServerHost for FakeServer {
     fn launch(&self) {
         self.call("launch");
     }
+    fn users_page(&self) -> Result<flow_core::server_admin::Model, flow_core::server_admin::ReadError> {
+        self.call("users");
+        self.page.lock().unwrap().clone()
+    }
+    fn admin_act(&self, action: &flow_core::server_admin::Action) -> Result<(), String> {
+        self.call(format!("{action:?}"));
+        Ok(())
+    }
+    /// Records the label and target, never the token.
+    fn create_device_token(&self, label: &str, user: Option<i64>, _addresses: &[String]) -> Result<flow_core::server_mode::OwnerToken, String> {
+        self.call(format!("token {label} user {user:?}"));
+        self.token.lock().unwrap().clone()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -677,6 +698,10 @@ pub trait Credentials: Send + Sync {
     /// What the server's admin list shows for this device.
     fn device_name(&self) -> String {
         std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "LocalFlow".into())
+    }
+    /// The `device_kind` declared when pairing (Feature 028): `mac` or `windows`; none elsewhere.
+    fn device_kind(&self) -> Option<String> {
+        None
     }
 }
 

@@ -26,17 +26,22 @@ Runs locally on the server as the account that runs flowd. There is no remote ad
 flowd admin --data-dir <dir> [--dev] <command>     --dev: development Keychain service, as for serve
 flowd admin --data-dir <dir> init                 create the SQLite file and the identity key; refuses if a key exists
 flowd admin --data-dir <dir> identity             print server key fingerprint
-flowd admin --data-dir <dir> list [--state S]     users and their devices
+flowd admin --data-dir <dir> list [--state S] [--json]   users and their devices
 flowd admin --data-dir <dir> approve user <id>
 flowd admin --data-dir <dir> approve device <id>
 flowd admin --data-dir <dir> reject user <id>
 flowd admin --data-dir <dir> revoke user <id>
 flowd admin --data-dir <dir> revoke device <id>
-flowd admin --data-dir <dir> audit [--limit N]    newest first, default 50
+flowd admin --data-dir <dir> audit [--limit N] [--json]  newest first, default 50
 flowd admin --data-dir <dir> token create --label L [--user ID] [--ttl 1h|24h|7d] [--address ORIGIN] [--json]
 flowd admin --data-dir <dir> token list [--json]
 flowd admin --data-dir <dir> token revoke <id>
+flowd admin --data-dir <dir> user create --name N [--json]
+flowd admin --data-dir <dir> rename user <id> --name N
+flowd admin --data-dir <dir> rename device <id> --name N
 ```
+
+`list --json`, `audit --json`, `user create` and `rename` come from Feature 028; their output and rules are in [specs/028-server-users-and-rewrite-warmup/contracts/admin-cli.md](../../028-server-users-and-rewrite-warmup/contracts/admin-cli.md). `list --json` adds each device's kind (`mac`, `windows`, `iphone` or `null`) and `invited_by`; the text form below doesn't show them. An older flowd given `--json` exits 1 with its usage line.
 
 `list` output, one block per user (FR-011, User Story 3 scenario 1):
 
