@@ -70,6 +70,10 @@ func TestDroppedSentence(t *testing.T) {
 			t.Errorf("flagged %q", out)
 		}
 	}
+	// A real dictation the model cut down to its last clause.
+	if !DroppedSentence("Alright, if you were to compare the Swift code to Rust code, I mean the execution running, is the Rust code more efficient?", "Is the Rust code more efficient?") {
+		t.Error("missed a sentence cut to its last clause")
+	}
 	if DroppedSentence("Pošli mi to akože do piatku, teda nie, do štvrtka, lebo to potrebujem skontrolovať.", "Pošli mi to do štvrtka, lebo to potrebujem skontrolovať.") {
 		t.Error("a resolved correction is not a dropped sentence")
 	}

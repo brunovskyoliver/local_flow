@@ -361,8 +361,9 @@ func (h *Handler) run(parent context.Context, req Request, start time.Time, emit
 		backendMS += completion.DurationMS
 		var invalid ErrorCode
 		// Polished and concise may legitimately merge or drop sentences, so
-		// only clean output is held to keeping every one.
-		text, restored, invalid = h.validate(req, completion.Text, info.JSONSchema, table, stripped, attempt == 0 && spoken && req.Mode == "clean")
+		// only clean output is held to keeping every one, on every attempt: a
+		// clean rewrite that fails it leaves the client with the spoken text.
+		text, restored, invalid = h.validate(req, completion.Text, info.JSONSchema, table, stripped, req.Mode == "clean")
 		if invalid == "" {
 			break
 		}
@@ -393,7 +394,7 @@ func (h *Handler) run(parent context.Context, req Request, start time.Time, emit
 
 // validate decodes and checks one backend output and restores its shielded
 // values. keepSentences additionally rejects outputs that dropped a whole
-// sentence, which the spoken rules can cause and a retry without them avoids.
+// sentence or kept only a clause of one.
 func (h *Handler) validate(req Request, raw string, jsonSchema bool, table entityshield.Table, input string, keepSentences bool) (string, int, ErrorCode) {
 	text := raw
 	if jsonSchema {

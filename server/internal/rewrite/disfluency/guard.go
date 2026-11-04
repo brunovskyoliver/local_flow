@@ -86,7 +86,8 @@ func countWord(text, word string) int {
 func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
 
 // DroppedSentence reports whether the output lost a whole input sentence: one
-// with at least four distinct words of which fewer than a third survive.
+// with at least four distinct words of which fewer than half survive. A
+// rewrite that keeps only a sentence's last clause counts as dropping it.
 // Filler-only sentences ("Yeah.", "Okay.") are too short to count. Words are
 // compared by their first five letters, so a grammar fix to a word ending
 // (Slovak inflection, "try" → "tried") still counts as present.
@@ -111,7 +112,7 @@ func DroppedSentence(input, output string) bool {
 				kept++
 			}
 		}
-		if 3*kept < len(words) {
+		if 2*kept < len(words) {
 			return true
 		}
 	}
