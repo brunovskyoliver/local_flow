@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed, 2026-11-04 (Feature 028, User Story 4). The owner approved the change in principle on 2026-11-03. Amends the constitution to 7.0.0 (principle 15) and ADR 0037. Implementation (tasks T052 to T064) starts only after the owner accepts this record and the amended principle.
+Accepted, 2026-11-04 (Feature 028, User Story 4). The owner approved the change in principle on 2026-11-03 and accepted this record and the amended principle on 2026-11-04. Amends the constitution to 7.0.0 (principle 15) and ADR 0037.
 
 ## Context
 
@@ -60,7 +60,7 @@ A major amendment (7.0.0), applied on 2026-11-04, before implementation:
 
 ## Consequences
 
-- The owner adds their own devices without going to the server Mac. The Users page's "Add device for <user>" stays for administrators and is the only way while this record is not accepted.
+- The owner adds their own devices without going to the server Mac. The Users page's "Add device for <user>" stays for administrators.
 - The owner must compare the codes. Confirming a redemption the other device didn't show defeats the check, so the confirm sheet has to tell the owner to confirm only when both screens show the same code.
 - An approved device, or anyone holding its access token for up to 15 minutes, can revoke the user's other devices through `account_devices`. That is a denial of service, not access, and the audit row names the acting device.
 - An old server doesn't list `device_invite` in `ready.capabilities.ops`, and clients hide the controls.

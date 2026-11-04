@@ -67,3 +67,8 @@
 **Left (owner)**
 - ADR 0039 and the constitution comment still say "Proposed"; US4 was built on the 2026-11-03 approval in principle. Accept or reject them.
 - T017 key-release timing run, and the 9 hardware items in acceptance/hardware.md (fresh Mac end to end, owner time under 5 minutes, firewall prompt on a signed build, phone meeting handoff, server idle and processing memory, Users page RSS, real-device revocation within 2 s, iPhone added from a Mac in under a minute, phone meeting after invite).
+
+## 2026-11-04: owner decisions
+
+- The owner accepted constitution 7.0.0 and ADR 0039; both now say accepted.
+- The owner agreed to run T017 and the nine hardware items in acceptance/hardware.md. The Rust Dev app was rebuilt from this branch and installed for that.
