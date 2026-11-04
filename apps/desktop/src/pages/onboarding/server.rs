@@ -281,20 +281,21 @@ impl OnboardingPage {
         let ui = &self.server;
         let progress = *ui.downloaded.lock().unwrap();
         let waiting = RowState::Waiting(if ui.models_started { "Queued".into() } else { String::new() });
-        let speech_state = |installed: bool| match (installed, &ui.download_error, progress) {
-            (true, _, _) => RowState::Done,
-            (_, Some(e), _) => RowState::Failed(e.clone()),
-            (_, _, Some((done, total))) => RowState::Progress(done as i64, total as i64),
-            _ if ui.busy && ui.models_started => RowState::Working("Downloading…".into()),
-            _ => waiting.clone(),
-        };
-        let ai = ui.ai_phase.as_ref().filter(|_| ui.ai_started).map(ai_state);
+        let running = ui.busy && ui.models_started && ui.download_error.is_none();
+        // The worker fetches the missing speech models in plan order, so only the first missing
+        // one is downloading; the rest are queued.
+        let current = plan.items.iter().position(|i| matches!(i.part, PlanPart::Dictation | PlanPart::Meetings | PlanPart::Speakers) && !i.installed);
+        let phase = ui.ai_phase.as_ref().filter(|_| ui.ai_started);
         let states: Vec<RowState> = plan
             .items
             .iter()
-            .map(|item| match item.part {
-                PlanPart::Dictation | PlanPart::Meetings | PlanPart::Speakers => speech_state(item.installed),
-                PlanPart::Runtime | PlanPart::LanguageModel(_) => ai.clone().unwrap_or(waiting.clone()),
+            .enumerate()
+            .map(|(index, item)| match item.part {
+                PlanPart::Dictation | PlanPart::Meetings | PlanPart::Speakers => {
+                    speech_row(item.installed, ui.download_error.as_deref(), running && current == Some(index), progress, &waiting)
+                }
+                PlanPart::Runtime => runtime_row(item.installed, phase, &waiting),
+                PlanPart::LanguageModel(_) => model_row(item.installed, phase, &waiting),
             })
             .collect();
         let mut card = setup_card(cx).id("onboarding.serverModels");
@@ -393,5 +394,70 @@ impl OnboardingPage {
             out.push(any(div().id("onboarding.serverMessage").child(t(message.clone()).size(12.).color(p.warning)).test_support()));
         }
         out
+    }
+}
+
+/// A speech model's row. A progress line without byte counts (an older worker) reads as
+/// "Downloading…", not "Zero KB of Zero KB".
+fn speech_row(installed: bool, error: Option<&str>, current: bool, progress: Option<(u64, u64)>, waiting: &RowState) -> RowState {
+    match (installed, error, current, progress) {
+        (true, ..) => RowState::Done,
+        (_, Some(e), ..) => RowState::Failed(e.to_string()),
+        (_, _, true, Some((done, total))) if total > 0 => RowState::Progress(done as i64, total as i64),
+        (_, _, true, _) => RowState::Working("Downloading…".into()),
+        _ => waiting.clone(),
+    }
+}
+
+/// The MTPLX runtime's row: working while the runtime installs, done once the model step begins.
+fn runtime_row(installed: bool, phase: Option<&AiPhase>, waiting: &RowState) -> RowState {
+    match phase {
+        Some(AiPhase::Failed(e)) => RowState::Failed(e.clone()),
+        Some(AiPhase::PreparingRuntime) => RowState::Working("Installing MTPLX…".into()),
+        Some(AiPhase::DownloadingModel(..) | AiPhase::Starting | AiPhase::Ready) => RowState::Done,
+        _ if installed => RowState::Done,
+        _ => waiting.clone(),
+    }
+}
+
+/// The language model's row: queued behind the runtime, then its own bytes.
+fn model_row(installed: bool, phase: Option<&AiPhase>, waiting: &RowState) -> RowState {
+    match phase {
+        Some(AiPhase::Failed(e)) => RowState::Failed(e.clone()),
+        Some(AiPhase::DownloadingModel(c, t)) if *t > 0 => RowState::Progress(*c, *t),
+        Some(AiPhase::DownloadingModel(..)) => RowState::Working("Downloading…".into()),
+        Some(AiPhase::Starting) => RowState::Working("Starting…".into()),
+        Some(AiPhase::Ready) => RowState::Done,
+        _ if installed => RowState::Done,
+        Some(AiPhase::PreparingRuntime) => RowState::Waiting("Queued".into()),
+        _ => waiting.clone(),
+    }
+}
+
+#[cfg(test)]
+mod row_tests {
+    use super::*;
+
+    #[test]
+    fn a_progress_line_without_counts_reads_as_downloading() {
+        let q = RowState::Waiting("Queued".into());
+        assert_eq!(speech_row(false, None, true, Some((0, 0)), &q), RowState::Working("Downloading…".into()));
+        assert_eq!(speech_row(false, None, true, Some((4, 9)), &q), RowState::Progress(4, 9));
+        assert_eq!(speech_row(false, None, false, Some((4, 9)), &q), q);
+        assert_eq!(speech_row(true, None, true, Some((4, 9)), &q), RowState::Done);
+        assert_eq!(speech_row(false, Some("x"), true, None, &q), RowState::Failed("x".into()));
+    }
+
+    #[test]
+    fn the_runtime_and_the_model_each_show_their_own_step() {
+        let q = RowState::Waiting(String::new());
+        let preparing = Some(&AiPhase::PreparingRuntime);
+        assert_eq!(runtime_row(false, preparing, &q), RowState::Working("Installing MTPLX…".into()));
+        assert_eq!(model_row(false, preparing, &q), RowState::Waiting("Queued".into()));
+        assert_eq!(model_row(true, preparing, &q), RowState::Done);
+        let downloading = AiPhase::DownloadingModel(5, 10);
+        assert_eq!(runtime_row(false, Some(&downloading), &q), RowState::Done);
+        assert_eq!(model_row(false, Some(&downloading), &q), RowState::Progress(5, 10));
+        assert_eq!(model_row(false, Some(&AiPhase::DownloadingModel(0, 0)), &q), RowState::Working("Downloading…".into()));
     }
 }

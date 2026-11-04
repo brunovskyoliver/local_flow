@@ -108,6 +108,10 @@ pub fn origin(text: &str) -> Option<String> {
 
 /// Where an address found on this machine leads. `None` for loopback, link-local, public or not an IP.
 pub fn server_address_kind(ip: &str) -> Option<ServerAddressKind> {
+    // The MagicDNS name of this Mac's Tailscale address, which reverse lookup finds.
+    if ip.ends_with(".ts.net") && allows_plain_http(ip, false) {
+        return Some(ServerAddressKind::Tailscale);
+    }
     if let Ok(a) = ip.parse::<Ipv4Addr>() {
         let b = a.octets();
         if !is_private(b) || b[0] == 127 || (b[0] == 169 && b[1] == 254) {

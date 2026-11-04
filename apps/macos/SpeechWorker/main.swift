@@ -553,6 +553,22 @@ func meetingErrorCode(_ error: any Error) -> String {
   }
 }
 
+/// Byte counts for the app's progress bar, as the 026 R3 line format: at most two lines a second,
+/// and only when the numbers or the phase changed.
+func reportProgress(of progress: ProvisioningProgress, model: String) async {
+  var last: ProvisioningProgress.Snapshot?
+  while !Task.isCancelled {
+    let now = progress.snapshot()
+    if now != last, now.totalBytes > 0 {
+      let state = now.phase == .verifying ? "verifying" : "downloading"
+      let counts = "completed=\(now.completedBytes) total=\(now.totalBytes)"
+      log("provision model=\(model) state=\(state) \(counts)")
+      last = now
+    }
+    try? await Task.sleep(for: .milliseconds(500))
+  }
+}
+
 func provision(
   models: URL, descriptors: Descriptors, speechModel: String, withSpeech: Bool, booster: Bool,
   meeting: MeetingDescriptors?
@@ -580,6 +596,8 @@ func provision(
     do {
       if (try? await provisioner.verifiedLocalDescriptor(fullHash: true)) == nil {
         log("provision model=\(name) state=downloading")
+        let reporter = Task { await reportProgress(of: provisioner.progress, model: name) }
+        defer { reporter.cancel() }
         _ = try await provisioner.download()
       }
       _ = try await provisioner.verifiedLocalDescriptor(fullHash: true)

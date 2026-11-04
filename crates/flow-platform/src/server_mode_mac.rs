@@ -928,7 +928,41 @@ pub fn interface_ips() -> Vec<String> {
         }
         libc::freeifaddrs(head);
     }
-    ips
+    // The Tailscale name first: clients on the tailnet reach it however the IP changes.
+    let names: Vec<String> = ips.iter().filter_map(|ip| tailscale_name(ip)).collect();
+    names.into_iter().chain(ips).collect()
+}
+
+/// The MagicDNS name of a Tailscale IPv4 address (100.64.0.0/10), from reverse lookup.
+fn tailscale_name(ip: &str) -> Option<String> {
+    let v4: std::net::Ipv4Addr = ip.parse().ok()?;
+    let b = v4.octets();
+    if b[0] != 100 || b[1] & 0xc0 != 64 {
+        return None;
+    }
+    let name = dns_lookup_name(v4)?;
+    let name = name.trim_end_matches('.').to_ascii_lowercase();
+    name.ends_with(".ts.net").then_some(name)
+}
+
+fn dns_lookup_name(v4: std::net::Ipv4Addr) -> Option<String> {
+    unsafe {
+        let mut addr: libc::sockaddr_in = std::mem::zeroed();
+        addr.sin_len = std::mem::size_of::<libc::sockaddr_in>() as u8;
+        addr.sin_family = libc::AF_INET as libc::sa_family_t;
+        addr.sin_addr = libc::in_addr { s_addr: u32::from(v4).to_be() };
+        let mut host = [0 as libc::c_char; libc::NI_MAXHOST as usize];
+        let found = libc::getnameinfo(
+            &addr as *const libc::sockaddr_in as *const libc::sockaddr,
+            addr.sin_len as libc::socklen_t,
+            host.as_mut_ptr(),
+            host.len() as libc::socklen_t,
+            std::ptr::null_mut(),
+            0,
+            libc::NI_NAMEREQD,
+        );
+        (found == 0).then(|| std::ffi::CStr::from_ptr(host.as_ptr()).to_string_lossy().into_owned())
+    }
 }
 
 #[cfg(test)]

@@ -959,6 +959,13 @@ mod tests {
         assert_eq!(list[0].origin, "http://100.100.1.2:8090");
     }
 
+    #[test]
+    fn a_tailscale_name_is_listed_as_tailscale() {
+        let list = address_list(&["ai.tail75b52d.ts.net".into(), "100.114.84.30".into(), "192.168.88.212".into(), "example.com".into()], 8090);
+        let titles: Vec<&str> = list.iter().map(|a| a.title.as_str()).collect();
+        assert_eq!(titles, ["Tailscale: http://ai.tail75b52d.ts.net:8090", "Tailscale: http://100.114.84.30:8090", "Local network: http://192.168.88.212:8090"]);
+    }
+
     /// Swift's `testAddressesFollowTheBindAndTheCustomAddressIsValidated`.
     #[test]
     fn addresses_follow_the_bind_and_the_custom_address_is_validated() {
