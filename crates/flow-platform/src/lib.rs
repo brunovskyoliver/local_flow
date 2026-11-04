@@ -425,6 +425,10 @@ pub trait Services: 'static {
 /// process opens no listener (FR-012); the server is its own agent.
 pub trait ServerHost: Send + Sync {
     fn status(&self) -> flow_core::server_mode::ServerModeStatus;
+    /// Where the server keeps its speech models, which this Mac's own dictation can share.
+    fn models_dir(&self) -> Option<std::path::PathBuf> {
+        None
+    }
     /// `serverMode.enabled`: the owner turned it on here.
     fn enabled(&self) -> bool;
     /// Reachable addresses for `listen` (the plist's `--remote-listen`) and the custom address.

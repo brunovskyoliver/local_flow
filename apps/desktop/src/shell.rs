@@ -342,10 +342,13 @@ const MIN_SIZE: Size<Pixels> = size(px(720.), px(560.));
 pub fn start(cx: &mut App) {
     apply_appearance(cx);
     cx.global_mut::<Core>().reconcile_meetings();
-    let models = cx.global::<Core>().paths.models();
+    let core = cx.global::<Core>();
+    let server_models = core.server.as_ref().and_then(|s| s.models_dir()).filter(|_| core.prefs.string("setup.role").as_deref() == Some("server"));
+    let (models, shared) = speech_models_dir(core.paths.models(), server_models);
     flow_platform::speech::set_models_dir(models.clone());
-    // Models cloned from the Swift app have no marker yet. Rehashing them downloads only what's missing.
-    if cx.global::<Core>().paths.swift_root.is_some() {
+    // Models cloned from the Swift app, or the server's own on a server Mac, have no marker yet.
+    // Rehashing them downloads only what's missing.
+    if cx.global::<Core>().paths.swift_root.is_some() || shared {
         let models = models.clone();
         // One at a time: both packs take parakeet-v3's lock, and the loser fails.
         std::thread::spawn(move || {
@@ -369,6 +372,15 @@ pub fn start(cx: &mut App) {
             s.setup_status = if verified { "Verified local model available." } else { "Import the pinned model before dictating." }.into();
         }
     });
+}
+
+/// The speech models this app dictates with: its own, or on a server Mac whose own folder has none,
+/// the server's (true), so the models the server downloaded aren't fetched a second time.
+pub fn speech_models_dir(own: std::path::PathBuf, server: Option<std::path::PathBuf>) -> (std::path::PathBuf, bool) {
+    match server {
+        Some(server) if !own.join(".speech-verified").exists() && server.join("parakeet-v3").is_dir() => (server, true),
+        _ => (own, false),
+    }
 }
 
 /// `applyAppearance()`: the `appearance` preference over the system's, plus Increase Contrast.
@@ -1377,6 +1389,23 @@ mod tests {
         frame(cx, window);
         cx.update_window(window.into(), |_, w, cx| w.click("recovery.retrySave", cx)).unwrap();
         assert_eq!(get(cx, |s| s.dictation.as_ref().unwrap().status.clone()), "Text saved for review.");
+    }
+
+    /// A server Mac dictates with the server's models when its own folder has none.
+    #[test]
+    fn a_server_mac_shares_the_servers_speech_models() {
+        let root = std::env::temp_dir().join(format!("flow-shared-models-{}", std::process::id()));
+        let (own, server) = (root.join("own"), root.join("server"));
+        std::fs::create_dir_all(server.join("parakeet-v3")).unwrap();
+        std::fs::create_dir_all(&own).unwrap();
+        assert_eq!(speech_models_dir(own.clone(), Some(server.clone())), (server.clone(), true));
+        assert_eq!(speech_models_dir(own.clone(), None), (own.clone(), false), "a client keeps its own");
+        std::fs::write(own.join(".speech-verified"), "").unwrap();
+        assert_eq!(speech_models_dir(own.clone(), Some(server.clone())), (own.clone(), false), "its own verified ones win");
+        std::fs::remove_file(own.join(".speech-verified")).unwrap();
+        std::fs::remove_dir(server.join("parakeet-v3")).unwrap();
+        assert_eq!(speech_models_dir(own.clone(), Some(server)), (own, false), "nothing to share");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // parity: SHELL-093 SHELL-094 SHELL-096..SHELL-102 MENU-006 ONB-020

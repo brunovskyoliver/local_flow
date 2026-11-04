@@ -864,6 +864,9 @@ impl crate::ServerHost for ServerMode {
     fn status(&self) -> ServerModeStatus {
         ServerMode::status(self)
     }
+    fn models_dir(&self) -> Option<std::path::PathBuf> {
+        Some(self.paths.models_dir())
+    }
     fn enabled(&self) -> bool {
         ServerMode::enabled(self)
     }
