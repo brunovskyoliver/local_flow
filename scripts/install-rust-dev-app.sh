@@ -9,14 +9,22 @@ target="${1:-/Applications/LocalFlow Dev.app}"
 staging="build/rust-dev/LocalFlow Dev.app"
 
 cargo build --release -j 4 -p localflow
-xcodebuild -quiet -project apps/macos/LocalFlow.xcodeproj -target flowd-speech -configuration Release \
-  CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO SYMROOT="$PWD/build/SpeechWorker" build
+# flowd-meeting is the meeting handoff processor server mode passes to flowd (research R8).
+for helper in flowd-speech flowd-meeting; do
+  xcodebuild -quiet -project apps/macos/LocalFlow.xcodeproj -target "$helper" -configuration Release \
+    CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO SYMROOT="$PWD/build/SpeechWorker" build
+done
 
 rm -rf "$staging"
 mkdir -p "$staging/Contents/MacOS" "$staging/Contents/Helpers"
 install -m 755 build/rust/release/localflow "$staging/Contents/MacOS/LocalFlow"
 install -m 755 build/SpeechWorker/Release/flowd-speech "$staging/Contents/Helpers/flowd-speech"
+install -m 755 build/SpeechWorker/Release/flowd-meeting "$staging/Contents/Helpers/flowd-meeting"
 ditto build/SpeechWorker/Release/FluidAudio_FluidAudio.bundle "$staging/Contents/Helpers/FluidAudio_FluidAudio.bundle"
+# The Whisper helper for meeting transcripts, with its licences in Resources/WhisperLicenses, as in
+# the Swift app. Signed below with the other helpers.
+TARGET_BUILD_DIR="$PWD/$(dirname "$staging")" CONTENTS_FOLDER_PATH="$(basename "$staging")/Contents" \
+  CODE_SIGNING_ALLOWED=NO scripts/build-meeting-whisper.sh
 # The pinned descriptors the worker is pointed at. Code signing refuses them in Helpers.
 mkdir -p "$staging/Contents/Resources/Models"
 install -m 644 apps/macos/LocalFlow/Resources/Models/parakeet-v3.json apps/macos/LocalFlow/Resources/Models/parakeet-ultra.json apps/macos/LocalFlow/Resources/Models/parakeet-ctc-110m.json \
@@ -60,7 +68,9 @@ if [[ -z "$identity" ]]; then
   echo "No Apple Development certificate for $(git config user.email): ad-hoc signing, so macOS will ask for permissions again." >&2
   identity=-
 fi
-codesign --force --sign "$identity" "$staging/Contents/Helpers/flowd" "$staging/Contents/Helpers/flowd-speech" "$staging/Contents/Helpers/FluidAudio_FluidAudio.bundle"
+codesign --force --sign "$identity" "$staging/Contents/Helpers/flowd" "$staging/Contents/Helpers/flowd-speech" \
+  "$staging/Contents/Helpers/flowd-meeting" "$staging/Contents/Helpers/localflow-whisper-engine" \
+  "$staging/Contents/Helpers/FluidAudio_FluidAudio.bundle"
 codesign --force --sign "$identity" "$staging"
 rm -rf "$target"
 ditto "$staging" "$target"

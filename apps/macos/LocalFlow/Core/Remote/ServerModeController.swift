@@ -168,7 +168,9 @@ final class ServerModeController {
       "Meetings"
     ),
   ]
-  private static let helpers = ["flowd", "flowd-speech", "localflow-whisper-engine"]
+  private static let helpers = [
+    "flowd", "flowd-speech", "flowd-meeting", "localflow-whisper-engine",
+  ]
   private static let resourceBundle = "FluidAudio_FluidAudio.bundle"
 
   let paths: ServerModePaths
@@ -238,6 +240,12 @@ final class ServerModeController {
       }
       if !files.isExecutableFile(atPath: paths.binDir.appending(path: "flowd-meeting").path) {
         status.missing.append("Meetings sent from a phone: this server has no flowd-meeting.")
+      } else if status.ownership == .managed,
+        arguments(paths.plist)?.contains("--meeting-processor") == false
+      {
+        // A server set up before flowd-meeting was bundled: an update copies it, the plist
+        // gets the flag the next time this app writes it.
+        status.missing.append("Meetings sent from a phone: turn server mode off and on.")
       }
     }
     return status
@@ -480,7 +488,7 @@ final class ServerModeController {
 
   /// Changes when an update or a rebuild replaces the helpers.
   private var helpersStamp: String {
-    ["flowd", "flowd-speech"].map { name -> String in
+    ["flowd", "flowd-speech", "flowd-meeting"].map { name -> String in
       let path = contents.appending(path: "Helpers/\(name)").path
       let attributes = try? files.attributesOfItem(atPath: path)
       let size = attributes?[.size] as? Int64 ?? 0
@@ -605,22 +613,30 @@ final class ServerModeController {
 
     """
 
-  /// The installer's flags. `--meeting-processor` stays off: flowd-meeting isn't in the app.
+  /// The installer's flags. `--meeting-processor` only when flowd-meeting was copied, as flowd
+  /// turns phone meeting handoff on only for an executable processor.
   private func flowdArguments(listen: String, rewriting: Bool) -> [String] {
     let bin = paths.binDir
     let key = paths.dataDir.appending(path: "mtplx-api-key").path
-    return (rewriting ? [bin.appending(path: "localflow-remote-flowd").path, key] : [])
-      + [
-        paths.flowd.path, "serve",
-        "--listen", "127.0.0.1:\(paths.localPort)",
-        "--remote-listen", listen,
-        "--data-dir", paths.dataDir.path,
-        "--backend", "http://127.0.0.1:\(paths.mtplxPort)/v1", "--model", "localflow",
-        "--speech-worker", bin.appending(path: "flowd-speech").path,
-        "--meeting-helper", bin.appending(path: "localflow-whisper-engine").path,
-        "--log-file", paths.logDir.appending(path: "flowd.log").path,
-        "--admin-listen", "127.0.0.1:\(paths.adminPort)",
-      ] + (paths.dev ? ["--dev"] : [])
+    let processor = bin.appending(path: "flowd-meeting").path
+    var arguments = rewriting ? [bin.appending(path: "localflow-remote-flowd").path, key] : []
+    arguments += [
+      paths.flowd.path, "serve",
+      "--listen", "127.0.0.1:\(paths.localPort)",
+      "--remote-listen", listen,
+      "--data-dir", paths.dataDir.path,
+      "--backend", "http://127.0.0.1:\(paths.mtplxPort)/v1", "--model", "localflow",
+      "--speech-worker", bin.appending(path: "flowd-speech").path,
+      "--meeting-helper", bin.appending(path: "localflow-whisper-engine").path,
+    ]
+    if files.isExecutableFile(atPath: processor) {
+      arguments += ["--meeting-processor", processor]
+    }
+    arguments += [
+      "--log-file", paths.logDir.appending(path: "flowd.log").path,
+      "--admin-listen", "127.0.0.1:\(paths.adminPort)",
+    ]
+    return arguments + (paths.dev ? ["--dev"] : [])
   }
 
   /// The serving flags and memory caps of the installer's MTPLX agent. Warmup covers only the

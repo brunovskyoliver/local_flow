@@ -201,7 +201,7 @@ func init() {
 		must(err)
 		user, _, err := store.EnsureUser(ctx, "apple", "test-subject", "Test")
 		must(err)
-		device, err := store.AddDevice(ctx, user.ID, "Test Mac", bytes.Repeat([]byte{4}, 65))
+		device, err := store.AddDevice(ctx, user.ID, "Test Mac", bytes.Repeat([]byte{4}, 65), accounts.KindMac)
 		must(err)
 		must(store.SetUserState(ctx, user.ID, accounts.UserApproved, "admin:test"))
 		must(store.SetDeviceState(ctx, device.ID, accounts.DeviceApproved, "admin:test"))

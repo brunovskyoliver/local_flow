@@ -209,8 +209,12 @@ func (s *Store) RevokePairingToken(ctx context.Context, id int64, actor string) 
 //   - unknown, expired, revoked, or spent by another key: ErrPairingTokenInvalid
 //   - the key's device is revoked, or the target user is: ErrRevoked
 //   - the key is enrolled to another user: ErrUnauthorized
-func (s *Store) RedeemPairingToken(ctx context.Context, token, deviceName string, deviceKey []byte) (Pairing, error) {
-	if len(deviceName) == 0 || len(deviceName) > maxNameBytes || hasControl(deviceName) || len(deviceKey) != publicKeyBytes || deviceKey[0] != 0x04 {
+//
+// kind (may be unknown) is stored on a new device and fills an unknown kind on
+// a device the key already has; a stored kind never changes.
+func (s *Store) RedeemPairingToken(ctx context.Context, token, deviceName string, deviceKey []byte, kind DeviceKind) (Pairing, error) {
+	if len(deviceName) == 0 || len(deviceName) > maxNameBytes || hasControl(deviceName) || len(deviceKey) != publicKeyBytes || deviceKey[0] != 0x04 ||
+		!kind.Valid() {
 		return Pairing{}, ErrInvalidRecord
 	}
 	hash := HashToken(token)
@@ -303,8 +307,8 @@ func (s *Store) RedeemPairingToken(ctx context.Context, token, deviceName string
 		}
 		switch {
 		case !enrolled:
-			result, err := tx.ExecContext(ctx, `INSERT INTO devices (user_id, name, public_key, state, enrolled_at, last_seen_at, changed_at) VALUES (?, ?, ?, 'approved', ?, 0, ?)`,
-				userID.Int64, deviceName, deviceKey, now, now)
+			result, err := tx.ExecContext(ctx, `INSERT INTO devices (user_id, name, kind, public_key, state, enrolled_at, last_seen_at, changed_at) VALUES (?, ?, ?, ?, 'approved', ?, 0, ?)`,
+				userID.Int64, deviceName, kind.value(), deviceKey, now, now)
 			if err != nil {
 				return Pairing{}, err
 			}
@@ -317,6 +321,11 @@ func (s *Store) RedeemPairingToken(ctx context.Context, token, deviceName string
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE pairing_tokens SET state = 'redeemed', changed_at = ?, user_id = ?, device_id = ?, device_key = ? WHERE id = ?`,
 			now, device.UserID, device.ID, deviceKey, id); err != nil {
+			return Pairing{}, err
+		}
+	}
+	if kind != KindUnknown {
+		if _, err := tx.ExecContext(ctx, fillKind, string(kind), device.ID); err != nil {
 			return Pairing{}, err
 		}
 	}

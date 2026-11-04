@@ -7,7 +7,9 @@ package accounts
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -26,7 +28,8 @@ import (
 const (
 	FileName         = "flowd-remote.sqlite"
 	PreV3FileName    = "flowd-remote.pre-v3.sqlite"
-	schemaVersion    = 3
+	PreV4FileName    = "flowd-remote.pre-v4.sqlite"
+	schemaVersion    = 4
 	MaxPendingUsers  = 100
 	MaxAuditRows     = 10000
 	LastSeenInterval = time.Minute
@@ -94,12 +97,37 @@ type User struct {
 	ChangedAt time.Time
 }
 
+// DeviceKind is what a device says it is at pair or enroll; empty is unknown
+// (stored NULL).
+type DeviceKind string
+
+const (
+	KindUnknown DeviceKind = ""
+	KindMac     DeviceKind = "mac"
+	KindWindows DeviceKind = "windows"
+	KindIPhone  DeviceKind = "iphone"
+)
+
+// Valid reports whether k is unknown or one of the stored kinds.
+func (k DeviceKind) Valid() bool {
+	return k == KindUnknown || k == KindMac || k == KindWindows || k == KindIPhone
+}
+
+// value is the column value: NULL for unknown.
+func (k DeviceKind) value() any {
+	if k == KindUnknown {
+		return nil
+	}
+	return string(k)
+}
+
 // Device is one row of devices. The hashes are SHA-256 of tokens, never
 // tokens. LastSeenAt is zero until the device is first seen.
 type Device struct {
 	ID                  int64
 	UserID              int64
 	Name                string
+	Kind                DeviceKind
 	PublicKey           []byte
 	State               DeviceState
 	RefreshHash         []byte
@@ -246,8 +274,51 @@ CREATE TABLE pairing_tokens (
 PRAGMA user_version = 3;
 `
 
-// migrations[v] brings a version v database to v+1.
-var migrations = []string{schema, schemaV2, schemaV3}
+// schemaV4 adds the device kind (specs/028-server-users-and-rewrite-warmup/
+// data-model.md) and rebuilds audit for the user_create and rename actions.
+// audit has no references, so the rebuild needs no deferred foreign keys.
+const schemaV4 = `
+ALTER TABLE devices ADD COLUMN kind TEXT CHECK (kind IS NULL OR kind IN ('mac', 'windows', 'iphone'));
+CREATE TABLE audit_v3 AS SELECT * FROM audit;
+DROP TABLE audit;
+CREATE TABLE audit (
+  id INTEGER PRIMARY KEY,
+  at INTEGER NOT NULL,
+  actor TEXT NOT NULL CHECK (
+    actor = 'system'
+    OR (actor GLOB 'admin:?*' AND length(actor) <= 70)
+    OR (actor GLOB 'user:[0-9]*' AND substr(actor, 6) NOT GLOB '*[^0-9]*')
+    OR (actor GLOB 'device:[0-9]*' AND substr(actor, 8) NOT GLOB '*[^0-9]*')),
+  action TEXT NOT NULL CHECK (action IN ('sign_in', 'enroll', 'approve', 'reject', 'revoke', 'refresh',
+    'refresh_reuse', 'cross_user_attempt', 'rate_limited', 'pin_rejected', 'token_create', 'token_revoke', 'pair',
+    'user_create', 'rename')),
+  target TEXT CHECK (target IS NULL
+    OR (target GLOB 'user:[0-9]*' AND substr(target, 6) NOT GLOB '*[^0-9]*')
+    OR (target GLOB 'device:[0-9]*' AND substr(target, 8) NOT GLOB '*[^0-9]*')
+    OR (target GLOB 'token:[0-9]*' AND substr(target, 7) NOT GLOB '*[^0-9]*')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'unauthorized', 'token_expired', 'not_approved', 'revoked',
+    'busy', 'invalid_message', 'unsupported_version', 'limit_exceeded', 'worker_unavailable', 'internal',
+    'pairing_token_invalid'))
+);
+INSERT INTO audit SELECT * FROM audit_v3;
+DROP TABLE audit_v3;
+PRAGMA user_version = 4;
+`
+
+// migrations[v] brings a version v database to v+1. A new version appends its
+// step here and raises schemaVersion; migrate writes the pre-v<N> copy itself.
+var migrations = []string{schema, schemaV2, schemaV3, schemaV4}
+
+// firstCopiedVersion is the oldest version that gets a copy before migrating.
+// Version 1 predates the copies, and an empty file has nothing to keep.
+const firstCopiedVersion = 2
+
+// PreMigrationFileName is the copy written before a version from database is
+// migrated: flowd-remote.pre-v<from+1>.sqlite, so a v3 database leaves
+// PreV4FileName.
+func PreMigrationFileName(from int) string {
+	return fmt.Sprintf("flowd-remote.pre-v%d.sqlite", from+1)
+}
 
 // revokeDevice is the device revocation update (admin revoke and refresh
 // reuse): the token hashes are cleared and move to the tombstones (a hash
@@ -302,8 +373,8 @@ func (s *Store) migrate() error {
 	case version > schemaVersion:
 		return ErrSchemaTooNew
 	}
-	if version == 2 {
-		if err := s.copyBeforeV3(); err != nil {
+	if version >= firstCopiedVersion {
+		if err := s.copyBeforeMigrating(version); err != nil {
 			return fmt.Errorf("accounts: copy database before migrating: %w", err)
 		}
 	}
@@ -324,13 +395,17 @@ func (s *Store) migrate() error {
 	return tx.Commit()
 }
 
-// copyBeforeV3 writes a consistent copy of a version 2 database beside it, 0600,
-// because an older flowd refuses version 3 and this is the way back. VACUUM INTO
-// can't run in a transaction. It accepts an empty file, and CreateTemp makes one
-// 0600 with a name no other process is using.
-func (s *Store) copyBeforeV3() error {
+// copyBeforeMigrating writes a consistent copy of a version from database beside
+// it, 0600, named PreMigrationFileName(from), because an older flowd refuses the
+// newer schema and this is the way back. One copy per open: a version 2
+// database migrated straight to the latest leaves only the pre-v3 copy, which
+// holds its original state. VACUUM INTO can't run in a transaction. It accepts
+// an empty file, and CreateTemp makes one 0600 with a name no other process is
+// using.
+func (s *Store) copyBeforeMigrating(from int) error {
 	dir := filepath.Dir(s.path)
-	temp, err := os.CreateTemp(dir, PreV3FileName+".*")
+	name := PreMigrationFileName(from)
+	temp, err := os.CreateTemp(dir, name+".*")
 	if err != nil {
 		return err
 	}
@@ -339,16 +414,16 @@ func (s *Store) copyBeforeV3() error {
 	if _, err := s.db.Exec(`VACUUM INTO ?`, temp.Name()); err != nil {
 		return err
 	}
-	// Still version 2 now means the copy is too. Otherwise another process
+	// Still version from now means the copy is too. Otherwise another process
 	// migrated meanwhile, and its copy is the one to keep.
 	var version int
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version != 2 {
+	if version != from {
 		return nil
 	}
-	return os.Rename(temp.Name(), filepath.Join(dir, PreV3FileName))
+	return os.Rename(temp.Name(), filepath.Join(dir, name))
 }
 
 // Close closes the database.
@@ -416,9 +491,10 @@ func (s *Store) EnsureUser(ctx context.Context, provider, subject, display strin
 }
 
 // AddDevice enrolls a pending device for userID. name must already have its
-// control characters removed (1…64 bytes); publicKey is X9.63 uncompressed.
-func (s *Store) AddDevice(ctx context.Context, userID int64, name string, publicKey []byte) (Device, error) {
-	if len(name) == 0 || len(name) > maxNameBytes || hasControl(name) || len(publicKey) != publicKeyBytes || publicKey[0] != 0x04 {
+// control characters removed (1…64 bytes); publicKey is X9.63 uncompressed;
+// kind may be unknown.
+func (s *Store) AddDevice(ctx context.Context, userID int64, name string, publicKey []byte, kind DeviceKind) (Device, error) {
+	if len(name) == 0 || len(name) > maxNameBytes || hasControl(name) || len(publicKey) != publicKeyBytes || publicKey[0] != 0x04 || !kind.Valid() {
 		return Device{}, ErrInvalidRecord
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -440,8 +516,8 @@ func (s *Store) AddDevice(ctx context.Context, userID int64, name string, public
 		return Device{}, ErrNotFound
 	}
 	now := s.millis()
-	result, err := tx.ExecContext(ctx, `INSERT INTO devices (user_id, name, public_key, state, enrolled_at, last_seen_at, changed_at) VALUES (?, ?, ?, 'pending', ?, 0, ?)`,
-		userID, name, publicKey, now, now)
+	result, err := tx.ExecContext(ctx, `INSERT INTO devices (user_id, name, kind, public_key, state, enrolled_at, last_seen_at, changed_at) VALUES (?, ?, ?, ?, 'pending', ?, 0, ?)`,
+		userID, name, kind.value(), publicKey, now, now)
 	if err != nil {
 		return Device{}, err
 	}
@@ -450,6 +526,108 @@ func (s *Store) AddDevice(ctx context.Context, userID int64, name string, public
 		return Device{}, err
 	}
 	return s.Device(ctx, id)
+}
+
+// fillKind is the update that records a kind for a device whose kind is
+// unknown; a stored kind never changes. Parameters: kind, id.
+const fillKind = `UPDATE devices SET kind = ? WHERE id = ? AND kind IS NULL`
+
+// FillDeviceKind records kind for a device that has none, as a later enroll of
+// the same key does. A stored kind is kept; an unknown kind changes nothing.
+func (s *Store) FillDeviceKind(ctx context.Context, id int64, kind DeviceKind) error {
+	if !kind.Valid() {
+		return ErrInvalidRecord
+	}
+	if kind == KindUnknown {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, fillKind, string(kind), id)
+	return err
+}
+
+// namedSubjectPrefix marks a user an administrator created by name; the rest
+// of the subject is 16 random bytes in lowercase hex.
+const namedSubjectPrefix = "named:"
+
+// CreateUser adds an approved user with provider token, subject
+// named:<32 lowercase hex> and display name, and audits user_create, in one
+// transaction. name is 1…320 bytes with no control characters.
+func (s *Store) CreateUser(ctx context.Context, name, actor string) (User, error) {
+	if !validDisplayName(name) || !adminPattern.MatchString(actor) {
+		return User{}, ErrInvalidRecord
+	}
+	random := make([]byte, 16)
+	if _, err := rand.Read(random); err != nil {
+		return User{}, err
+	}
+	subject := namedSubjectPrefix + hex.EncodeToString(random)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+	now := s.millis()
+	result, err := tx.ExecContext(ctx, `INSERT INTO users (provider, subject, display, state, created_at, changed_at) VALUES ('token', ?, ?, 'approved', ?, ?)`,
+		subject, name, now, now)
+	if err != nil {
+		return User{}, err
+	}
+	id, _ := result.LastInsertId()
+	entry := AuditEntry{Actor: actor, Action: "user_create", Target: UserTarget(id), Outcome: "ok"}
+	if err := insertAudit(ctx, tx, now, entry); err != nil {
+		return User{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, err
+	}
+	return User{ID: id, Provider: "token", Subject: subject, Display: name, State: UserApproved,
+		CreatedAt: time.UnixMilli(now), ChangedAt: time.UnixMilli(now)}, nil
+}
+
+func validDisplayName(name string) bool {
+	return len(name) > 0 && len(name) <= maxDisplayBytes && !hasControl(name)
+}
+
+// RenameUser sets a user's display name (1…320 bytes, no control characters)
+// and audits rename. Any state may be renamed; changed_at, which records state
+// changes, is left alone.
+func (s *Store) RenameUser(ctx context.Context, id int64, name, actor string) error {
+	if !validDisplayName(name) {
+		return ErrInvalidRecord
+	}
+	return s.rename(ctx, "users", `display`, id, name, actor, UserTarget(id))
+}
+
+// RenameDevice sets a device's name (1…64 bytes, no control characters) and
+// audits rename. Any state may be renamed.
+func (s *Store) RenameDevice(ctx context.Context, id int64, name, actor string) error {
+	if len(name) == 0 || len(name) > maxNameBytes || hasControl(name) {
+		return ErrInvalidRecord
+	}
+	return s.rename(ctx, "devices", `name`, id, name, actor, DeviceTarget(id))
+}
+
+func (s *Store) rename(ctx context.Context, table, column string, id int64, name, actor, target string) error {
+	if !validActor(actor) {
+		return ErrInvalidRecord
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE `+table+` SET `+column+` = ? WHERE id = ?`, name, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	entry := AuditEntry{Actor: actor, Action: "rename", Target: target, Outcome: "ok"}
+	if err := insertAudit(ctx, tx, s.millis(), entry); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 const userColumns = `SELECT id, provider, subject, coalesce(display, ''), state, created_at, changed_at FROM users`
@@ -470,21 +648,21 @@ func scanUser(row rowScanner) (User, error) {
 	return u, nil
 }
 
-const deviceColumns = `SELECT id, user_id, name, public_key, state, refresh_hash, previous_refresh_hash, refresh_expires_at,
+const deviceColumns = `SELECT id, user_id, name, coalesce(kind, ''), public_key, state, refresh_hash, previous_refresh_hash, refresh_expires_at,
   access_hash, access_expires_at, enrolled_at, last_seen_at, changed_at FROM devices`
 
 func scanDevice(row rowScanner) (Device, error) {
 	var d Device
-	var state string
+	var state, kind string
 	var refreshExpires, accessExpires, enrolled, lastSeen, changed sql.NullInt64
-	if err := row.Scan(&d.ID, &d.UserID, &d.Name, &d.PublicKey, &state, &d.RefreshHash, &d.PreviousRefreshHash, &refreshExpires,
+	if err := row.Scan(&d.ID, &d.UserID, &d.Name, &kind, &d.PublicKey, &state, &d.RefreshHash, &d.PreviousRefreshHash, &refreshExpires,
 		&d.AccessHash, &accessExpires, &enrolled, &lastSeen, &changed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Device{}, ErrNotFound
 		}
 		return Device{}, err
 	}
-	d.State = DeviceState(state)
+	d.State, d.Kind = DeviceState(state), DeviceKind(kind)
 	d.RefreshExpiresAt, d.AccessExpiresAt = fromMillis(refreshExpires), fromMillis(accessExpires)
 	d.EnrolledAt, d.LastSeenAt, d.ChangedAt = fromMillis(enrolled), fromMillis(lastSeen), fromMillis(changed)
 	return d, nil
@@ -649,7 +827,7 @@ var (
 	auditActions  = map[string]bool{
 		"sign_in": true, "enroll": true, "approve": true, "reject": true, "revoke": true, "refresh": true,
 		"refresh_reuse": true, "cross_user_attempt": true, "rate_limited": true, "pin_rejected": true,
-		"token_create": true, "token_revoke": true, "pair": true,
+		"token_create": true, "token_revoke": true, "pair": true, "user_create": true, "rename": true,
 	}
 	auditOutcomes = map[string]bool{
 		"ok": true, "unauthorized": true, "token_expired": true, "not_approved": true, "revoked": true, "busy": true,

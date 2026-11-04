@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -74,8 +75,10 @@ func TestOpenCreatesPrivateWALDatabase(t *testing.T) {
 	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
 		t.Fatal(version, err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, PreV3FileName)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a new database needs no copy: %v", err)
+	for _, name := range []string{PreV3FileName, PreV4FileName} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("a new database needs no copy: %v", err)
+		}
 	}
 	// Reopening an initialized file keeps it; a newer schema is refused.
 	store.Close()
@@ -83,7 +86,7 @@ func TestOpenCreatesPrivateWALDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := again.db.Exec("PRAGMA user_version = 4"); err != nil {
+	if _, err := again.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion+1)); err != nil {
 		t.Fatal(err)
 	}
 	again.Close()
@@ -160,11 +163,11 @@ func TestPendingUserCap(t *testing.T) {
 func TestDevices(t *testing.T) {
 	store, clock, _ := openStore(t)
 	user, _, _ := store.EnsureUser(ctx, "apple", "sub", "")
-	device, err := store.AddDevice(ctx, user.ID, "MacBook Pro", deviceKey(1))
+	device, err := store.AddDevice(ctx, user.ID, "MacBook Pro", deviceKey(1), "")
 	if err != nil || device.State != DevicePending || device.UserID != user.ID || !device.LastSeenAt.IsZero() || !device.EnrolledAt.Equal(clock.Now()) {
 		t.Fatal(device, err)
 	}
-	if _, err := store.AddDevice(ctx, user.ID, "Other", deviceKey(1)); !errors.Is(err, ErrDuplicateKey) {
+	if _, err := store.AddDevice(ctx, user.ID, "Other", deviceKey(1), ""); !errors.Is(err, ErrDuplicateKey) {
 		t.Fatal("duplicate public key", err)
 	}
 	for name, tc := range map[string]struct {
@@ -179,11 +182,11 @@ func TestDevices(t *testing.T) {
 		"key 64 bytes":   {user.ID, "Mac", deviceKey(2)[:64]},
 		"key compressed": {user.ID, "Mac", append([]byte{0x02}, deviceKey(2)[1:]...)},
 	} {
-		if _, err := store.AddDevice(ctx, tc.user, tc.name, tc.key); err == nil {
+		if _, err := store.AddDevice(ctx, tc.user, tc.name, tc.key, ""); err == nil {
 			t.Errorf("%s accepted", name)
 		}
 	}
-	second, err := store.AddDevice(ctx, user.ID, string(bytes.Repeat([]byte("n"), 64)), deviceKey(3))
+	second, err := store.AddDevice(ctx, user.ID, string(bytes.Repeat([]byte("n"), 64)), deviceKey(3), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +302,7 @@ func TestDeviceTransitions(t *testing.T) {
 		for _, to := range states {
 			store, _, _ := openStore(t)
 			user, _, _ := store.EnsureUser(ctx, "apple", "sub", "")
-			device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1))
+			device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1), "")
 			if _, err := store.db.Exec(`UPDATE devices SET state = ? WHERE id = ?`, string(from), device.ID); err != nil {
 				t.Fatal(err)
 			}
@@ -331,7 +334,7 @@ func TestDeviceTransitions(t *testing.T) {
 func TestRevokeUserLeavesDevices(t *testing.T) {
 	store, _, _ := openStore(t)
 	user, _, _ := store.EnsureUser(ctx, "apple", "sub", "")
-	device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1))
+	device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1), "")
 	_ = store.SetUserState(ctx, user.ID, UserApproved, AdminActor("oliver"))
 	_ = store.SetDeviceState(ctx, device.ID, DeviceApproved, AdminActor("oliver"))
 	setHashes(t, store, device.ID)
@@ -347,7 +350,7 @@ func TestRevokeUserLeavesDevices(t *testing.T) {
 func TestTouchDeviceAtMostOncePerMinute(t *testing.T) {
 	store, clock, _ := openStore(t)
 	user, _, _ := store.EnsureUser(ctx, "apple", "sub", "")
-	device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1))
+	device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1), "")
 	first := clock.Now()
 	for i, tc := range []struct {
 		advance time.Duration
@@ -435,7 +438,7 @@ func TestAuditCap(t *testing.T) {
 func TestDeviceByKey(t *testing.T) {
 	store, _, _ := openStore(t)
 	user, _, _ := store.EnsureUser(ctx, "apple", "sub", "")
-	device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1))
+	device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1), "")
 	got, err := store.DeviceByKey(ctx, deviceKey(1))
 	if err != nil || got.ID != device.ID || got.UserID != user.ID {
 		t.Fatal(got, err)
@@ -454,11 +457,12 @@ func TestMigrateFromVersion1(t *testing.T) {
 		t.Fatal(err)
 	}
 	user, _, _ := store.EnsureUser(ctx, "apple", "sub", "")
-	if _, err := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1)); err != nil {
+	if _, err := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1), ""); err != nil {
 		t.Fatal(err)
 	}
 	// Back to version 2's tables, then the devices table as version 1 had it.
 	for _, statement := range []string{
+		`ALTER TABLE devices DROP COLUMN kind`,
 		`DROP TABLE pairing_tokens`,
 		`DROP INDEX devices_revoked_refresh`,
 		`DROP INDEX devices_revoked_previous_refresh`,
@@ -534,8 +538,12 @@ func TestMigrateFromVersion2(t *testing.T) {
 	}
 	defer store.Close()
 	var version int
-	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
+	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
 		t.Fatal(version, err)
+	}
+	// One copy per open, of the database as it was: a v2 file leaves pre-v3 only.
+	if _, err := os.Stat(filepath.Join(dir, PreV4FileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a v2 database must leave only its pre-v3 copy: %v", err)
 	}
 	user, err := store.User(ctx, 7)
 	if err != nil || user.Provider != "apple" || user.Subject != "sub-7" || user.Display != "Oliver" || user.State != UserApproved {
@@ -633,5 +641,256 @@ func TestMigrateFromVersion2RollsBack(t *testing.T) {
 	}
 	if _, err := db.Exec(`INSERT INTO users (provider, subject, state, created_at, changed_at) VALUES ('token', 'x', 'approved', 0, 0)`); err == nil {
 		t.Fatal("the old constraint must still hold")
+	}
+}
+
+// openV3 creates a version 3 database from the v3 schema strings.
+func openV3(t *testing.T, dir string, statements ...string) {
+	t.Helper()
+	openV2(t, dir, append([]string{schemaV3}, statements...)...)
+}
+
+// A v3 database keeps every row through the v4 migration, its devices have no
+// kind, the new audit actions are accepted and a private pre-v4 copy of the v3
+// file is left beside it, once.
+func TestMigrateFromVersion3(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	clock := newClock()
+	now := clock.Now().UnixMilli()
+	refresh, refreshHash, err := NewToken(RefreshPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openV3(t, dir,
+		fmt.Sprintf(`INSERT INTO users VALUES (7, 'apple', 'sub-7', 'Oliver', 'approved', %d, %d), (8, 'token', 'token:1', 'Anna', 'approved', %d, %d)`, now, now, now, now),
+		fmt.Sprintf(`INSERT INTO devices (id, user_id, name, public_key, state, refresh_hash, refresh_expires_at, enrolled_at, last_seen_at, changed_at)
+			VALUES (3, 7, 'Mac', x'%x', 'approved', x'%x', %d, %d, 0, %d)`, deviceKey(1), refreshHash[:], now+time.Hour.Milliseconds(), now, now),
+		fmt.Sprintf(`INSERT INTO devices (id, user_id, name, public_key, state, enrolled_at, last_seen_at, changed_at)
+			VALUES (4, 8, 'Phone', x'%x', 'approved', %d, %d, %d)`, deviceKey(2), now, now, now),
+		fmt.Sprintf(`INSERT INTO pairing_tokens (id, label, hash, user_id, state, created_at, expires_at, changed_at, device_id, device_key, created_by)
+			VALUES (1, 'Anna', x'%064x', 8, 'redeemed', %d, %d, %d, 4, x'%x', 'admin:oliver')`, 1, now, now+time.Hour.Milliseconds(), now, deviceKey(2)),
+		fmt.Sprintf(`INSERT INTO audit VALUES (11, %d, 'admin:oliver', 'token_create', 'token:1', 'ok'), (12, %d, 'device:4', 'pair', 'token:1', 'ok')`, now, now),
+	)
+
+	store, err := Open(dir, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var version int
+	if err := store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
+		t.Fatal(version, err)
+	}
+	if users, err := store.Users(ctx); err != nil || len(users) != 2 || users[1].Display != "Anna" || users[1].Provider != "token" {
+		t.Fatalf("%+v %v", users, err)
+	}
+	devices, err := store.Devices(ctx, 0)
+	if err != nil || len(devices) != 2 || devices[0].Kind != KindUnknown || devices[1].Kind != KindUnknown || devices[1].UserID != 8 {
+		t.Fatalf("%+v %v", devices, err)
+	}
+	if tokens, err := store.PairingTokens(ctx); err != nil || len(tokens) != 1 || tokens[0].DeviceID != 4 || tokens[0].State != PairingRedeemed {
+		t.Fatalf("%+v %v", tokens, err)
+	}
+	if entries, err := store.AuditLog(ctx, 5); err != nil || len(entries) != 2 || entries[0].ID != 12 || entries[1].Action != "token_create" {
+		t.Fatalf("%+v %v", entries, err)
+	}
+	if tokens, err := store.Refresh(ctx, refresh, func(Device) error { return nil }); err != nil || tokens.DeviceID != 3 {
+		t.Fatalf("%+v %v", tokens, err)
+	}
+	var violations int
+	if err := store.db.QueryRow(`SELECT count(*) FROM pragma_foreign_key_check`).Scan(&violations); err != nil || violations != 0 {
+		t.Fatal(violations, err)
+	}
+	// The new constraints.
+	for _, action := range []string{"user_create", "rename"} {
+		if err := store.Audit(ctx, AuditEntry{Actor: AdminActor("oliver"), Action: action, Target: UserTarget(7), Outcome: "ok"}); err != nil {
+			t.Fatal(action, err)
+		}
+	}
+	if _, err := store.db.Exec(`UPDATE devices SET kind = 'linux' WHERE id = 3`); err == nil {
+		t.Fatal("an unknown kind must be refused")
+	}
+	if _, err := store.db.Exec(`UPDATE devices SET kind = 'iphone' WHERE id = 4`); err != nil {
+		t.Fatal(err)
+	}
+
+	copyPath := filepath.Join(dir, PreV4FileName)
+	info, err := os.Stat(copyPath)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatal(info, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, PreV3FileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a v3 database needs no pre-v3 copy: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+copyPath+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var users, copied, tokens, audit int
+	if err := db.QueryRow(`SELECT (SELECT user_version FROM pragma_user_version), (SELECT count(*) FROM users), (SELECT count(*) FROM devices),
+		(SELECT count(*) FROM pairing_tokens), (SELECT count(*) FROM audit)`).Scan(&version, &users, &copied, &tokens, &audit); err != nil ||
+		version != 3 || users != 2 || copied != 2 || tokens != 1 || audit != 2 {
+		t.Fatal(version, users, copied, tokens, audit, err)
+	}
+	store.Close()
+	again, err := Open(dir, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	if later, err := os.Stat(copyPath); err != nil || !later.ModTime().Equal(info.ModTime()) {
+		t.Fatal(later, err)
+	}
+	if entries, _ := filepath.Glob(filepath.Join(dir, PreV4FileName+".*")); len(entries) != 0 {
+		t.Fatalf("temporary copies left: %v", entries)
+	}
+}
+
+func TestPreMigrationFileName(t *testing.T) {
+	if PreMigrationFileName(2) != PreV3FileName || PreMigrationFileName(3) != PreV4FileName || PreMigrationFileName(4) != "flowd-remote.pre-v5.sqlite" {
+		t.Fatal(PreMigrationFileName(2), PreMigrationFileName(3), PreMigrationFileName(4))
+	}
+}
+
+// AddDevice stores a kind or none; FillDeviceKind fills only an unknown kind.
+func TestDeviceKind(t *testing.T) {
+	store, _, _ := openStore(t)
+	user, _, _ := store.EnsureUser(ctx, "apple", "sub", "")
+	mac, err := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1), KindMac)
+	if err != nil || mac.Kind != KindMac {
+		t.Fatalf("%+v %v", mac, err)
+	}
+	unknown, err := store.AddDevice(ctx, user.ID, "Old", deviceKey(2), KindUnknown)
+	if err != nil || unknown.Kind != KindUnknown {
+		t.Fatalf("%+v %v", unknown, err)
+	}
+	var stored sql.NullString
+	if err := store.db.QueryRow(`SELECT kind FROM devices WHERE id = ?`, unknown.ID).Scan(&stored); err != nil || stored.Valid {
+		t.Fatal("an unknown kind must be stored as NULL", stored, err)
+	}
+	if _, err := store.AddDevice(ctx, user.ID, "Linux", deviceKey(3), DeviceKind("linux")); !errors.Is(err, ErrInvalidRecord) {
+		t.Fatal(err)
+	}
+	if err := store.FillDeviceKind(ctx, mac.ID, KindWindows); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FillDeviceKind(ctx, unknown.ID, KindUnknown); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := store.Device(ctx, unknown.ID); d.Kind != KindUnknown {
+		t.Fatal("an unknown kind must not fill", d.Kind)
+	}
+	if err := store.FillDeviceKind(ctx, unknown.ID, KindIPhone); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FillDeviceKind(ctx, unknown.ID, KindMac); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := store.Device(ctx, mac.ID); d.Kind != KindMac {
+		t.Fatal("a stored kind changed", d.Kind)
+	}
+	if d, _ := store.Device(ctx, unknown.ID); d.Kind != KindIPhone {
+		t.Fatal("the first kind must fill and stay", d.Kind)
+	}
+	if err := store.FillDeviceKind(ctx, mac.ID, DeviceKind("x")); !errors.Is(err, ErrInvalidRecord) {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateUser(t *testing.T) {
+	store, _, _ := openStore(t)
+	admin := AdminActor("oliver")
+	user, err := store.CreateUser(ctx, "Ana", admin)
+	if err != nil || user.State != UserApproved || user.Provider != "token" || user.Display != "Ana" ||
+		!regexp.MustCompile(`^named:[0-9a-f]{32}$`).MatchString(user.Subject) {
+		t.Fatalf("%+v %v", user, err)
+	}
+	if again, err := store.User(ctx, user.ID); err != nil || again != user {
+		t.Fatalf("%+v %+v %v", again, user, err)
+	}
+	second, err := store.CreateUser(ctx, "Ana", admin)
+	if err != nil || second.ID == user.ID || second.Subject == user.Subject {
+		t.Fatalf("the same name makes another user: %+v %v", second, err)
+	}
+	if _, err := store.CreateUser(ctx, string(bytes.Repeat([]byte("n"), 320)), admin); err != nil {
+		t.Fatal("320 bytes must fit", err)
+	}
+	for name, args := range map[string][2]string{
+		"empty":   {"", admin},
+		"321":     {string(bytes.Repeat([]byte("n"), 321)), admin},
+		"control": {"A\nna", admin},
+		"actor":   {"Ana", "user:1"},
+	} {
+		if _, err := store.CreateUser(ctx, args[0], args[1]); !errors.Is(err, ErrInvalidRecord) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	entries, _ := store.AuditLog(ctx, 10)
+	if len(entries) != 3 || entries[2].Action != "user_create" || entries[2].Actor != admin || entries[2].Target != UserTarget(user.ID) {
+		t.Fatalf("%+v", entries)
+	}
+	// A named user can be the target of a pairing token.
+	if _, _, err := store.CreatePairingToken(ctx, make([]byte, 32), "Phone", user.ID, time.Hour, admin); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRename(t *testing.T) {
+	store, _, _ := openStore(t)
+	admin := AdminActor("oliver")
+	user, _, _ := store.EnsureUser(ctx, "apple", "sub", "")
+	device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1), KindMac)
+	_ = store.SetUserState(ctx, user.ID, UserApproved, admin)
+	_ = store.SetUserState(ctx, user.ID, UserRevoked, admin)
+	_ = store.SetDeviceState(ctx, device.ID, DeviceRevoked, admin)
+	before, _ := store.User(ctx, user.ID)
+
+	// Revoked rows can still be renamed; the state and its time stay.
+	if err := store.RenameUser(ctx, user.ID, "Oliver", admin); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RenameDevice(ctx, device.ID, "Studio", admin); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := store.User(ctx, user.ID)
+	if after.Display != "Oliver" || after.State != UserRevoked || !after.ChangedAt.Equal(before.ChangedAt) {
+		t.Fatalf("%+v", after)
+	}
+	if d, _ := store.Device(ctx, device.ID); d.Name != "Studio" || d.State != DeviceRevoked || d.Kind != KindMac {
+		t.Fatalf("%+v", d)
+	}
+	entries, _ := store.AuditLog(ctx, 2)
+	if entries[0].Action != "rename" || entries[0].Target != DeviceTarget(device.ID) || entries[1].Target != UserTarget(user.ID) {
+		t.Fatalf("%+v", entries)
+	}
+
+	if err := store.RenameUser(ctx, 99, "X", admin); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	if err := store.RenameDevice(ctx, 99, "X", admin); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	if err := store.RenameUser(ctx, user.ID, string(bytes.Repeat([]byte("n"), 320)), admin); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RenameDevice(ctx, device.ID, string(bytes.Repeat([]byte("n"), 64)), admin); err != nil {
+		t.Fatal(err)
+	}
+	for name, err := range map[string]error{
+		"user empty":     store.RenameUser(ctx, user.ID, "", admin),
+		"user 321":       store.RenameUser(ctx, user.ID, string(bytes.Repeat([]byte("n"), 321)), admin),
+		"user control":   store.RenameUser(ctx, user.ID, "a\x7fb", admin),
+		"device empty":   store.RenameDevice(ctx, device.ID, "", admin),
+		"device 65":      store.RenameDevice(ctx, device.ID, string(bytes.Repeat([]byte("n"), 65)), admin),
+		"device control": store.RenameDevice(ctx, device.ID, "a\tb", admin),
+		"actor":          store.RenameDevice(ctx, device.ID, "ok", "nobody"),
+	} {
+		if !errors.Is(err, ErrInvalidRecord) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if entries, _ := store.AuditLog(ctx, 10); len(entries) != 7 {
+		t.Fatalf("refusals must write no audit row: %d", len(entries))
 	}
 }

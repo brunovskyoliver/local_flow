@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -205,7 +206,7 @@ func (h *harness) approved(subject string, key byte) (accounts.User, accounts.De
 	}
 	public := bytes.Repeat([]byte{key}, 65)
 	public[0] = 0x04
-	device, err := h.store.AddDevice(ctx, user.ID, "Mac", public)
+	device, err := h.store.AddDevice(ctx, user.ID, "Mac", public, "")
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -455,6 +456,9 @@ func TestIdentityEndpointAndRoutes(t *testing.T) {
 	if !strings.Contains(string(body), `"server_key":"`+b64(h.identity.PublicKey())+`"`) {
 		t.Fatal("server_key must be base64url without padding")
 	}
+	if !strings.Contains(string(body), `"features":["device_kind"]`) || len(identity.Features) != 1 {
+		t.Fatalf("features: %s", body)
+	}
 	for _, request := range []struct{ method, path string }{
 		{"POST", "/v1/remote/identity"},
 		{"GET", "/v1/remote/identity/extra"},
@@ -626,7 +630,7 @@ func TestHelloErrors(t *testing.T) {
 	pending, _, _ := h2.store.EnsureUser(context.Background(), "google", "pending", "")
 	key := bytes.Repeat([]byte{9}, 65)
 	key[0] = 0x04
-	pendingDevice, _ := h2.store.AddDevice(context.Background(), pending.ID, "Mac", key)
+	pendingDevice, _ := h2.store.AddDevice(context.Background(), pending.ID, "Mac", key, "")
 	pendingToken, _, _ := h2.store.IssueAccess(context.Background(), pendingDevice.ID)
 	h2.poll()
 	_, first = h2.hello(PurposeSession, pendingToken)
@@ -675,6 +679,63 @@ func TestChannelsPerDevice(t *testing.T) {
 	}
 	_, first := h.hello(PurposeSession, token)
 	expectError(t, first, 0, CodeBusy)
+}
+
+// DeviceCounts reports every open channel and, by device ID, the authenticated
+// channels of devices that have any; a closed channel leaves the counts.
+func TestRegistryDeviceCounts(t *testing.T) {
+	h := newHarness(t, Operations{})
+	if open, devices := h.listener.Registry().DeviceCounts(); open != 0 || len(devices) != 0 || devices == nil {
+		t.Fatal(open, devices)
+	}
+	_, second, secondToken := h.approved("second", 2)
+	_, first, firstToken := h.approved("first", 1)
+	if first.ID < second.ID {
+		t.Fatal("the test needs the device IDs out of hello order")
+	}
+	var firstChannels []*testClient
+	for range 2 {
+		c, ready := h.hello(PurposeSession, firstToken)
+		if ready.MessageType() != "ready" {
+			t.Fatalf("%#v", ready)
+		}
+		firstChannels = append(firstChannels, c)
+	}
+	if _, ready := h.hello(PurposeSession, secondToken); ready.MessageType() != "ready" {
+		t.Fatalf("%#v", ready)
+	}
+	h.dial() // open, not authenticated
+	wait := func(open int, want []DeviceChannels) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			got, devices := h.listener.Registry().DeviceCounts()
+			if got == open && slices.Equal(devices, want) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("open %d devices %+v, want %d %+v", got, devices, open, want)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	wait(4, []DeviceChannels{{second.ID, 1}, {first.ID, 2}})
+	firstChannels[0].ws.CloseNow()
+	wait(3, []DeviceChannels{{second.ID, 1}, {first.ID, 1}})
+}
+
+// DeviceCounts keeps at most MaxDeviceCounts entries, the lowest device IDs.
+func TestRegistryDeviceCountsCap(t *testing.T) {
+	r := newRegistry()
+	for id := int64(MaxDeviceCounts + 10); id >= 1; id-- {
+		if !r.bind(&Conn{id: uint64(id)}, accounts.Principal{UserID: 1, DeviceID: id}) {
+			t.Fatal(id)
+		}
+	}
+	_, devices := r.DeviceCounts()
+	if len(devices) != MaxDeviceCounts || devices[0].DeviceID != 1 || devices[MaxDeviceCounts-1].DeviceID != MaxDeviceCounts {
+		t.Fatal(len(devices), devices[0], devices[len(devices)-1])
+	}
 }
 
 func TestIdleTimeoutAndPing(t *testing.T) {

@@ -25,20 +25,20 @@ func TestSessionHelloAuthentication(t *testing.T) {
 	pendingUser, _, _ := h.store.EnsureUser(ctx, "google", "pending", "")
 	pendingKey := bytes.Repeat([]byte{7}, 65)
 	pendingKey[0] = 0x04
-	pendingUserDevice, _ := h.store.AddDevice(ctx, pendingUser.ID, "Mac", pendingKey)
+	pendingUserDevice, _ := h.store.AddDevice(ctx, pendingUser.ID, "Mac", pendingKey, "")
 	pendingUserToken, _, _ := h.store.IssueAccess(ctx, pendingUserDevice.ID)
 
 	approvedUser, approvedDevice, approvedToken := h.approved("approved", 1)
 	secondKey := bytes.Repeat([]byte{8}, 65)
 	secondKey[0] = 0x04
-	pendingDevice, _ := h.store.AddDevice(ctx, approvedUser.ID, "Mac Studio", secondKey)
+	pendingDevice, _ := h.store.AddDevice(ctx, approvedUser.ID, "Mac Studio", secondKey, "")
 	pendingDeviceToken, _, _ := h.store.IssueAccess(ctx, pendingDevice.ID)
 
 	// A rejected user whose device is approved.
 	rejectedUser, _, _ := h.store.EnsureUser(ctx, "apple", "rejected", "")
 	rejectedKey := bytes.Repeat([]byte{9}, 65)
 	rejectedKey[0] = 0x04
-	rejectedDevice, _ := h.store.AddDevice(ctx, rejectedUser.ID, "Mac", rejectedKey)
+	rejectedDevice, _ := h.store.AddDevice(ctx, rejectedUser.ID, "Mac", rejectedKey, "")
 	_ = h.store.SetUserState(ctx, rejectedUser.ID, accounts.UserRejected, admin)
 	_ = h.store.SetDeviceState(ctx, rejectedDevice.ID, accounts.DeviceApproved, admin)
 	rejectedToken, _, _ := h.store.IssueAccess(ctx, rejectedDevice.ID)

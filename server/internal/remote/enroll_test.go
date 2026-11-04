@@ -439,3 +439,46 @@ func TestAccountHelloRateLimitIsPerClient(t *testing.T) {
 	c, first = h.helloFrom("192.0.2.1", PurposeEnroll, "")
 	expectError(t, first, 0, CodeBusy)
 }
+
+// device_kind on enroll: absent stores none; a later enroll of the same key
+// fills it, and a kind once stored never changes. The log line carries kind=.
+func TestEnrollDeviceKind(t *testing.T) {
+	ctx := context.Background()
+	h := newAccountsHarness(t, nil)
+	enrollAs := func(d *device, kind DeviceKind) Message {
+		c, first := h.hello(PurposeEnroll, "")
+		if first.MessageType() != "ready" {
+			t.Fatalf("%#v", first)
+		}
+		binding := c.channel.Binding()
+		c.send(Enroll{Op: 1, Provider: "apple", IDToken: h.appleToken("sub", binding), DeviceName: "MacBook Pro",
+			DeviceKind: kind, DeviceKey: d.public, Signature: d.sign(t, []byte(EnrollSignatureLabel), binding)})
+		return c.recv()
+	}
+	kindOf := func(d *device) accounts.DeviceKind {
+		row, err := h.store.DeviceByKey(ctx, d.public)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return row.Kind
+	}
+	mac := newDevice(t)
+	enrolled(t, enrollAs(mac, ""), "pending")
+	if kindOf(mac) != accounts.KindUnknown || !strings.Contains(h.logs.String(), "op=enroll user=1 device=1 kind=none code=ok") {
+		t.Fatal(kindOf(mac), h.logs.String())
+	}
+	h.clock.Advance(AccountHelloWindow)
+	enrolled(t, enrollAs(mac, "mac"), "pending")
+	if kindOf(mac) != accounts.KindMac || !strings.Contains(h.logs.String(), "kind=mac code=ok") {
+		t.Fatal(kindOf(mac), h.logs.String())
+	}
+	enrolled(t, enrollAs(mac, "windows"), "pending")
+	if kindOf(mac) != accounts.KindMac {
+		t.Fatal("a stored kind changed", kindOf(mac))
+	}
+	windows := newDevice(t)
+	enrolled(t, enrollAs(windows, "windows"), "pending")
+	if kindOf(windows) != accounts.KindWindows {
+		t.Fatal(kindOf(windows))
+	}
+}

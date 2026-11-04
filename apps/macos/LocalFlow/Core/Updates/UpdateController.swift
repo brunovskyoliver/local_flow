@@ -1,6 +1,10 @@
 import Foundation
 import Observation
-import Sparkle
+
+// flowd-meeting compiles the app's sources without Sparkle; it never updates itself.
+#if !MEETING_PROCESSOR
+  import Sparkle
+#endif
 
 @MainActor
 protocol UpdateDriving: AnyObject {
@@ -36,7 +40,7 @@ final class UpdateController {
   }
 
   static func configured(bundle: Bundle = .main, busy: @escaping () -> Bool) -> UpdateController {
-    #if DEBUG
+    #if DEBUG || MEETING_PROCESSOR
       return UpdateController(
         driver: nil,
         unavailableReason:
@@ -83,65 +87,67 @@ final class UpdateInstallationGate {
   func cancel() { resume = nil }
 }
 
-@MainActor
-private final class SparkleUpdateDriver: NSObject, UpdateDriving, SPUUpdaterDelegate {
-  private var controller: SPUStandardUpdaterController!
-  private let gate: UpdateInstallationGate
-  var changed: (() -> Void)?
-  private(set) var installationRequested = false
-  private var observation: NSKeyValueObservation?
-  private var deferredInstall: Task<Void, Never>?
-  var canCheck: Bool { controller.updater.canCheckForUpdates }
-  var automaticallyChecks: Bool {
-    get { controller.updater.automaticallyChecksForUpdates }
-    set { controller.updater.automaticallyChecksForUpdates = newValue }
-  }
-  init(busy: @escaping () -> Bool) throws {
-    self.gate = UpdateInstallationGate(busy: busy)
-    super.init()
-    controller = SPUStandardUpdaterController(
-      startingUpdater: false, updaterDelegate: self, userDriverDelegate: nil)
-    controller.updater.sendsSystemProfile = false
-    controller.updater.automaticallyDownloadsUpdates = false
-    try controller.updater.start()
-    observation = controller.updater.observe(\.canCheckForUpdates, options: [.new]) {
-      [weak self] _, _ in
-      Task { @MainActor in self?.changed?() }
+#if !MEETING_PROCESSOR
+  @MainActor
+  private final class SparkleUpdateDriver: NSObject, UpdateDriving, SPUUpdaterDelegate {
+    private var controller: SPUStandardUpdaterController!
+    private let gate: UpdateInstallationGate
+    var changed: (() -> Void)?
+    private(set) var installationRequested = false
+    private var observation: NSKeyValueObservation?
+    private var deferredInstall: Task<Void, Never>?
+    var canCheck: Bool { controller.updater.canCheckForUpdates }
+    var automaticallyChecks: Bool {
+      get { controller.updater.automaticallyChecksForUpdates }
+      set { controller.updater.automaticallyChecksForUpdates = newValue }
     }
-  }
-  func check() {
-    guard canCheck else { return }
-    controller.checkForUpdates(nil)
-  }
-  func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
-    // Sparkle can skip the postponement callback when resuming an installation.
-    // The application delegate must still preserve any newly active work.
-    installationRequested = true
-  }
-  func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
-    installationRequested = false
-    deferredInstall?.cancel()
-    deferredInstall = nil
-    gate.cancel()
-    changed?()
-  }
-  func allowedSystemProfileKeys(for updater: SPUUpdater) -> [String] { [] }
-  func updater(_ updater: SPUUpdater, shouldDownloadReleaseNotesFor updateItem: SUAppcastItem)
-    -> Bool
-  { false }
-  func updater(
-    _ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem,
-    untilInvokingBlock installHandler: @escaping () -> Void
-  ) -> Bool {
-    installationRequested = true
-    guard gate.postpone(installHandler) else { return false }
-    deferredInstall?.cancel()
-    deferredInstall = Task { @MainActor [weak self] in
-      while !Task.isCancelled {
-        guard let self, !self.gate.resumeIfIdle() else { return }
-        try? await Task.sleep(for: .seconds(1))
+    init(busy: @escaping () -> Bool) throws {
+      self.gate = UpdateInstallationGate(busy: busy)
+      super.init()
+      controller = SPUStandardUpdaterController(
+        startingUpdater: false, updaterDelegate: self, userDriverDelegate: nil)
+      controller.updater.sendsSystemProfile = false
+      controller.updater.automaticallyDownloadsUpdates = false
+      try controller.updater.start()
+      observation = controller.updater.observe(\.canCheckForUpdates, options: [.new]) {
+        [weak self] _, _ in
+        Task { @MainActor in self?.changed?() }
       }
     }
-    return true
+    func check() {
+      guard canCheck else { return }
+      controller.checkForUpdates(nil)
+    }
+    func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
+      // Sparkle can skip the postponement callback when resuming an installation.
+      // The application delegate must still preserve any newly active work.
+      installationRequested = true
+    }
+    func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+      installationRequested = false
+      deferredInstall?.cancel()
+      deferredInstall = nil
+      gate.cancel()
+      changed?()
+    }
+    func allowedSystemProfileKeys(for updater: SPUUpdater) -> [String] { [] }
+    func updater(_ updater: SPUUpdater, shouldDownloadReleaseNotesFor updateItem: SUAppcastItem)
+      -> Bool
+    { false }
+    func updater(
+      _ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem,
+      untilInvokingBlock installHandler: @escaping () -> Void
+    ) -> Bool {
+      installationRequested = true
+      guard gate.postpone(installHandler) else { return false }
+      deferredInstall?.cancel()
+      deferredInstall = Task { @MainActor [weak self] in
+        while !Task.isCancelled {
+          guard let self, !self.gate.resumeIfIdle() else { return }
+          try? await Task.sleep(for: .seconds(1))
+        }
+      }
+      return true
+    }
   }
-}
+#endif

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -132,10 +133,13 @@ var adminCommands = map[string]adminCommand{
 	"revoke":   adminTransition("revoked"),
 	"audit":    adminAudit,
 	"token":    adminPairingToken,
+	"user":     adminUser,
+	"rename":   adminRename,
 }
 
 const adminUsage = "usage: flowd admin --data-dir <dir> [--dev] <command>; commands: init, identity, " +
-	"list [--state S], approve user|device <id>, reject user <id>, revoke user|device <id>, audit [--limit N], token create|list|revoke"
+	"list [--state S] [--json], approve user|device <id>, reject user <id>, revoke user|device <id>, audit [--limit N] [--json], " +
+	"token create|list|revoke, user create --name N [--json], rename user|device <id> --name N"
 
 func runAdmin(ctx context.Context, args []string, output io.Writer) error {
 	fs := flag.NewFlagSet("flowd admin", flag.ContinueOnError)
@@ -221,6 +225,21 @@ const adminTimeLayout = "2006-01-02 15:04"
 
 func (a *adminContext) format(t time.Time) string { return t.In(a.location).Format(adminTimeLayout) }
 
+// jsonTime is how every --json output prints a time: RFC 3339, UTC, seconds.
+func jsonTime(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+// jsonOptionalTime is jsonTime, or null for a zero time (never seen).
+func jsonOptionalTime(t time.Time) *string {
+	if t.IsZero() {
+		return nil
+	}
+	text := jsonTime(t)
+	return &text
+}
+
+// writeJSON prints one JSON value and a newline.
+func (a *adminContext) writeJSON(v any) error { return json.NewEncoder(a.out).Encode(v) }
+
 // subcommandFlags parses the flags of list and audit; positional arguments
 // are refused.
 func subcommandFlags(name, usage string, args []string, define func(*flag.FlagSet)) error {
@@ -239,8 +258,10 @@ func subcommandFlags(name, usage string, args []string, define func(*flag.FlagSe
 // tokens, hashes, keys and provider subjects are never printed.
 func adminList(ctx context.Context, a *adminContext, args []string) error {
 	var state string
-	if err := subcommandFlags("list", "list [--state pending|approved|rejected|revoked]", args, func(fs *flag.FlagSet) {
+	var asJSON bool
+	if err := subcommandFlags("list", "list [--state pending|approved|rejected|revoked] [--json]", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&state, "state", "", "")
+		fs.BoolVar(&asJSON, "json", false, "")
 	}); err != nil {
 		return err
 	}
@@ -265,6 +286,9 @@ func adminList(ctx context.Context, a *adminContext, args []string) error {
 	devices := map[int64][]accounts.Device{}
 	for _, d := range all {
 		devices[d.UserID] = append(devices[d.UserID], d)
+	}
+	if asJSON {
+		return a.writeJSON(listJSON(users, devices, state))
 	}
 	var userRows, deviceRows [][]string
 	var blocks [][2]int // per shown user: its row and how many device rows follow
@@ -302,6 +326,88 @@ func adminList(ctx context.Context, a *adminContext, args []string) error {
 		}
 	}
 	return nil
+}
+
+// The list --json shape (specs/028-server-users-and-rewrite-warmup/contracts/admin-cli.md).
+// Never: public keys, token hashes, refresh or access state, subjects.
+type (
+	adminListJSON struct {
+		SchemaVersion int             `json:"schema_version"`
+		Users         []adminUserJSON `json:"users"`
+		Truncated     bool            `json:"truncated"`
+	}
+	adminUserJSON struct {
+		ID        int64             `json:"id"`
+		Provider  string            `json:"provider"`
+		Display   *string           `json:"display"`
+		State     string            `json:"state"`
+		CreatedAt string            `json:"created_at"`
+		ChangedAt string            `json:"changed_at"`
+		Devices   []adminDeviceJSON `json:"devices"`
+	}
+	adminDeviceJSON struct {
+		ID         int64   `json:"id"`
+		Name       string  `json:"name"`
+		Kind       *string `json:"kind"`
+		State      string  `json:"state"`
+		EnrolledAt string  `json:"enrolled_at"`
+		LastSeenAt *string `json:"last_seen_at"`
+		ChangedAt  string  `json:"changed_at"`
+		InvitedBy  *int64  `json:"invited_by"` // always null before schema v5
+	}
+)
+
+// Caps of list --json: users, and devices across all users.
+const (
+	maxListUsers   = 500
+	maxListDevices = 500
+)
+
+// listJSON keeps the users the text form shows for state, by id with their
+// devices by id, up to the caps. When the device cap cuts a user's devices, no
+// later user is listed, so only the last user can have devices missing; either
+// cut sets truncated.
+func listJSON(users []accounts.User, devices map[int64][]accounts.Device, state string) adminListJSON {
+	out := adminListJSON{SchemaVersion: 1, Users: []adminUserJSON{}}
+	budget := maxListDevices
+	for _, u := range users {
+		shown := state == "" || string(u.State) == state
+		for _, d := range devices[u.ID] {
+			shown = shown || string(d.State) == state
+		}
+		if !shown {
+			continue
+		}
+		if len(out.Users) == maxListUsers || (budget == 0 && len(devices[u.ID]) > 0) {
+			out.Truncated = true
+			break
+		}
+		row := adminUserJSON{ID: u.ID, Provider: u.Provider, State: string(u.State), CreatedAt: jsonTime(u.CreatedAt),
+			ChangedAt: jsonTime(u.ChangedAt), Devices: []adminDeviceJSON{}}
+		if u.Display != "" {
+			display := u.Display
+			row.Display = &display
+		}
+		for _, d := range devices[u.ID] {
+			if budget == 0 {
+				out.Truncated = true
+				break
+			}
+			budget--
+			device := adminDeviceJSON{ID: d.ID, Name: d.Name, State: string(d.State), EnrolledAt: jsonTime(d.EnrolledAt),
+				LastSeenAt: jsonOptionalTime(d.LastSeenAt), ChangedAt: jsonTime(d.ChangedAt)}
+			if d.Kind != accounts.KindUnknown {
+				kind := string(d.Kind)
+				device.Kind = &kind
+			}
+			row.Devices = append(row.Devices, device)
+		}
+		out.Users = append(out.Users, row)
+		if out.Truncated {
+			break
+		}
+	}
+	return out
 }
 
 // columns joins each row's cells with two spaces, padding every cell but the
@@ -377,8 +483,10 @@ func adminTransition(to string) adminCommand {
 // outcome. The rows hold identifiers and codes only.
 func adminAudit(ctx context.Context, a *adminContext, args []string) error {
 	limit := 50
-	if err := subcommandFlags("audit", "audit [--limit N]", args, func(fs *flag.FlagSet) {
+	var asJSON bool
+	if err := subcommandFlags("audit", "audit [--limit N] [--json]", args, func(fs *flag.FlagSet) {
 		fs.IntVar(&limit, "limit", 50, "")
+		fs.BoolVar(&asJSON, "json", false, "")
 	}); err != nil {
 		return err
 	}
@@ -393,6 +501,25 @@ func adminAudit(ctx context.Context, a *adminContext, args []string) error {
 	entries, err := store.AuditLog(ctx, limit)
 	if err != nil {
 		return err
+	}
+	if asJSON {
+		type row struct {
+			At      string  `json:"at"`
+			Actor   string  `json:"actor"`
+			Action  string  `json:"action"`
+			Target  *string `json:"target"`
+			Outcome string  `json:"outcome"`
+		}
+		rows := []row{}
+		for _, e := range entries {
+			r := row{At: jsonTime(e.At), Actor: e.Actor, Action: e.Action, Outcome: e.Outcome}
+			if e.Target != "" {
+				target := e.Target
+				r.Target = &target
+			}
+			rows = append(rows, r)
+		}
+		return a.writeJSON(rows)
 	}
 	for _, e := range entries {
 		target := e.Target

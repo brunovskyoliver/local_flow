@@ -37,7 +37,7 @@ func TestNewToken(t *testing.T) {
 func approvedDevice(t *testing.T, store *Store) Device {
 	t.Helper()
 	user, _, _ := store.EnsureUser(ctx, "apple", "sub", "")
-	device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1))
+	device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1), "")
 	if err := store.SetUserState(ctx, user.ID, UserApproved, AdminActor("oliver")); err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestRefreshTombstone(t *testing.T) {
 func TestRefreshNotApprovedKeepsToken(t *testing.T) {
 	store, _, _ := openStore(t)
 	user, _, _ := store.EnsureUser(ctx, "google", "sub", "")
-	device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1))
+	device, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(1), "")
 	token, _, _ := store.IssueRefresh(ctx, device.ID)
 	before, _ := store.Device(ctx, device.ID)
 	if _, err := store.Refresh(ctx, token, accept); !errors.Is(err, ErrNotApproved) {

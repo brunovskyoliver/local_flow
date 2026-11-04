@@ -112,7 +112,7 @@ func (h *revocationHarness) member(user int64, subject string) member {
 		_ = h.store.SetUserState(ctx, user, accounts.UserApproved, admin)
 	}
 	key := newDevice(h.t)
-	row, err := h.store.AddDevice(ctx, user, "Mac", key.public)
+	row, err := h.store.AddDevice(ctx, user, "Mac", key.public, "")
 	if err != nil {
 		h.t.Fatal(err)
 	}

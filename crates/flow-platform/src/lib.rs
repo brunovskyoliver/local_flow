@@ -408,6 +408,10 @@ pub trait Services: 'static {
     fn voice_over_on(&self) -> bool {
         false
     }
+    /// This machine can run LocalFlow's server (Feature 028): Apple Silicon Macs only, never Windows.
+    fn can_host_server(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -447,6 +451,8 @@ mod insert_mac;
 mod mic_mac;
 #[cfg(target_os = "macos")]
 mod region_mac;
+#[cfg(target_os = "macos")]
+pub mod server_mode_mac;
 #[cfg(target_os = "windows")]
 mod win {
     pub mod aac;
@@ -564,12 +570,14 @@ pub struct Fake {
     pub identifiers: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     pub appearances: std::rc::Rc<std::cell::RefCell<Vec<Option<bool>>>>,
     pub inserter: Option<std::sync::Arc<dyn flow_core::dictation::session::Inserter>>,
+    /// What `can_host_server` answers.
+    pub host_server: std::cell::Cell<bool>,
 }
 
 impl Default for Fake {
     fn default() -> Self {
         Fake {
-            audio: None, app_names: Default::default(), secrets: Default::default(), secrets_fail: Default::default(), device_keys: Default::default(), live_device_keys: Default::default(), device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), install_states: Default::default(), ai_phase: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), inserter: None }
+            audio: None, app_names: Default::default(), secrets: Default::default(), secrets_fail: Default::default(), device_keys: Default::default(), live_device_keys: Default::default(), device: "Mac", panel_frames: None, pinned_panels: Default::default(), pointer: Default::default(), permissions: Default::default(), login: Default::default(), dir: std::env::temp_dir(), target: Default::default(), insert_outcome: Default::default(), session_ok: Default::default(), commands: Default::default(), announced: Default::default(), model_verified: Default::default(), install_states: Default::default(), ai_phase: Default::default(), export_incomplete: Default::default(), identifiers: Default::default(), appearances: Default::default(), inserter: None, host_server: Default::default() }
     }
 }
 
@@ -678,6 +686,9 @@ impl Services for Fake {
     }
     fn physical_memory(&self) -> u64 {
         16 << 30
+    }
+    fn can_host_server(&self) -> bool {
+        self.host_server.get()
     }
     fn app_name(&self, bundle_id: &str) -> Option<String> {
         self.app_names.borrow().get(bundle_id).cloned()

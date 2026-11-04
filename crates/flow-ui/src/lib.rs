@@ -6,6 +6,7 @@ pub mod fonts;
 pub mod icons;
 pub mod kit_theme;
 pub mod probe;
+pub mod qr;
 pub mod tokens;
 pub mod txt;
 

@@ -43,7 +43,7 @@ func TestSnapshotReloadsOnDataVersionChange(t *testing.T) {
 		t.Fatal("nothing changed")
 	}
 	user, _, _ := admin.EnsureUser(ctx, "apple", "sub", "")
-	device, _ := admin.AddDevice(ctx, user.ID, "Mac", deviceKey(1))
+	device, _ := admin.AddDevice(ctx, user.ID, "Mac", deviceKey(1), "")
 	if !poll(t, watcher) {
 		t.Fatal("commit by another connection not seen")
 	}
@@ -76,7 +76,7 @@ func TestSnapshotReportsLostApproval(t *testing.T) {
 		user, _, _ := admin.EnsureUser(ctx, "apple", subject, "")
 		_ = admin.SetUserState(ctx, user.ID, UserApproved, AdminActor("oliver"))
 		for j := range 2 {
-			device, _ := admin.AddDevice(ctx, user.ID, "Mac", deviceKey(byte(1+2*i+j)))
+			device, _ := admin.AddDevice(ctx, user.ID, "Mac", deviceKey(byte(1+2*i+j)), "")
 			_ = admin.SetDeviceState(ctx, device.ID, DeviceApproved, AdminActor("oliver"))
 			devices = append(devices, device)
 		}
@@ -140,7 +140,7 @@ func TestWatcherRunUsesTicker(t *testing.T) {
 func TestSnapshotAuthenticate(t *testing.T) {
 	serve, admin, watcher, _, clock := watched(t)
 	user, _, _ := admin.EnsureUser(ctx, "apple", "sub", "")
-	device, _ := admin.AddDevice(ctx, user.ID, "Mac", deviceKey(1))
+	device, _ := admin.AddDevice(ctx, user.ID, "Mac", deviceKey(1), "")
 	_ = admin.SetUserState(ctx, user.ID, UserApproved, AdminActor("oliver"))
 	_ = admin.SetDeviceState(ctx, device.ID, DeviceApproved, AdminActor("oliver"))
 	token, _, _ := serve.IssueAccess(ctx, device.ID)
@@ -192,7 +192,7 @@ func TestSnapshotAuthenticate(t *testing.T) {
 func TestSnapshotRevokedByRefreshReuse(t *testing.T) {
 	serve, admin, watcher, _, clock := watched(t)
 	user, _, _ := admin.EnsureUser(ctx, "apple", "sub", "")
-	device, _ := admin.AddDevice(ctx, user.ID, "Mac", deviceKey(1))
+	device, _ := admin.AddDevice(ctx, user.ID, "Mac", deviceKey(1), "")
 	_ = admin.SetUserState(ctx, user.ID, UserApproved, AdminActor("oliver"))
 	_ = admin.SetDeviceState(ctx, device.ID, DeviceApproved, AdminActor("oliver"))
 	refresh, _, _ := serve.IssueRefresh(ctx, device.ID)

@@ -191,6 +191,16 @@ mod game_tests {
 }
 
 #[cfg(test)]
+mod server_tests {
+    use crate::Services;
+    #[test]
+    fn only_apple_silicon_can_host_the_server() {
+        assert_eq!(super::Mac.can_host_server(), cfg!(target_arch = "aarch64"));
+        assert!(!crate::Fake::default().can_host_server(), "tests opt in");
+    }
+}
+
+#[cfg(test)]
 mod panel_tests {
     use super::*;
     #[test]
@@ -724,6 +734,10 @@ impl Services for Mac {
             send(rep, c"release");
             bytes
         }
+    }
+    /// Server mode's helpers and MTPLX are arm64 only.
+    fn can_host_server(&self) -> bool {
+        cfg!(target_arch = "aarch64")
     }
     fn physical_memory(&self) -> u64 {
         let mut value = 0u64;

@@ -59,7 +59,7 @@ final class ServerModeControllerTests: XCTestCase {
     let resources = contents.appending(path: "Resources")
     try files.createDirectory(at: helpers, withIntermediateDirectories: true)
     try files.createDirectory(at: resources, withIntermediateDirectories: true)
-    for name in ["flowd", "flowd-speech", "localflow-whisper-engine"] {
+    for name in ["flowd", "flowd-speech", "flowd-meeting", "localflow-whisper-engine"] {
       files.createFile(
         atPath: helpers.appending(path: name).path, contents: Data(name.utf8),
         attributes: [.posixPermissions: 0o755])
@@ -160,11 +160,14 @@ final class ServerModeControllerTests: XCTestCase {
     XCTAssertEqual(arguments.value(after: "--admin-listen"), "127.0.0.1:18093")
     XCTAssertEqual(arguments.value(after: "--backend"), "http://127.0.0.1:18092/v1")
     XCTAssertTrue(arguments.contains("--dev"))
+    XCTAssertEqual(
+      arguments.value(after: "--meeting-processor"),
+      paths.binDir.appending(path: "flowd-meeting").path)
     XCTAssertEqual(server.ownership(loaded: true), .managed)
     // Private data directory, helpers installed, one init with the dev flag.
     let mode = try files.attributesOfItem(atPath: paths.dataDir.path)[.posixPermissions] as? Int
     XCTAssertEqual(mode, 0o700)
-    for name in ["flowd", "flowd-speech", "localflow-whisper-engine"] {
+    for name in ["flowd", "flowd-speech", "flowd-meeting", "localflow-whisper-engine"] {
       XCTAssertTrue(files.isExecutableFile(atPath: paths.binDir.appending(path: name).path), name)
     }
     XCTAssertTrue(
@@ -206,6 +209,39 @@ final class ServerModeControllerTests: XCTestCase {
     XCTAssertTrue(status.missing.contains(ServerModeError.helpersMissing.errorDescription!))
   }
 
+  func testWithoutFlowdMeetingNothingIsInstalled() async throws {
+    try files.removeItem(at: contents.appending(path: "Helpers/flowd-meeting"))
+    let server = controller()
+    do {
+      try await server.turnOn()
+      XCTFail("expected a failure")
+    } catch { XCTAssertEqual(error as? ServerModeError, .helpersMissing) }
+    XCTAssertTrue(changes.isEmpty)
+  }
+
+  func testMeetingHandoffNeedsAnExecutableProcessorInBin() async throws {
+    let server = controller()
+    try await server.turnOn()
+    let processor = server.paths.binDir.appending(path: "flowd-meeting")
+    try files.removeItem(at: processor)
+    try await server.turnOff()
+    try await server.turnOn()
+    XCTAssertFalse(try plistArguments(server.paths.plist).contains("--meeting-processor"))
+    var status = await server.status()
+    XCTAssertTrue(status.missing.contains { $0.hasSuffix("this server has no flowd-meeting.") })
+    // Copied in by an update, but the plist predates it.
+    files.createFile(
+      atPath: processor.path, contents: Data(), attributes: [.posixPermissions: 0o755])
+    status = await server.status()
+    XCTAssertTrue(status.missing.contains { $0.hasSuffix("turn server mode off and on.") })
+    try await server.turnOff()
+    try await server.turnOn()
+    XCTAssertEqual(
+      try plistArguments(server.paths.plist).value(after: "--meeting-processor"), processor.path)
+    status = await server.status()
+    XCTAssertFalse(status.missing.contains { $0.hasPrefix("Meetings sent from a phone") })
+  }
+
   func testWithoutLocalAIRewritingIsListedAsUnavailable() async throws {
     let server = controller()
     try await server.turnOn()
@@ -214,7 +250,7 @@ final class ServerModeControllerTests: XCTestCase {
     let status = await server.status()
     XCTAssertTrue(status.missing.contains { $0.hasPrefix("Rewriting and summaries") })
     XCTAssertTrue(status.missing.contains { $0.hasPrefix("Dictation") })
-    XCTAssertTrue(status.missing.contains { $0.hasPrefix("Meetings sent from a phone") })
+    XCTAssertFalse(status.missing.contains { $0.hasPrefix("Meetings sent from a phone") })
     XCTAssertEqual(status.missingModelBytes, 3000)
     XCTAssertEqual(status.fingerprint, "aaaa-bbbb")
   }

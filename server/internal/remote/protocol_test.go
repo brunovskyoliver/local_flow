@@ -452,3 +452,61 @@ func TestFeature018Rejections(t *testing.T) {
 		t.Fatalf("%s %v", data, err)
 	}
 }
+
+// device_kind is optional on pair and enroll; mac, windows and iphone are kept,
+// and any other value, an empty string or null is invalid_message
+// (contracts/device-kind.md). The kind round-trips and is omitted when absent.
+func TestDeviceKindField(t *testing.T) {
+	for _, name := range []string{"pair", "enroll"} {
+		fixture := loadObject(t, name)
+		kindOf := func(m Message) DeviceKind {
+			if p, ok := m.(Pair); ok {
+				return p.DeviceKind
+			}
+			return m.(Enroll).DeviceKind
+		}
+		message, err := DecodeMessage(mustJSON(t, fixture))
+		if err != nil || kindOf(message) != "" {
+			t.Fatal(name, message, err)
+		}
+		if encoded, _ := EncodeMessage(message); strings.Contains(string(encoded), "device_kind") {
+			t.Fatalf("%s: absent kind encoded: %s", name, encoded)
+		}
+		for _, kind := range []string{"mac", "windows", "iphone"} {
+			object := maps.Clone(fixture)
+			object["device_kind"] = kind
+			message, err := DecodeMessage(mustJSON(t, object))
+			if err != nil || kindOf(message) != DeviceKind(kind) {
+				t.Fatal(name, kind, message, err)
+			}
+			encoded, err := EncodeMessage(message)
+			if err != nil || !strings.Contains(string(encoded), `"device_kind":"`+kind+`"`) {
+				t.Fatal(name, string(encoded), err)
+			}
+		}
+		for _, bad := range []any{"linux", "Mac", "", nil, 1, []string{"mac"}} {
+			object := maps.Clone(fixture)
+			object["device_kind"] = bad
+			if _, err := DecodeMessage(mustJSON(t, object)); CodeOf(err) != CodeInvalidMessage {
+				t.Errorf("%s device_kind %#v: %v", name, bad, err)
+			}
+		}
+	}
+	if DeviceKind("").LogValue() != "none" || DeviceKind("mac").LogValue() != "mac" {
+		t.Fatal("log value")
+	}
+}
+
+// The identity lists its features; an identity without them still decodes.
+func TestIdentityFeatures(t *testing.T) {
+	object := loadObject(t, "identity")
+	identity, err := DecodeIdentity(mustJSON(t, object))
+	if err != nil || identity.Features != nil {
+		t.Fatal(identity, err)
+	}
+	object["features"] = []string{"device_kind", "device_invite"}
+	identity, err = DecodeIdentity(mustJSON(t, object))
+	if err != nil || len(identity.Features) != 2 || identity.Features[0] != FeatureDeviceKind {
+		t.Fatal(identity, err)
+	}
+}

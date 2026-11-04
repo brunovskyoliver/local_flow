@@ -14,4 +14,5 @@ pub mod paths;
 pub mod prefs;
 pub mod remote;
 pub mod seed;
+pub mod server_mode;
 pub mod settings;

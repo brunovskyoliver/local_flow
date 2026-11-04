@@ -20,7 +20,7 @@ func (a *accountOps) pair(ctx context.Context, c *Conn, m Message) (Operation, e
 	message := m.(Pair)
 	code, device, user := CodeInternal, int64(0), int64(0)
 	defer func() {
-		a.cfg.Logger.Printf("remote channel=%d op=pair user=%d device=%d code=%s", c.ID(), user, device, code)
+		a.cfg.Logger.Printf("remote channel=%d op=pair user=%d device=%d kind=%s code=%s", c.ID(), user, device, message.DeviceKind.LogValue(), code)
 	}()
 	if c.Now().Sub(c.ReadyAt()) > EnrollIdleTimeout ||
 		!verifyDeviceSignature(message.DeviceKey, message.Signature, []byte(PairSignatureLabel), c.Binding()) {
@@ -28,7 +28,7 @@ func (a *accountOps) pair(ctx context.Context, c *Conn, m Message) (Operation, e
 		c.Fail(message.Op, code)
 		return nil, nil
 	}
-	pairing, err := a.cfg.Store.RedeemPairingToken(ctx, message.PairingToken, message.DeviceName, message.DeviceKey)
+	pairing, err := a.cfg.Store.RedeemPairingToken(ctx, message.PairingToken, message.DeviceName, message.DeviceKey, accounts.DeviceKind(message.DeviceKind))
 	if err != nil {
 		code = pairCode(err)
 		c.Fail(message.Op, code)

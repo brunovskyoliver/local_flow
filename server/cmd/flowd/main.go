@@ -258,7 +258,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 		if err != nil {
 			return err
 		}
-		adminServer = &http.Server{Handler: &adminAPI{token: token, dataDir: c.remote.dataDir, started: time.Now(), counters: counters, analysis: analysisBackend},
+		api := &adminAPI{token: token, dataDir: c.remote.dataDir, started: time.Now(), counters: counters, analysis: analysisBackend}
+		if remoteServer != nil {
+			api.channels = remoteServer.listener.Registry()
+		}
+		adminServer = &http.Server{Handler: api,
 			ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 8192}
 	}
 	server := &http.Server{Addr: c.listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: c.analysis.Timeout + 10*time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384, BaseContext: func(net.Listener) context.Context { return ctx }}

@@ -451,7 +451,7 @@ func (h *harness) anotherDevice(user accounts.User, key byte) string {
 	ctx := context.Background()
 	public := bytes.Repeat([]byte{key}, 65)
 	public[0] = 0x04
-	device, err := h.store.AddDevice(ctx, user.ID, "iPhone", public)
+	device, err := h.store.AddDevice(ctx, user.ID, "iPhone", public, "")
 	if err != nil {
 		h.t.Fatal(err)
 	}

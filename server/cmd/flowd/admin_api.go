@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"localflow/server/internal/backend"
+	"localflow/server/internal/remote"
 	"localflow/server/internal/rewrite"
 )
 
@@ -28,7 +29,8 @@ import (
 // never mounted on the main or remote listener, and every request needs the
 // bearer token from <data-dir>/admin-token (0600, created on first start).
 //
-//   GET /v1/admin/status    version, start time, counters, summaries backend
+//   GET /v1/admin/status    version, start time, counters, summaries backend,
+//                           live channel counts per device (null without --remote-listen)
 //   PUT /v1/admin/analysis  {"backend":"http://127.0.0.1:8443/v1","model":"smart"}
 //                           or {"backend":""} for the rewrite model
 
@@ -221,6 +223,17 @@ type adminAPI struct {
 	started  time.Time
 	counters *requestCounters
 	analysis *switchableAnalysis
+	// channels is the remote listener's registry; nil without --remote-listen,
+	// when status reports "channels": null.
+	channels *remote.Registry
+}
+
+// channelsStatus is status's channels object
+// (specs/028-server-users-and-rewrite-warmup/contracts/admin-status.md): device
+// IDs and counts only.
+type channelsStatus struct {
+	Open    int                     `json:"open"`
+	Devices []remote.DeviceChannels `json:"devices"`
 }
 
 func (a *adminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -267,12 +280,18 @@ func (a *adminAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (a *adminAPI) writeStatus(w http.ResponseWriter) {
 	backendURL, model := a.analysis.state()
+	var channels *channelsStatus
+	if a.channels != nil {
+		open, devices := a.channels.DeviceCounts()
+		channels = &channelsStatus{Open: open, Devices: devices}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"version":    rewrite.ServerVersion,
 		"started_at": a.started.UTC().Format(time.RFC3339),
 		"counters":   a.counters.snapshot(),
 		"analysis":   map[string]string{"backend": backendURL, "model": model},
+		"channels":   channels,
 	})
 }
 

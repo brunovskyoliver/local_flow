@@ -548,3 +548,57 @@ func expectChannelClosed(t *testing.T, c *testClient) {
 		t.Fatalf("channel still open after a refusal: %v", err)
 	}
 }
+
+// device_kind on pair: stored on the new device and logged as kind=<value>;
+// absent stores none and logs kind=none; an unknown value is invalid_message
+// and spends nothing.
+func TestPairDeviceKind(t *testing.T) {
+	ctx := context.Background()
+	h := newAccountsHarness(t, nil)
+	pairAs := func(token string, d *device, kind DeviceKind) Message {
+		c, first := h.hello(PurposeEnroll, "")
+		if first.MessageType() != "ready" {
+			t.Fatalf("%#v", first)
+		}
+		c.send(Pair{Op: 1, PairingToken: token, DeviceName: "Anna's iPhone", DeviceKind: kind, DeviceKey: d.public,
+			Signature: d.sign(t, []byte(PairSignatureLabel), c.channel.Binding())})
+		return c.recv()
+	}
+	value, _ := h.newToken(0, accounts.DefaultPairingLifetime)
+	phone := newDevice(t)
+	enrolled(t, pairAs(value, phone, "iphone"), "approved")
+	if d, err := h.store.DeviceByKey(ctx, phone.public); err != nil || d.Kind != accounts.KindIPhone {
+		t.Fatalf("%+v %v", d, err)
+	}
+	if !strings.Contains(h.logs.String(), "op=pair user=1 device=1 kind=iphone code=ok") {
+		t.Fatal(h.logs.String())
+	}
+
+	value, _ = h.newToken(0, accounts.DefaultPairingLifetime)
+	unknown := newDevice(t)
+	enrolled(t, pairAs(value, unknown, ""), "approved")
+	if d, err := h.store.DeviceByKey(ctx, unknown.public); err != nil || d.Kind != accounts.KindUnknown {
+		t.Fatalf("%+v %v", d, err)
+	}
+	if !strings.Contains(h.logs.String(), "kind=none code=ok") {
+		t.Fatal(h.logs.String())
+	}
+
+	value, row := h.newToken(0, accounts.DefaultPairingLifetime)
+	d := newDevice(t)
+	c, _ := h.hello(PurposeEnroll, "")
+	data, err := json.Marshal(map[string]any{"schema_version": 1, "type": "pair", "op": 1, "pairing_token": value,
+		"device_name": "Phone", "device_kind": "linux", "device_key": base64.RawURLEncoding.EncodeToString(d.public),
+		"signature": base64.RawURLEncoding.EncodeToString(d.sign(t, []byte(PairSignatureLabel), c.channel.Binding()))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.sendFrame(Frame{KindControl, data})
+	expectError(t, c.recv(), 0, CodeInvalidMessage)
+	if h.tokenState(row.ID) != accounts.PairingLive {
+		t.Fatal("token spent by an invalid kind")
+	}
+	if _, err := h.store.DeviceByKey(ctx, d.public); err == nil {
+		t.Fatal("device added by an invalid kind")
+	}
+}

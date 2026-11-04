@@ -34,7 +34,7 @@ Constitution principle 15 allows identity only from an OIDC provider. ADR 0032 s
 | Database stolen | Hashes only; the identity key stays in Keychain |
 | Spoofed forwarding headers | Only the rightmost `X-Forwarded-For` from a loopback peer counts; `Cf-Connecting-Ip` is not read (research R7) |
 | Attempts on one channel, audit flooding | A refused enrollment or pairing closes its channel; unknown tokens and bad signatures write no audit row |
-| Administration reached remotely | No admin routes on the remote listener; main and admin stay on loopback; tokens carry no scope |
+| Administration reached remotely | No admin routes on the remote listener; main and admin stay on loopback; tokens carry no scope (amended 2026-11-04, see below) |
 
 Sending a token is outside what LocalFlow can protect. Anyone who reads it first can redeem it first. The expiry, the single use and the refused second attempt limit the damage; they don't prevent it.
 
@@ -67,3 +67,7 @@ A major amendment (5.0.0), applied on 2026-10-31, before implementation started:
 - **T3 Code's 12-character code.** Can be typed, but has about 60 bits and carries no server key, so the client would need a manual check or trust in the route.
 - **Server mode in LocalFlow Server only.** Keeps ADR 0032 as written, but needs a second app on every server.
 - **TLS certificates from flowd.** Adds little beyond metadata protection over the existing channel, and clients would need to trust them. A proxy or Tailscale Serve provides TLS when wanted.
+
+## Amendment: device invites (2026-11-04)
+
+ADR 0039 adds a second kind of pairing token. An approved device may request an invite for its own user: purpose `invite`, scoped to that user, 10 minutes, single use, stored only as a hash. Unlike the tokens above, redeeming an invite creates a pending device, which the inviting device confirms with its device key after the owner compares a 6-digit code on both screens. Administrator tokens still carry no scope beyond the optional target user, and still approve on redemption. Neither kind grants admin rights, and the remote listener still serves no admin operations. Invites count toward the 100 live token cap.

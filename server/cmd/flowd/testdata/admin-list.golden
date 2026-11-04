@@ -1,0 +1,5 @@
+user 1  apple   oliver@example.com  approved  created 2026-10-02 18:04
+  device 1  MacBook Pro  approved  enrolled 2026-10-02 18:04  last seen 2026-10-03 09:12
+  device 2  Mac Studio   pending   enrolled 2026-10-03 08:55  last seen never
+user 2  google  -                   pending   created 2026-10-03 10:00
+  device 3  iMac         pending   enrolled 2026-10-03 10:00  last seen never

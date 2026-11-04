@@ -12,6 +12,7 @@ ureq.workspace = true
 hpke.workspace = true
 rand_core.workspace = true
 tungstenite.workspace = true
+plist.workspace = true
 
 [features]
 test-support = []

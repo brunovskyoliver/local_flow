@@ -196,6 +196,15 @@
           "maxLength": 64,
           "description": "At most 64 UTF-8 bytes after control characters are removed."
         },
+        "device_kind": {
+          "type": "string",
+          "enum": [
+            "mac",
+            "windows",
+            "iphone"
+          ],
+          "description": "Optional (Feature 028). Sent only when the identity's features include device_kind; absent is stored as unknown. Not signed."
+        },
         "device_key": {
           "type": "string",
           "pattern": "^B[A-Za-z0-9_-]{86}$",
@@ -241,6 +250,15 @@
           "minLength": 1,
           "maxLength": 64,
           "description": "At most 64 UTF-8 bytes after control characters are removed."
+        },
+        "device_kind": {
+          "type": "string",
+          "enum": [
+            "mac",
+            "windows",
+            "iphone"
+          ],
+          "description": "Optional (Feature 028). Sent only when the identity's features include device_kind; absent is stored as unknown. Not signed."
         },
         "device_key": {
           "type": "string",

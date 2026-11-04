@@ -157,7 +157,7 @@ func TestPairingTokenCapAndPruning(t *testing.T) {
 func TestPairingTokenIDsAreNotReused(t *testing.T) {
 	store, clock, _ := openStore(t)
 	value, row := newToken(t, store, 0)
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1)); err != nil {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), ""); err != nil {
 		t.Fatal(err)
 	}
 	clock.Advance(pairingRetention + time.Hour)
@@ -168,7 +168,7 @@ func TestPairingTokenIDsAreNotReused(t *testing.T) {
 	if tokens, _ := store.PairingTokens(ctx); len(tokens) != 1 {
 		t.Fatal("the old row was not pruned")
 	}
-	if _, err := store.RedeemPairingToken(ctx, next, "Phone 2", deviceKey(2)); err != nil {
+	if _, err := store.RedeemPairingToken(ctx, next, "Phone 2", deviceKey(2), ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -176,7 +176,7 @@ func TestPairingTokenIDsAreNotReused(t *testing.T) {
 func TestRedeemCreatesApprovedTokenUser(t *testing.T) {
 	store, clock, _ := openStore(t)
 	value, row := newToken(t, store, 0)
-	pairing, err := store.RedeemPairingToken(ctx, value, "Anna's iPhone", deviceKey(1))
+	pairing, err := store.RedeemPairingToken(ctx, value, "Anna's iPhone", deviceKey(1), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,18 +204,18 @@ func TestRedeemCreatesApprovedTokenUser(t *testing.T) {
 func TestRedeemForExistingUserAddsDevice(t *testing.T) {
 	store, _, _ := openStore(t)
 	user := approvedUser(t, store, "anna")
-	pending, err := store.AddDevice(ctx, user.ID, "Mac", deviceKey(2))
+	pending, err := store.AddDevice(ctx, user.ID, "Mac", deviceKey(2), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	value, _ := newToken(t, store, user.ID)
-	pairing, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1))
+	pairing, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), "")
 	if err != nil || pairing.UserID != user.ID {
 		t.Fatalf("%+v %v", pairing, err)
 	}
 	// The device the user already has, pending, is approved by a token too.
 	value, _ = newToken(t, store, user.ID)
-	pairing, err = store.RedeemPairingToken(ctx, value, "ignored", deviceKey(2))
+	pairing, err = store.RedeemPairingToken(ctx, value, "ignored", deviceKey(2), "")
 	if err != nil || pairing.DeviceID != pending.ID {
 		t.Fatalf("%+v %v", pairing, err)
 	}
@@ -237,7 +237,7 @@ func TestRedeemConcurrentlyOnlyOneWins(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, results[i] = store.RedeemPairingToken(ctx, value, "Phone", deviceKey(byte(i+1)))
+			_, results[i] = store.RedeemPairingToken(ctx, value, "Phone", deviceKey(byte(i+1)), "")
 		}()
 	}
 	wg.Wait()
@@ -260,11 +260,11 @@ func TestRedeemConcurrentlyOnlyOneWins(t *testing.T) {
 func TestRedeemSameKeyRetryGetsNewLineage(t *testing.T) {
 	store, clock, _ := openStore(t)
 	value, _ := newToken(t, store, 0)
-	first, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1))
+	first, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1))
+	retry, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), "")
 	if err != nil || retry.DeviceID != first.DeviceID || retry.UserID != first.UserID || retry.Refresh == first.Refresh {
 		t.Fatalf("%+v %v", retry, err)
 	}
@@ -280,7 +280,7 @@ func TestRedeemSameKeyRetryGetsNewLineage(t *testing.T) {
 	}
 	// Not after expiry.
 	clock.Advance(DefaultPairingLifetime)
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1)); !errors.Is(err, ErrPairingTokenInvalid) {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), ""); !errors.Is(err, ErrPairingTokenInvalid) {
 		t.Fatal(err)
 	}
 }
@@ -288,10 +288,10 @@ func TestRedeemSameKeyRetryGetsNewLineage(t *testing.T) {
 func TestRedeemOtherKeyRefused(t *testing.T) {
 	store, _, _ := openStore(t)
 	value, _ := newToken(t, store, 0)
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1)); err != nil {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RedeemPairingToken(ctx, value, "Thief", deviceKey(2)); !errors.Is(err, ErrPairingTokenInvalid) {
+	if _, err := store.RedeemPairingToken(ctx, value, "Thief", deviceKey(2), ""); !errors.Is(err, ErrPairingTokenInvalid) {
 		t.Fatal(err)
 	}
 	if _, err := store.DeviceByKey(ctx, deviceKey(2)); !errors.Is(err, ErrNotFound) {
@@ -301,14 +301,14 @@ func TestRedeemOtherKeyRefused(t *testing.T) {
 
 func TestRedeemInvalidTokens(t *testing.T) {
 	store, clock, _ := openStore(t)
-	if _, err := store.RedeemPairingToken(ctx, "lfp_unknown", "Phone", deviceKey(1)); !errors.Is(err, ErrPairingTokenInvalid) {
+	if _, err := store.RedeemPairingToken(ctx, "lfp_unknown", "Phone", deviceKey(1), ""); !errors.Is(err, ErrPairingTokenInvalid) {
 		t.Fatal(err)
 	}
 	revoked, row := newToken(t, store, 0)
 	if err := store.RevokePairingToken(ctx, row.ID, testAdmin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RedeemPairingToken(ctx, revoked, "Phone", deviceKey(1)); !errors.Is(err, ErrPairingTokenInvalid) {
+	if _, err := store.RedeemPairingToken(ctx, revoked, "Phone", deviceKey(1), ""); !errors.Is(err, ErrPairingTokenInvalid) {
 		t.Fatal(err)
 	}
 	expired, row := newToken(t, store, 0)
@@ -316,16 +316,16 @@ func TestRedeemInvalidTokens(t *testing.T) {
 	if tokenState(t, store, row.ID) != PairingExpired {
 		t.Fatal("expiry is derived in listings")
 	}
-	if _, err := store.RedeemPairingToken(ctx, expired, "Phone", deviceKey(1)); !errors.Is(err, ErrPairingTokenInvalid) {
+	if _, err := store.RedeemPairingToken(ctx, expired, "Phone", deviceKey(1), ""); !errors.Is(err, ErrPairingTokenInvalid) {
 		t.Fatal(err)
 	}
 	if devices, _ := store.Devices(ctx, 0); len(devices) != 0 {
 		t.Fatal(devices)
 	}
-	if _, err := store.RedeemPairingToken(ctx, expired, "", deviceKey(1)); !errors.Is(err, ErrInvalidRecord) {
+	if _, err := store.RedeemPairingToken(ctx, expired, "", deviceKey(1), ""); !errors.Is(err, ErrInvalidRecord) {
 		t.Fatal(err)
 	}
-	if _, err := store.RedeemPairingToken(ctx, expired, "Phone", deviceKey(1)[:64]); !errors.Is(err, ErrInvalidRecord) {
+	if _, err := store.RedeemPairingToken(ctx, expired, "Phone", deviceKey(1)[:64], ""); !errors.Is(err, ErrInvalidRecord) {
 		t.Fatal(err)
 	}
 }
@@ -334,10 +334,10 @@ func TestRedeemInvalidTokens(t *testing.T) {
 func TestRedeemRefusalsLeaveTokenUnspent(t *testing.T) {
 	store, _, _ := openStore(t)
 	owner := approvedUser(t, store, "owner")
-	if _, err := store.AddDevice(ctx, owner.ID, "Mac", deviceKey(1)); err != nil {
+	if _, err := store.AddDevice(ctx, owner.ID, "Mac", deviceKey(1), ""); err != nil {
 		t.Fatal(err)
 	}
-	gone, err := store.AddDevice(ctx, owner.ID, "Old", deviceKey(2))
+	gone, err := store.AddDevice(ctx, owner.ID, "Old", deviceKey(2), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,10 +346,10 @@ func TestRedeemRefusalsLeaveTokenUnspent(t *testing.T) {
 	}
 
 	value, row := newToken(t, store, 0)
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1)); !errors.Is(err, ErrUnauthorized) {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), ""); !errors.Is(err, ErrUnauthorized) {
 		t.Fatal(err)
 	}
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(2)); !errors.Is(err, ErrRevoked) {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(2), ""); !errors.Is(err, ErrRevoked) {
 		t.Fatal(err)
 	}
 	if tokenState(t, store, row.ID) != PairingLive {
@@ -361,13 +361,13 @@ func TestRedeemRefusalsLeaveTokenUnspent(t *testing.T) {
 
 	other := approvedUser(t, store, "other")
 	value, row = newToken(t, store, other.ID)
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1)); !errors.Is(err, ErrUnauthorized) {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), ""); !errors.Is(err, ErrUnauthorized) {
 		t.Fatal(err)
 	}
 	if err := store.SetUserState(ctx, other.ID, UserRevoked, testAdmin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(3)); !errors.Is(err, ErrRevoked) {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(3), ""); !errors.Is(err, ErrRevoked) {
 		t.Fatal(err)
 	}
 	if _, err := store.DeviceByKey(ctx, deviceKey(3)); !errors.Is(err, ErrNotFound) {
@@ -380,7 +380,7 @@ func TestRedeemRefusalsLeaveTokenUnspent(t *testing.T) {
 	if err := store.SetUserState(ctx, other.ID, UserApproved, testAdmin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(3)); err != nil {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(3), ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -389,14 +389,14 @@ func TestRedeemRefusalsLeaveTokenUnspent(t *testing.T) {
 func TestRedeemRetryAfterRevocation(t *testing.T) {
 	store, _, _ := openStore(t)
 	value, _ := newToken(t, store, 0)
-	pairing, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1))
+	pairing, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SetDeviceState(ctx, pairing.DeviceID, DeviceRevoked, testAdmin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1)); !errors.Is(err, ErrRevoked) {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), ""); !errors.Is(err, ErrRevoked) {
 		t.Fatal(err)
 	}
 	if err := store.SetDeviceState(ctx, pairing.DeviceID, DeviceApproved, testAdmin); err != nil {
@@ -405,7 +405,7 @@ func TestRedeemRetryAfterRevocation(t *testing.T) {
 	if err := store.SetUserState(ctx, pairing.UserID, UserRevoked, testAdmin); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1)); !errors.Is(err, ErrRevoked) {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), ""); !errors.Is(err, ErrRevoked) {
 		t.Fatal(err)
 	}
 }
@@ -417,7 +417,7 @@ func TestRedeemIsAtomic(t *testing.T) {
 	if _, err := store.db.Exec(`CREATE TRIGGER fail_refresh BEFORE UPDATE OF refresh_hash ON devices BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1)); err == nil {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), ""); err == nil {
 		t.Fatal("the injected failure must surface")
 	}
 	users, _ := store.Users(ctx)
@@ -428,7 +428,7 @@ func TestRedeemIsAtomic(t *testing.T) {
 	if _, err := store.db.Exec(`DROP TRIGGER fail_refresh`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1)); err != nil {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -447,7 +447,7 @@ func TestRevokePairingToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	value, row := newToken(t, store, 0)
-	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1)); err != nil {
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RevokePairingToken(ctx, row.ID, testAdmin); !errors.As(err, &transition) {
@@ -459,12 +459,12 @@ func TestPairingAudit(t *testing.T) {
 	store, _, _ := openStore(t)
 	value, row := newToken(t, store, 0)
 	target := TokenTarget(row.ID)
-	pairing, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1))
+	pairing, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(1), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.RedeemPairingToken(ctx, value, "Thief", deviceKey(2))
-	store.RedeemPairingToken(ctx, "lfp_unknown", "Phone", deviceKey(3))
+	store.RedeemPairingToken(ctx, value, "Thief", deviceKey(2), "")
+	store.RedeemPairingToken(ctx, "lfp_unknown", "Phone", deviceKey(3), "")
 	_, revoked := newToken(t, store, 0)
 	if err := store.RevokePairingToken(ctx, revoked.ID, testAdmin); err != nil {
 		t.Fatal(err)
@@ -485,5 +485,49 @@ func TestPairingAudit(t *testing.T) {
 		if got.Actor != w.Actor || got.Action != w.Action || got.Target != w.Target || got.Outcome != w.Outcome {
 			t.Errorf("row %d: %+v, want %+v", i, got, w)
 		}
+	}
+}
+
+// A redemption stores its kind on a new device and fills an unknown kind on the
+// key's existing device, or on a retry by the same key; a stored kind stays.
+func TestRedeemDeviceKind(t *testing.T) {
+	store, _, _ := openStore(t)
+	value, _ := newToken(t, store, 0)
+	pairing, err := store.RedeemPairingToken(ctx, value, "Anna's iPhone", deviceKey(1), KindIPhone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := store.Device(ctx, pairing.DeviceID); d.Kind != KindIPhone {
+		t.Fatal(d.Kind)
+	}
+	// The retry may not change it.
+	if _, err := store.RedeemPairingToken(ctx, value, "Anna's iPhone", deviceKey(1), KindMac); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := store.Device(ctx, pairing.DeviceID); d.Kind != KindIPhone {
+		t.Fatal("a stored kind changed", d.Kind)
+	}
+
+	user := approvedUser(t, store, "oliver")
+	pending, _ := store.AddDevice(ctx, user.ID, "Mac", deviceKey(2), KindUnknown)
+	value, _ = newToken(t, store, user.ID)
+	if _, err := store.RedeemPairingToken(ctx, value, "Mac", deviceKey(2), KindMac); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := store.Device(ctx, pending.ID); d.Kind != KindMac || d.State != DeviceApproved {
+		t.Fatalf("%+v", d)
+	}
+
+	// No kind stores NULL; an unknown kind is refused before the token is touched.
+	value, row := newToken(t, store, 0)
+	if _, err := store.RedeemPairingToken(ctx, value, "Phone", deviceKey(3), DeviceKind("linux")); !errors.Is(err, ErrInvalidRecord) {
+		t.Fatal(err)
+	}
+	pairing, err = store.RedeemPairingToken(ctx, value, "Phone", deviceKey(3), KindUnknown)
+	if err != nil || pairing.TokenID != row.ID {
+		t.Fatal(pairing, err)
+	}
+	if d, _ := store.Device(ctx, pairing.DeviceID); d.Kind != KindUnknown {
+		t.Fatal(d.Kind)
 	}
 }

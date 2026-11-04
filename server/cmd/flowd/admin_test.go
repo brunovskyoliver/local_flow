@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -211,18 +212,18 @@ func seedAccounts(t *testing.T) *seeded {
 	}
 	admin := accounts.AdminActor("seed")
 	s.oliver, _, _ = store.EnsureUser(ctx, "apple", "001234.abc", "oliver@example.com")
-	s.macbook, _ = store.AddDevice(ctx, s.oliver.ID, "MacBook Pro", key(1))
+	s.macbook, _ = store.AddDevice(ctx, s.oliver.ID, "MacBook Pro", key(1), "")
 	_ = store.SetUserState(ctx, s.oliver.ID, accounts.UserApproved, admin)
 	_ = store.SetDeviceState(ctx, s.macbook.ID, accounts.DeviceApproved, admin)
 	refresh, _, _ := store.IssueRefresh(ctx, s.macbook.ID)
 	access, _, _ := store.IssueAccess(ctx, s.macbook.ID)
 	at = time.Date(2026, 10, 3, 8, 55, 0, 0, zone)
-	s.studio, _ = store.AddDevice(ctx, s.oliver.ID, "Mac Studio", key(2))
+	s.studio, _ = store.AddDevice(ctx, s.oliver.ID, "Mac Studio", key(2), "")
 	at = time.Date(2026, 10, 3, 9, 12, 0, 0, zone)
 	_, _ = store.TouchDevice(ctx, s.macbook.ID)
 	at = time.Date(2026, 10, 3, 10, 0, 0, 0, zone)
 	s.pending, _, _ = store.EnsureUser(ctx, "google", "1098765", "")
-	s.pendingUserDevice, _ = store.AddDevice(ctx, s.pending.ID, "iMac", key(3))
+	s.pendingUserDevice, _ = store.AddDevice(ctx, s.pending.ID, "iMac", key(3), "")
 	device, _ := store.Device(ctx, s.macbook.ID)
 	s.secrets = []string{refresh, access, "001234.abc", "1098765",
 		hex.EncodeToString(device.RefreshHash), hex.EncodeToString(device.AccessHash), hex.EncodeToString(device.PublicKey),
@@ -283,7 +284,7 @@ func TestAdminListShowsTokenUser(t *testing.T) {
 	}
 	key := bytes.Repeat([]byte{9}, 65)
 	key[0] = 0x04
-	if _, err := store.RedeemPairingToken(context.Background(), value, "Anna's Phone", key); err != nil {
+	if _, err := store.RedeemPairingToken(context.Background(), value, "Anna's Phone", key, ""); err != nil {
 		t.Fatal(err)
 	}
 	out, err := admin("--data-dir", s.dir, "list", "--state", "approved")
@@ -463,8 +464,9 @@ func TestAdminPrintsNoSecrets(t *testing.T) {
 	adminEnv(t, time.Now(), s.zone, "oliver")
 	var all strings.Builder
 	for _, args := range [][]string{
-		{"list"}, {"list", "--state", "approved"}, {"audit"},
+		{"list"}, {"list", "--state", "approved"}, {"audit"}, {"list", "--json"}, {"audit", "--json"},
 		{"approve", "user", "2"}, {"revoke", "device", "1"}, {"reject", "user", "2"}, {"audit", "--limit", "100"}, {"list"},
+		{"user", "create", "--name", "Ana", "--json"}, {"rename", "device", "2", "--name", "Studio"}, {"list", "--json"},
 	} {
 		out, _ := admin(append([]string{"--data-dir", s.dir}, args...)...)
 		all.WriteString(out)
@@ -474,7 +476,7 @@ func TestAdminPrintsNoSecrets(t *testing.T) {
 			t.Fatalf("admin output contains %q", secret)
 		}
 	}
-	for _, prefix := range []string{"lfr_", "lfa_"} {
+	for _, prefix := range []string{"lfr_", "lfa_", "named:"} {
 		if strings.Contains(all.String(), prefix) {
 			t.Fatal("token prefix printed")
 		}
@@ -632,5 +634,273 @@ func TestTokenLinkCarriesEveryAddress(t *testing.T) {
 	want := "localflow://pair?address=http%3A%2F%2F100.64.0.1%3A8090&address=https%3A%2F%2Fflow.example.com#token=lfp_x"
 	if got != want {
 		t.Fatalf("got %s", got)
+	}
+}
+
+// setKinds stores device kinds in a seeded data directory: kind is shown by
+// list --json and must not change the text list.
+func (s *seeded) setKinds(t *testing.T, kinds map[int64]accounts.DeviceKind) {
+	t.Helper()
+	store, err := accounts.Open(s.dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for id, kind := range kinds {
+		if err := store.FillDeviceKind(context.Background(), id, kind); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Golden: the text list is byte for byte what it was before list --json and
+// device kinds, so LocalFlow Server's text parser keeps working.
+func TestAdminListTextGolden(t *testing.T) {
+	s := seedAccounts(t)
+	s.setKinds(t, map[int64]accounts.DeviceKind{s.macbook.ID: accounts.KindMac, s.pendingUserDevice.ID: accounts.KindIPhone})
+	adminEnv(t, time.Now(), s.zone, "oliver")
+	want, err := os.ReadFile(filepath.Join("testdata", "admin-list.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := admin("--data-dir", s.dir, "list")
+	if err != nil || out != string(want) {
+		t.Fatalf("list:\n%s\nwant:\n%s\n%v", out, want, err)
+	}
+}
+
+// jsonEqual compares two JSON texts as values.
+func jsonEqual(t *testing.T, got, want string) {
+	t.Helper()
+	var g, w any
+	if err := json.Unmarshal([]byte(got), &g); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, got)
+	}
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(g, w) {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestAdminListJSON(t *testing.T) {
+	s := seedAccounts(t)
+	s.setKinds(t, map[int64]accounts.DeviceKind{s.macbook.ID: accounts.KindMac})
+	adminEnv(t, time.Now(), s.zone, "oliver")
+	out, err := admin("--data-dir", s.dir, "list", "--json")
+	if err != nil || !strings.HasSuffix(out, "}\n") || strings.Count(out, "\n") != 1 {
+		t.Fatalf("%q %v", out, err)
+	}
+	jsonEqual(t, out, `{
+	  "schema_version": 1,
+	  "users": [
+	    {"id": 1, "provider": "apple", "display": "oliver@example.com", "state": "approved",
+	     "created_at": "2026-10-02T16:04:00Z", "changed_at": "2026-10-02T16:04:00Z",
+	     "devices": [
+	       {"id": 1, "name": "MacBook Pro", "kind": "mac", "state": "approved", "enrolled_at": "2026-10-02T16:04:00Z",
+	        "last_seen_at": "2026-10-03T07:12:00Z", "changed_at": "2026-10-02T16:04:00Z", "invited_by": null},
+	       {"id": 2, "name": "Mac Studio", "kind": null, "state": "pending", "enrolled_at": "2026-10-03T06:55:00Z",
+	        "last_seen_at": null, "changed_at": "2026-10-03T06:55:00Z", "invited_by": null}
+	     ]},
+	    {"id": 2, "provider": "google", "display": null, "state": "pending",
+	     "created_at": "2026-10-03T08:00:00Z", "changed_at": "2026-10-03T08:00:00Z",
+	     "devices": [
+	       {"id": 3, "name": "iMac", "kind": null, "state": "pending", "enrolled_at": "2026-10-03T08:00:00Z",
+	        "last_seen_at": null, "changed_at": "2026-10-03T08:00:00Z", "invited_by": null}
+	     ]}
+	  ],
+	  "truncated": false
+	}`)
+	// --state filters as the text form does.
+	out, err = admin("--data-dir", s.dir, "list", "--state", "approved", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed adminListJSON
+	if err := json.Unmarshal([]byte(out), &listed); err != nil || len(listed.Users) != 1 || len(listed.Users[0].Devices) != 2 {
+		t.Fatalf("%s %v", out, err)
+	}
+	out, err = admin("--data-dir", s.dir, "list", "--state", "rejected", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonEqual(t, out, `{"schema_version": 1, "users": [], "truncated": false}`)
+	if _, err := admin("--data-dir", s.dir, "list", "--json", "extra"); exitCode(err) != exitUsage {
+		t.Fatal(err)
+	}
+}
+
+// list --json stops at 500 users or 500 devices and says so; only the last
+// listed user can have devices missing.
+func TestAdminListJSONCaps(t *testing.T) {
+	at := time.Unix(1_790_000_000, 0)
+	users := func(n int) []accounts.User {
+		out := make([]accounts.User, n)
+		for i := range out {
+			out[i] = accounts.User{ID: int64(i + 1), Provider: "token", State: accounts.UserApproved, CreatedAt: at, ChangedAt: at}
+		}
+		return out
+	}
+	devicesOf := func(counts map[int64]int) map[int64][]accounts.Device {
+		out := map[int64][]accounts.Device{}
+		id := int64(0)
+		for user := int64(1); user <= int64(len(counts)); user++ {
+			for range counts[user] {
+				id++
+				out[user] = append(out[user], accounts.Device{ID: id, UserID: user, Name: "d", State: accounts.DeviceApproved, EnrolledAt: at, ChangedAt: at})
+			}
+		}
+		return out
+	}
+	total := func(l adminListJSON) (n int) {
+		for _, u := range l.Users {
+			n += len(u.Devices)
+		}
+		return n
+	}
+	if l := listJSON(users(500), nil, ""); len(l.Users) != 500 || l.Truncated {
+		t.Fatal(len(l.Users), l.Truncated)
+	}
+	if l := listJSON(users(501), nil, ""); len(l.Users) != 500 || !l.Truncated || l.Users[499].ID != 500 {
+		t.Fatal(len(l.Users), l.Truncated)
+	}
+	if l := listJSON(users(2), devicesOf(map[int64]int{1: 250, 2: 250}), ""); total(l) != 500 || l.Truncated {
+		t.Fatal(total(l), l.Truncated)
+	}
+	l := listJSON(users(3), devicesOf(map[int64]int{1: 499, 2: 3, 3: 1}), "")
+	if len(l.Users) != 2 || total(l) != 500 || len(l.Users[1].Devices) != 1 || !l.Truncated {
+		t.Fatal(len(l.Users), total(l), l.Truncated)
+	}
+	// Cut exactly at a user boundary: a later user with devices is cut, one without isn't missing anything.
+	l = listJSON(users(3), devicesOf(map[int64]int{1: 500, 2: 0, 3: 1}), "")
+	if len(l.Users) != 2 || total(l) != 500 || !l.Truncated {
+		t.Fatal(len(l.Users), total(l), l.Truncated)
+	}
+}
+
+func TestAdminAuditJSON(t *testing.T) {
+	s := seedAccounts(t)
+	now := time.Date(2026, 10, 5, 7, 30, 15, 0, s.zone)
+	adminEnv(t, now, s.zone, "oliver")
+	store, err := accounts.Open(s.dir, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Audit(context.Background(), accounts.AuditEntry{Actor: accounts.SystemActor, Action: "rate_limited", Outcome: "busy"})
+	_ = store.Audit(context.Background(), accounts.AuditEntry{Actor: accounts.UserActor(1), Action: "sign_in", Target: accounts.UserTarget(1), Outcome: "ok"})
+	store.Close()
+	out, err := admin("--data-dir", s.dir, "audit", "--limit", "2", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonEqual(t, out, `[
+	  {"at": "2026-10-05T05:30:15Z", "actor": "user:1", "action": "sign_in", "target": "user:1", "outcome": "ok"},
+	  {"at": "2026-10-05T05:30:15Z", "actor": "system", "action": "rate_limited", "target": null, "outcome": "busy"}
+	]`)
+	empty := t.TempDir()
+	if out, err := admin("--data-dir", empty, "audit", "--json"); err != nil || out != "[]\n" {
+		t.Fatalf("%q %v", out, err)
+	}
+	if _, err := admin("--data-dir", s.dir, "audit", "--limit", "0", "--json"); exitCode(err) != exitUsage {
+		t.Fatal(err)
+	}
+}
+
+func TestAdminUserCreate(t *testing.T) {
+	s := seedAccounts(t)
+	adminEnv(t, time.Now(), s.zone, "oliver")
+	out, err := admin("--data-dir", s.dir, "user", "create", "--name", "Ana")
+	if err != nil || out != "user 3 approved\n" {
+		t.Fatalf("%q %v", out, err)
+	}
+	out, err = admin("--data-dir", s.dir, "user", "create", "--name", "Ben", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonEqual(t, out, `{"id": 4, "display": "Ben", "state": "approved"}`)
+	listed, _ := admin("--data-dir", s.dir, "list", "--json")
+	var list adminListJSON
+	if err := json.Unmarshal([]byte(listed), &list); err != nil || len(list.Users) != 4 || list.Users[2].Provider != "token" ||
+		*list.Users[2].Display != "Ana" || list.Users[2].State != "approved" || len(list.Users[2].Devices) != 0 {
+		t.Fatalf("%s %v", listed, err)
+	}
+	if strings.Contains(listed, "named:") {
+		t.Fatal("subject printed")
+	}
+	audit, _ := admin("--data-dir", s.dir, "audit", "--limit", "2")
+	if !strings.Contains(audit, "admin:oliver  user_create  user:4  ok") || !strings.Contains(audit, "admin:oliver  user_create  user:3  ok") {
+		t.Fatal(audit)
+	}
+	for _, args := range [][]string{
+		{"user"}, {"user", "delete"}, {"user", "create"}, {"user", "create", "--name", ""},
+		{"user", "create", "--name", strings.Repeat("n", 321)}, {"user", "create", "--name", "A\x00na"},
+		{"user", "create", "--name", "Ana", "extra"}, {"user", "create", "--bogus"},
+	} {
+		if _, err := admin(append([]string{"--data-dir", s.dir}, args...)...); exitCode(err) != exitUsage {
+			t.Errorf("%q: %v", args, err)
+		}
+	}
+	if _, err := admin("--data-dir", s.dir, "user", "create", "--name", strings.Repeat("n", 320)); err != nil {
+		t.Fatal("320 bytes must fit", err)
+	}
+}
+
+func TestAdminRename(t *testing.T) {
+	s := seedAccounts(t)
+	adminEnv(t, time.Now(), s.zone, "oliver")
+	if out, err := admin("--data-dir", s.dir, "rename", "user", "2", "--name", "Grandma"); err != nil || out != "user 2 renamed\n" {
+		t.Fatalf("%q %v", out, err)
+	}
+	// A revoked device can still be renamed.
+	if _, err := admin("--data-dir", s.dir, "revoke", "device", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := admin("--data-dir", s.dir, "rename", "device", "1", "--name", "Old MacBook"); err != nil || out != "device 1 renamed\n" {
+		t.Fatalf("%q %v", out, err)
+	}
+	list, _ := admin("--data-dir", s.dir, "list")
+	if !strings.Contains(list, "Grandma") || !strings.Contains(list, "device 1  Old MacBook  revoked") {
+		t.Fatal(list)
+	}
+	audit, _ := admin("--data-dir", s.dir, "audit", "--limit", "1")
+	if !strings.Contains(audit, "admin:oliver  rename  device:1  ok") {
+		t.Fatal(audit)
+	}
+	for _, args := range [][]string{{"rename", "user", "99", "--name", "X"}, {"rename", "device", "99", "--name", "X"}} {
+		if _, err := admin(append([]string{"--data-dir", s.dir}, args...)...); exitCode(err) != exitNotFound {
+			t.Errorf("%q: %v", args, err)
+		}
+	}
+	for _, args := range [][]string{
+		{"rename"}, {"rename", "user"}, {"rename", "token", "1", "--name", "X"}, {"rename", "user", "x", "--name", "X"},
+		{"rename", "user", "0", "--name", "X"}, {"rename", "user", "1"}, {"rename", "user", "1", "--name", ""},
+		{"rename", "user", "1", "--name", strings.Repeat("n", 321)}, {"rename", "device", "1", "--name", strings.Repeat("n", 65)},
+		{"rename", "device", "1", "--name", "a\nb"}, {"rename", "device", "1", "--name", "X", "extra"},
+	} {
+		if _, err := admin(append([]string{"--data-dir", s.dir}, args...)...); exitCode(err) != exitUsage {
+			t.Errorf("%q: %v", args, err)
+		}
+	}
+	if _, err := admin("--data-dir", s.dir, "rename", "user", "1", "--name", strings.Repeat("n", 320)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin("--data-dir", s.dir, "rename", "device", "1", "--name", strings.Repeat("n", 64)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The usage line names every command, so a reader of an old flowd's exit 1
+// knows what is missing.
+func TestAdminUsageLine(t *testing.T) {
+	for _, part := range []string{"list [--state S] [--json]", "audit [--limit N] [--json]", "user create --name N [--json]",
+		"rename user|device <id> --name N", "token create|list|revoke"} {
+		if !strings.Contains(adminUsage, part) {
+			t.Errorf("usage lacks %q", part)
+		}
+	}
+	_, err := admin("--data-dir", t.TempDir())
+	if exitCode(err) != exitUsage || !strings.Contains(err.Error(), "user create --name N") {
+		t.Fatal(err)
 	}
 }

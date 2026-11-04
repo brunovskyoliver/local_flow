@@ -139,6 +139,10 @@ func TestAdminAPI(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &s); code != 200 || err != nil || s.Version != "0.3.0" || len(s.Counters) != 5 || s.Analysis.Backend != "" {
 		t.Fatal(code, body)
 	}
+	// With the remote listener running and no device connected.
+	if !strings.Contains(body, `"channels":{"open":0,"devices":[]}`) {
+		t.Fatal("channels:", body)
+	}
 	for _, other := range []string{remoteAddr, addr} {
 		for _, path := range []string{"/v1/admin/status", "/v1/admin/analysis"} {
 			if code, _ := request("GET", "http://"+other+path, "Bearer "+token, ""); code != 404 {
@@ -175,5 +179,23 @@ func TestAdminAPI(t *testing.T) {
 	}
 	if code, body = request("PUT", analysis, "Bearer "+token, `{"backend":""}`); code != 200 || !strings.Contains(body, `"backend":""`) {
 		t.Fatal(code, body)
+	}
+}
+
+// Without --remote-listen there is no registry, and status says channels null;
+// every other key stays.
+func TestAdminStatusWithoutRemote(t *testing.T) {
+	api := &adminAPI{token: strings.Repeat("a", 64), started: time.Unix(1_790_000_000, 0), counters: &requestCounters{},
+		analysis: &switchableAnalysis{}}
+	request := httptest.NewRequest("GET", "/v1/admin/status", nil)
+	request.Header.Set("Authorization", "Bearer "+api.token)
+	response := httptest.NewRecorder()
+	api.ServeHTTP(response, request)
+	var status map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &status); response.Code != 200 || err != nil {
+		t.Fatal(response.Code, response.Body.String(), err)
+	}
+	if string(status["channels"]) != "null" || status["version"] == nil || status["counters"] == nil || status["analysis"] == nil || status["started_at"] == nil {
+		t.Fatal(response.Body.String())
 	}
 }

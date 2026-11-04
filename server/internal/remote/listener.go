@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -286,6 +287,7 @@ func NewListener(cfg Config) *Listener {
 	body, _ := json.Marshal(Identity{
 		SchemaVersion: SchemaVersion, Server: "flowd/" + cfg.ServerVersion, ProtocolVersions: []int{1},
 		Suite: Suite, ServerKey: cfg.Identity.PublicKey(), Fingerprint: cfg.Identity.Fingerprint(),
+		Features: ServerFeatures,
 	})
 	return &Listener{cfg: cfg, identity: body, registry: newRegistry(), byClient: map[string]int{}, clientHellos: map[string][]time.Time{}}
 }
@@ -930,6 +932,34 @@ func (r *Registry) Len() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.conns)
+}
+
+// MaxDeviceCounts bounds DeviceCounts, and with it the admin status's
+// channels.devices (specs/028-server-users-and-rewrite-warmup/contracts/admin-status.md).
+const MaxDeviceCounts = 500
+
+// DeviceChannels is how many authenticated channels one device holds.
+type DeviceChannels struct {
+	DeviceID int64 `json:"device_id"`
+	Channels int   `json:"channels"`
+}
+
+// DeviceCounts returns every open channel (as Len) and, ordered by device ID,
+// the authenticated channels of each device that has any, at most
+// MaxDeviceCounts of them. One lock and one pass over the device index.
+func (r *Registry) DeviceCounts() (open int, devices []DeviceChannels) {
+	r.mu.Lock()
+	open = len(r.conns)
+	devices = make([]DeviceChannels, 0, len(r.byDevice))
+	for id, set := range r.byDevice {
+		devices = append(devices, DeviceChannels{DeviceID: id, Channels: len(set)})
+	}
+	r.mu.Unlock()
+	slices.SortFunc(devices, func(a, b DeviceChannels) int { return cmp.Compare(a.DeviceID, b.DeviceID) })
+	if len(devices) > MaxDeviceCounts {
+		devices = devices[:MaxDeviceCounts]
+	}
+	return open, devices
 }
 
 func collect(set map[uint64]*Conn) []*Conn {

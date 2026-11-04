@@ -82,6 +82,10 @@ impl Services for Win {
     fn set_shortcut_session_active(&self, active: bool) {
         crate::win::hotkey::set_session_active(active)
     }
+    /// The server is a Mac's (research R9): no role step on Windows.
+    fn can_host_server(&self) -> bool {
+        false
+    }
     fn has_globe_key(&self) -> bool {
         false
     }

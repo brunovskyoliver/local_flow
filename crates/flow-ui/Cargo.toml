@@ -9,6 +9,10 @@ test-support = ["gpui-kit/test-support"]
 
 [dependencies]
 gpui-kit.workspace = true
+# Pairing QR codes (research R14): MIT, no dependencies.
+qrcodegen = "1.8"
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
+# Decodes the drawn QR in tests only; never linked into the app.
+rqrr = { version = "0.11", default-features = false }

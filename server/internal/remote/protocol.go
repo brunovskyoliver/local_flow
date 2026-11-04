@@ -196,6 +196,46 @@ type Identity struct {
 	Suite            string `json:"suite"`
 	ServerKey        Base64 `json:"server_key"`
 	Fingerprint      string `json:"fingerprint"`
+	// Features lists optional message fields and ops this server accepts
+	// (specs/028-server-users-and-rewrite-warmup/contracts/device-kind.md).
+	// Absent means none; clients ignore names they don't know.
+	Features []string `json:"features,omitempty"`
+}
+
+// FeatureDeviceKind in Identity.Features: pair and enroll accept device_kind.
+const FeatureDeviceKind = "device_kind"
+
+// ServerFeatures is what this flowd lists in its identity.
+var ServerFeatures = []string{FeatureDeviceKind}
+
+// DeviceKind is the optional device_kind of pair and enroll: mac, windows or
+// iphone. Absent is empty; a present empty string is refused when decoding, so
+// only an absent field means unknown.
+type DeviceKind string
+
+func (k *DeviceKind) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err != nil {
+		return err
+	}
+	if text == "" {
+		return invalid("device_kind empty")
+	}
+	*k = DeviceKind(text)
+	return nil
+}
+
+// LogValue is the kind for log lines: the value, or none when absent.
+func (k DeviceKind) LogValue() string {
+	if k == "" {
+		return "none"
+	}
+	return string(k)
+}
+
+// validDeviceKind accepts an absent kind and the three the contract names.
+func validDeviceKind(kind DeviceKind) bool {
+	return kind == "" || kind == "mac" || kind == "windows" || kind == "iphone"
 }
 
 // Suite names the channel's HPKE suite in the identity response.
@@ -250,22 +290,24 @@ type MeetingModel struct {
 }
 
 type Enroll struct {
-	Op         int64  `json:"op"`
-	Provider   string `json:"provider"`
-	IDToken    string `json:"id_token"`
-	DeviceName string `json:"device_name"` // control characters removed by DecodeMessage
-	DeviceKey  Base64 `json:"device_key"`
-	Signature  Base64 `json:"signature"`
+	Op         int64      `json:"op"`
+	Provider   string     `json:"provider"`
+	IDToken    string     `json:"id_token"`
+	DeviceName string     `json:"device_name"` // control characters removed by DecodeMessage
+	DeviceKind DeviceKind `json:"device_kind,omitempty"`
+	DeviceKey  Base64     `json:"device_key"`
+	Signature  Base64     `json:"signature"`
 }
 
 // Pair redeems a one-time pairing token (Feature 027,
 // specs/027-remote-pairing/contracts/pairing.md).
 type Pair struct {
-	Op           int64  `json:"op"`
-	PairingToken string `json:"pairing_token"`
-	DeviceName   string `json:"device_name"` // control characters removed by DecodeMessage
-	DeviceKey    Base64 `json:"device_key"`
-	Signature    Base64 `json:"signature"`
+	Op           int64      `json:"op"`
+	PairingToken string     `json:"pairing_token"`
+	DeviceName   string     `json:"device_name"` // control characters removed by DecodeMessage
+	DeviceKind   DeviceKind `json:"device_kind,omitempty"`
+	DeviceKey    Base64     `json:"device_key"`
+	Signature    Base64     `json:"signature"`
 }
 
 type Enrolled struct {
@@ -1020,6 +1062,9 @@ func (m Enroll) validate() (Message, error) {
 	if err := validDevice(m.DeviceName, m.DeviceKey, m.Signature); err != nil {
 		return nil, err
 	}
+	if !validDeviceKind(m.DeviceKind) {
+		return nil, invalid("device_kind unknown")
+	}
 	return m, nil
 }
 
@@ -1030,6 +1075,9 @@ func (m Pair) validate() (Message, error) {
 	m.DeviceName = SanitizeDeviceName(m.DeviceName)
 	if err := validDevice(m.DeviceName, m.DeviceKey, m.Signature); err != nil {
 		return nil, err
+	}
+	if !validDeviceKind(m.DeviceKind) {
+		return nil, invalid("device_kind unknown")
 	}
 	return m, nil
 }

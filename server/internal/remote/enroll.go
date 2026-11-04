@@ -87,7 +87,7 @@ func (a *accountOps) enroll(ctx context.Context, c *Conn, m Message) (Operation,
 	message := m.(Enroll)
 	outcome, user, device := CodeInternal, int64(0), int64(0)
 	defer func() {
-		a.cfg.Logger.Printf("remote channel=%d op=enroll user=%d device=%d code=%s", c.ID(), user, device, outcome)
+		a.cfg.Logger.Printf("remote channel=%d op=enroll user=%d device=%d kind=%s code=%s", c.ID(), user, device, message.DeviceKind.LogValue(), outcome)
 	}()
 	if c.Now().Sub(c.ReadyAt()) > EnrollIdleTimeout {
 		outcome = CodeUnauthorized
@@ -160,8 +160,10 @@ func (a *accountOps) enroll(ctx context.Context, c *Conn, m Message) (Operation,
 // enrollDevice adds the key as a pending device of user, or finds it when the
 // same user enrolls the same key again (a reinstall that lost its tokens).
 // A key held by another user is unauthorized; a revoked device stays revoked.
+// The kind is stored on a new device and fills an unknown kind on a found one.
 func (a *accountOps) enrollDevice(ctx context.Context, user int64, message Enroll) (accounts.Device, error) {
-	row, err := a.cfg.Store.AddDevice(ctx, user, message.DeviceName, message.DeviceKey)
+	kind := accounts.DeviceKind(message.DeviceKind)
+	row, err := a.cfg.Store.AddDevice(ctx, user, message.DeviceName, message.DeviceKey, kind)
 	if err == nil {
 		return row, nil
 	}
@@ -176,6 +178,12 @@ func (a *accountOps) enrollDevice(ctx context.Context, user int64, message Enrol
 		return accounts.Device{}, coded(CodeUnauthorized, "key enrolled by another user")
 	case row.State == accounts.DeviceRevoked:
 		return row, coded(CodeRevoked, "device revoked")
+	}
+	if row.Kind == accounts.KindUnknown && kind != accounts.KindUnknown {
+		if err := a.cfg.Store.FillDeviceKind(ctx, row.ID, kind); err != nil {
+			return accounts.Device{}, coded(CodeInternal, "device kind")
+		}
+		row.Kind = kind
 	}
 	return row, nil
 }
