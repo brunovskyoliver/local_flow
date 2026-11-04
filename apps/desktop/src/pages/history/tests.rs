@@ -2131,3 +2131,26 @@ async fn the_review_warns_about_delivery_from_the_row(cx: &mut TestAppContext) {
     w.update(cx, |t, _, cx| t.insert(&row, row.text.clone(), cx)).unwrap();
     cx.update(|cx| assert!(!cx.global::<Session>().insertion.is_reviewing()));
 }
+
+// parity: HIST-044
+/// The longest path label stays inside the left column and never reaches the transcript.
+#[flow_ui::gpui::test]
+async fn a_long_path_label_wraps_inside_its_column(cx: &mut TestAppContext) {
+    boot(cx, Mode::Light);
+    // Only the first row carries a label, so `history.pathLabel` is its.
+    sql(cx, "UPDATE transcriptions SET recognition_path='local', server_failure=NULL");
+    sql(cx, &format!("UPDATE transcriptions SET recognition_path='local_after_server_failure', server_failure='pin_mismatch' WHERE id='{}'", seed_id(1)));
+    let w = cx.add_window(HistoryPage::new);
+    frame(cx, w);
+    let id = seed_id(1);
+    let (column, label, text) = (bounds(cx, w, &format!("history.rowInfo.{id}")), bounds(cx, w, "history.pathLabelBox"), bounds(cx, w, &format!("history.text.{id}")));
+    assert!(saw("Local · identity changed"));
+    assert!(label.right() <= column.right(), "label {label:?} overflows its column {column:?}");
+    assert!(label.right() <= text.left(), "label {label:?} reaches the transcript {text:?}");
+    cx.update(|cx| cx.global_mut::<Flow>().compact = true);
+    w.update(cx, |_, _, cx| cx.notify()).unwrap();
+    frame(cx, w);
+    let (column, label, text) = (bounds(cx, w, &format!("history.rowInfo.{id}")), bounds(cx, w, "history.pathLabelBox"), bounds(cx, w, &format!("history.text.{id}")));
+    assert!(label.right() <= column.right() && label.right() <= text.left(), "compact: {label:?} {column:?} {text:?}");
+    assert!(label.size.height > px(14.), "it wraps rather than running on: {label:?}");
+}

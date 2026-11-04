@@ -210,13 +210,15 @@ pub enum Rewritten {
     NotEligible,
     Text { text: String, attempt: String },
     Notice { message: String, can_retry: bool },
+    /// Not waited for (`model_starting`, `server_unavailable`): the plain text goes in, no notice.
+    Skipped(&'static str),
 }
 
 /// Admits and runs one rewrite of saved text, blocking. Cancelling sets `cancel`.
 /// What a rewrite reports while it runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Progress {
-    /// Waiting for this Mac's model to load after it was unloaded.
+    /// Waiting for this Mac's model to load after it was unloaded, at most `REWRITE_READY_BUDGET`.
     StartingModel,
     /// The request is on its way.
     Rewriting,
@@ -1284,7 +1286,7 @@ impl Coordinator {
             };
             c.rewriting.store(false, SeqCst);
             match result {
-                Rewritten::NotEligible => {}
+                Rewritten::NotEligible | Rewritten::Skipped(_) => {}
                 Rewritten::Text { text: new, attempt } => {
                     text = new;
                     rewrite = Some(attempt);
@@ -2555,7 +2557,7 @@ mod tests {
 
         fn plan(origin: &str, channel: Option<Arc<Pool>>, secret: Option<&str>) -> Plan {
             let settings = if channel.is_some() { RewriteSettings::routed_to_remote(origin.into()) } else { RewriteSettings { origin: origin.into(), credential_present: secret.is_some(), ..Default::default() } };
-            Plan { enabled: true, mode: "clean", settings, timeout: Duration::from_secs(10), channel, secret: secret.map(String::from) }
+            Plan { enabled: true, mode: "clean", settings, timeout: Duration::from_secs(10), channel, secret: secret.map(String::from), ready: None }
         }
 
         fn saved_dictation(r: &mut Rig) -> String {
@@ -2616,13 +2618,13 @@ mod tests {
                 let script = Arc::new(Script::new([vec![Reply::ready()], replies].concat()));
                 let key = script.public_key();
                 let opener = script.clone();
-                let pool = Pool::new(Box::new(move || {
+                let pool = Arc::new(Pool::new(Box::new(move || {
                     let mut channel = Channel::new(opener.open("ws://x").map_err(|_| crate::remote::channel::ChannelError::Closed)?, &key).map_err(|_| crate::remote::channel::ChannelError::Protocol)?;
                     channel.open(Purpose::Session, None)?;
                     Ok(channel)
-                }), Box::new(|| Duration::ZERO));
+                }), Box::new(|| Duration::ZERO)));
                 let _ = Role::Interactive;
-                history::send_rewrite_over_channel(&pool, &request, Duration::from_secs(2), &AtomicBool::new(false))
+                history::send_rewrite_over_channel(&pool, &request, Duration::from_secs(2), None, &AtomicBool::new(false))
             };
             let event = |event: Value| Reply::Json(json!({"schema_version": 1, "type": "rewrite_event", "op": 1, "event": event}));
             let result = |text: &str, id: &str| json!({"event": "result", "schema_version": 1, "request_id": id, "mode": "clean", "text": text, "server": {"name": "f", "version": "1"}, "backend": {"kind": "k", "model": "m"}, "prompt_version": 1, "shield": {"version": 1, "placeholders": 0, "restored": 0}, "timing": {}});
@@ -2646,14 +2648,14 @@ mod tests {
             let f = s.flowd().clone();
             let mut r = on_disk(rig(vec![Ok(Some(speak(16_000, Then::Release)))]));
             let db = Db::open_or_create(&r.root.join("h.sqlite")).unwrap();
-            r.rewriter = Some(Box::new(Live { db, plan: plan(&f.remote, Some(s.pool.clone()), None) }));
+            r.rewriter = Some(Box::new(Live::new(db, plan(&f.remote, Some(s.pool.clone()), None))));
             run(&mut r, &s, SETTLE, false);
             assert_eq!(*r.inserter.inserted.lock().unwrap(), ["Hello world."]);
             assert!(r.states().contains(&State::Rewriting));
 
             let mut r = on_disk(rig(vec![Ok(Some(speak(16_000, Then::Release)))]));
             let db = Db::open_or_create(&r.root.join("h.sqlite")).unwrap();
-            r.rewriter = Some(Box::new(Live { db, plan: plan(&f.down, None, Some(&f.token)) }));
+            r.rewriter = Some(Box::new(Live::new(db, plan(&f.down, None, Some(&f.token)))));
             r.run();
             assert_eq!(*r.inserter.inserted.lock().unwrap(), ["words"], "the original goes in");
             let id = r.row().id;
@@ -2713,7 +2715,7 @@ mod tests {
             let (s, counters) = enrolled(vec![Reply::ready(), Reply::tokens("a", "r"), Reply::ready(), Reply::Close(1006), Reply::ready(), accepted.clone(), Reply::After("dictation_end"), window, complete]);
             let spool = std::env::temp_dir().join(format!("flow-stream-{}.f32", std::process::id()));
             std::fs::write(&spool, vec![0u8; 80_000]).unwrap();
-            let stream = crate::dictation::remote::Stream::start(s.enrollment.clone(), crate::dictation::spool::Reader::open(&spool).unwrap(), None, SETTLE);
+            let stream = crate::dictation::remote::Stream::start(s.enrollment.clone(), crate::dictation::spool::Reader::open(&spool).unwrap(), None, SETTLE, None);
             stream.recorded(20_000);
             let began = Instant::now();
             while counters.opened() < 3 || counters.messages().iter().filter_map(|m| m["audio_samples"].as_u64()).sum::<u64>() < 20_000 {
@@ -2740,6 +2742,251 @@ mod tests {
             let mut r = rig(vec![Ok(Some(speak(20_000, Then::Release)))]);
             run(&mut r, &s, SETTLE, false);
             assert_eq!(waiting(&r)[0].last_failure.as_deref(), Some("protocol_error"));
+        }
+
+
+        // ---- Accept budget, cooling and the rewrite budget (scripted server) ----
+
+        use super::super::super::cooling::Cooling;
+        use super::super::super::remote::{ACCEPT_BUDGET, RETRY_PAUSE};
+        use super::super::super::rewrite::REWRITE_READY_BUDGET;
+        use crate::remote::scripted::{Counters, Reply};
+
+        fn accepted() -> Reply {
+            Reply::Json(json!({"schema_version": 1, "type": "dictation_accepted", "op": 1, "window_samples": WINDOW, "model": {"engine": "e", "model_id": "m", "model_revision": "1", "manifest_hash": "h", "sdk": "s", "worker_build": "b"}}))
+        }
+
+        /// The server's whole answer to one dictation: accepted, then one window covering it all.
+        fn answers() -> Vec<Reply> {
+            vec![
+                accepted(),
+                Reply::After("dictation_end"),
+                Reply::Json(json!({"schema_version": 1, "type": "window_result", "op": 1, "index": 0, "sample_start": 0, "sample_count": WINDOW, "text": "from the server", "tokens": [], "boost_hints": [], "recognition_ms": 1})),
+                Reply::Json(json!({"schema_version": 1, "type": "dictation_complete", "op": 1, "windows": 1})),
+            ]
+        }
+
+        fn scripted(replies: Vec<Reply>) -> (Server, Counters) {
+            let (e, counters) = super::super::super::remote::tests::enrolled(replies);
+            (Server { flowd: None, pool: Arc::new(Enrollment::pool(&e)), enrollment: e }, counters)
+        }
+
+        /// The first channel refreshes the token, then each try opens its own.
+        fn first_open() -> Vec<Reply> {
+            vec![Reply::ready(), Reply::tokens("a", "r"), Reply::ready()]
+        }
+
+        /// A dictation on `s` with this accept budget, and how long the whole session took.
+        fn run_budgeted(r: &mut Rig, s: &Server, accept: Duration, cooling: Option<&Arc<Cooling>>) -> Duration {
+            let control = r.control.clone();
+            let mut rewriter = r.rewriter.take();
+            let mut served = Served::new(s.enrollment.clone(), s.pool.clone(), SETTLE, &mut r.recognizer, true).accept_within(accept);
+            if let Some(cooling) = cooling {
+                served = served.cooling(cooling.clone());
+            }
+            let began = Instant::now();
+            let mut deps = Deps { mic: &r.mic, inputs: &[], recognizer: &mut served, rewriter: rewriter.as_mut().map(|x| &mut **x as &mut dyn Rewriter), inserter: &r.inserter, history: &mut r.history };
+            r.coordinator.run(&mut deps, &control);
+            began.elapsed()
+        }
+
+        fn starts(counters: &Counters) -> usize {
+            counters.messages().iter().filter(|m| m["type"] == "dictation_start").count()
+        }
+
+        #[test]
+        fn an_unreachable_server_is_recognized_here_within_the_accept_budget() {
+            // The token refresh answers; then every connection closes before its hello is answered.
+            let (s, counters) = scripted(vec![Reply::ready(), Reply::tokens("a", "r")]);
+            let mut r = rig(vec![Ok(Some(speak(16_000, Then::Release)))]);
+            let budget = Duration::from_millis(600);
+            let took = run_budgeted(&mut r, &s, budget, None);
+            let row = r.row();
+            assert_eq!((row.recognition_path.as_str(), row.server_failure.as_deref()), ("local_after_server_failure", Some("unreachable")));
+            assert_eq!(row.path_label(true).as_deref(), Some("Local · server unreachable"));
+            assert_eq!(*r.inserter.inserted.lock().unwrap(), ["words"]);
+            assert!(counters.opened() > 1, "tried again inside the budget");
+            assert!(took >= budget && took < budget + Duration::from_millis(900), "{took:?}");
+        }
+
+        #[test]
+        fn a_server_that_starts_inside_the_budget_takes_the_dictation() {
+            // The observed restart: hello accepted, `worker_unavailable` twice, then the worker is up.
+            let replies = [first_open(), vec![Reply::error("worker_unavailable"), Reply::ready(), Reply::error("worker_unavailable"), Reply::ready()], answers()].concat();
+            let (s, counters) = scripted(replies);
+            let mut r = rig(vec![Ok(Some(speak(16_000, Then::Release)))]);
+            let took = run_budgeted(&mut r, &s, ACCEPT_BUDGET, None);
+            let row = r.row();
+            assert_eq!((row.recognition_path.as_str(), row.server_failure.as_deref()), ("server", None), "{:?}", statuses(&r));
+            assert_eq!(row.text, "from the server");
+            assert_eq!(local_calls(&r), 0, "the local model never ran");
+            assert_eq!(starts(&counters), 3);
+            assert!(took >= RETRY_PAUSE * 2 && took < ACCEPT_BUDGET, "{took:?}");
+        }
+
+        #[test]
+        fn a_server_still_starting_at_the_budget_is_recognized_here() {
+            let tries: Vec<Reply> = (0..40).flat_map(|_| [Reply::ready(), Reply::error("worker_unavailable")]).collect();
+            let (s, counters) = scripted([first_open(), vec![Reply::error("worker_unavailable")], tries].concat());
+            let mut r = rig(vec![Ok(Some(speak(16_000, Then::Release)))]);
+            let budget = Duration::from_millis(1_000);
+            let took = run_budgeted(&mut r, &s, budget, None);
+            let row = r.row();
+            assert_eq!((row.recognition_path.as_str(), row.server_failure.as_deref()), ("local_after_server_failure", Some("worker_unavailable")));
+            assert_eq!(row.path_label(true).as_deref(), Some("Local · server starting"));
+            assert_eq!(local_calls(&r), 1);
+            assert!(starts(&counters) >= 2, "retried: {}", starts(&counters));
+            assert!(took < budget + Duration::from_millis(900), "{took:?}");
+        }
+
+        #[test]
+        fn a_cooling_server_is_skipped_until_a_probe_answers() {
+            let up = Arc::new(AtomicBool::new(false));
+            let answer = up.clone();
+            let cooling = Cooling::new(Some(Arc::new(move |_: &str| answer.load(SeqCst))), Box::new(crate::remote::enrollment::system_now));
+
+            let (s, _) = scripted(vec![Reply::ready(), Reply::tokens("a", "r")]);
+            let mut r = rig(vec![Ok(Some(speak(16_000, Then::Release)))]);
+            run_budgeted(&mut r, &s, Duration::from_millis(300), Some(&cooling));
+            let origin = s.enrollment.settings().origin.unwrap();
+            assert_eq!(cooling.skip(&origin), Some("unreachable"));
+
+            // Cooling: no connection at all, straight to this Mac, and no wait.
+            let (s, counters) = scripted([first_open(), answers()].concat());
+            let mut r = rig(vec![Ok(Some(speak(16_000, Then::Release)))]);
+            let took = run_budgeted(&mut r, &s, Duration::from_secs(5), Some(&cooling));
+            assert_eq!(counters.opened(), 0, "the cooling server isn't asked");
+            assert_eq!((r.row().recognition_path.as_str(), r.row().server_failure.as_deref()), ("local_after_server_failure", Some("unreachable")));
+            assert!(took < Duration::from_secs(2), "{took:?}");
+
+            assert!(cooling.probe_once(), "a probe that fails keeps it cooling");
+            up.store(true, SeqCst);
+            assert!(!cooling.probe_once());
+            assert_eq!(cooling.skip(&origin), None, "the probe's success clears it");
+            let mut r = rig(vec![Ok(Some(speak(16_000, Then::Release)))]);
+            run_budgeted(&mut r, &s, Duration::from_secs(5), Some(&cooling));
+            assert_eq!(r.row().recognition_path, "server", "{:?}", statuses(&r));
+        }
+
+        // The rewrite budget.
+
+        /// A plan for this Mac's model (`POST /v1/rewrite`), with a live dictation's budget.
+        fn local_plan(ready: Duration) -> Plan {
+            let settings = RewriteSettings { origin: "http://127.0.0.1:9".into(), credential_present: true, ..Default::default() };
+            Plan { enabled: true, mode: "clean", settings, timeout: Duration::from_secs(10), channel: None, secret: Some("t".into()), ready: Some(ready) }
+        }
+
+        /// The model never comes up: the wait runs to its limit, as `wait_until_ready` does.
+        fn cold(limit: Duration, starting: &mut dyn FnMut()) -> crate::local_model::Wait {
+            starting();
+            thread::sleep(limit);
+            crate::local_model::Wait { cold: true, ready: false, waited: limit }
+        }
+
+        fn last_attempt(r: &Rig) -> history::Attempt {
+            history::attempts(&r.history.db, &r.row().id).unwrap().pop().expect("an attempt")
+        }
+
+        #[test]
+        fn a_cold_model_inserts_the_plain_text_within_the_budget_and_history_says_skipped() {
+            let mut r = on_disk(rig(vec![Ok(Some(speak(16_000, Then::Release)))]));
+            let budget = Duration::from_millis(300);
+            let mut live = Live::new(Db::open_or_create(&r.root.join("h.sqlite")).unwrap(), local_plan(budget));
+            let limits = Arc::new(Mutex::new(vec![]));
+            let seen = limits.clone();
+            live.wait = Box::new(move |_, limit, _, starting| {
+                seen.lock().unwrap().push(limit);
+                cold(limit, starting)
+            });
+            r.rewriter = Some(Box::new(live));
+            let began = Instant::now();
+            r.run();
+            assert!(began.elapsed() < budget + Duration::from_millis(700), "{:?}", began.elapsed());
+            assert_eq!(*limits.lock().unwrap(), [budget], "the wait is the budget, not the 20 s timeout");
+            assert_eq!(*r.inserter.inserted.lock().unwrap(), ["words"], "the plain transcript");
+            let states = r.states();
+            let at = |s| states.iter().position(|x| *x == s).unwrap();
+            assert!(at(State::StartingModel) < at(State::Inserting), "{states:?}");
+            assert!(!states.contains(&State::Rewriting));
+            assert!(!r.events.lock().unwrap().iter().any(|e| matches!(e, Event::Action { .. })), "skipped is not a failure notice");
+            let attempt = last_attempt(&r);
+            assert_eq!((attempt.state.as_str(), attempt.skipped()), ("cancelled", Some("model starting")));
+            assert_eq!(attempt.title(), "Attempt 1 · Clean · skipped");
+            assert_eq!(r.row().rewrite_state, "cancelled", "not failed");
+            let mut m = history::Model::default();
+            m.attempts = vec![attempt];
+            assert_eq!(m.rewrite_state_line(), "Rewrite skipped: model starting");
+        }
+
+        #[test]
+        fn a_warm_model_rewrites_as_before() {
+            let mut r = on_disk(rig(vec![Ok(Some(speak(16_000, Then::Release)))]));
+            let mut live = Live::new(Db::open_or_create(&r.root.join("h.sqlite")).unwrap(), local_plan(REWRITE_READY_BUDGET));
+            live.wait = Box::new(|_, _, _, _| crate::local_model::Wait { cold: false, ready: true, waited: Duration::ZERO });
+            r.rewriter = Some(Box::new(live));
+            r.run();
+            // Ready, so the request goes; nothing listens at this address, so it fails as it always did.
+            assert!(r.states().contains(&State::Rewriting) && !r.states().contains(&State::StartingModel));
+            let attempt = last_attempt(&r);
+            assert_eq!((attempt.state.as_str(), attempt.failure_category.as_deref(), attempt.skipped()), ("failed", Some("server_unreachable"), None));
+        }
+
+        #[test]
+        fn a_server_rewrite_with_no_sign_of_the_model_is_skipped_and_a_cooling_server_is_not_asked() {
+            use crate::remote::channel::{Channel, ChannelError, Purpose, Transports};
+            use crate::remote::scripted::Script;
+            let pool_of = |replies: Vec<Reply>| {
+                let script = Arc::new(Script::new([vec![Reply::ready()], replies].concat()));
+                let (key, opener, counters) = (script.public_key(), script.clone(), script.counters());
+                let pool = Pool::new(Box::new(move || {
+                    let mut channel = Channel::new(opener.open("ws://x").map_err(|_| ChannelError::Closed)?, &key).map_err(|_| ChannelError::Protocol)?;
+                    channel.open(Purpose::Session, None)?;
+                    Ok(channel)
+                }), Box::new(|| Duration::ZERO));
+                (Arc::new(pool), counters)
+            };
+            let server_plan = |pool: Arc<Pool>, ready: Duration| Plan { enabled: true, mode: "clean", settings: RewriteSettings::routed_to_remote("http://127.0.0.1:9".into()), timeout: Duration::from_secs(10), channel: Some(pool), secret: None, ready: Some(ready) };
+
+            // The server takes the request and says nothing: its model is still loading.
+            let (pool, _) = pool_of(vec![Reply::Silent]);
+            let mut r = on_disk(rig(vec![Ok(Some(speak(16_000, Then::Release)))]));
+            let budget = Duration::from_millis(300);
+            r.rewriter = Some(Box::new(Live::new(Db::open_or_create(&r.root.join("h.sqlite")).unwrap(), server_plan(pool, budget))));
+            let began = Instant::now();
+            r.run();
+            assert!(began.elapsed() < budget + Duration::from_millis(700), "{:?}", began.elapsed());
+            assert_eq!(*r.inserter.inserted.lock().unwrap(), ["words"]);
+            assert_eq!(last_attempt(&r).skipped(), Some("model starting"));
+
+            // The dictation's server is cooling: the rewrite doesn't open a channel to it.
+            let (pool, counters) = pool_of(vec![Reply::Silent]);
+            let cooling = Cooling::new(None, Box::new(crate::remote::enrollment::system_now));
+            cooling.failed("http://127.0.0.1:9", "unreachable");
+            let mut r = on_disk(rig(vec![Ok(Some(speak(16_000, Then::Release)))]));
+            let mut live = Live::new(Db::open_or_create(&r.root.join("h.sqlite")).unwrap(), server_plan(pool, REWRITE_READY_BUDGET));
+            live.cooling = Some(cooling);
+            r.rewriter = Some(Box::new(live));
+            r.run();
+            assert_eq!(counters.opened(), 0);
+            assert_eq!(*r.inserter.inserted.lock().unwrap(), ["words"]);
+            assert_eq!(last_attempt(&r).skipped(), Some("server unavailable"));
+
+            // A channel that is slow to open counts toward the budget too, and goes back to the pool.
+            let script = Arc::new(Script::new(vec![Reply::ready()]));
+            let (key, opener) = (script.public_key(), script.clone());
+            let slow = Arc::new(Pool::new(Box::new(move || {
+                thread::sleep(Duration::from_millis(400));
+                let mut channel = Channel::new(opener.open("ws://x").map_err(|_| ChannelError::Closed)?, &key).map_err(|_| ChannelError::Protocol)?;
+                channel.open(Purpose::Session, None)?;
+                Ok(channel)
+            }), Box::new(|| Duration::ZERO)));
+            let request = history::RewriteRequest { dictation: "d".into(), attempt: "a".into(), mode: "clean", text: "hello".into(), origin: "http://x".into(), context: None };
+            let began = Instant::now();
+            assert_eq!(history::send_rewrite_over_channel(&slow, &request, Duration::from_secs(10), Some(Duration::from_millis(100)), &AtomicBool::new(false)), Err("model_starting"));
+            assert!(began.elapsed() < Duration::from_millis(350), "{:?}", began.elapsed());
+            // The late lease hands its channel back; a second open would take another 400 ms.
+            let _leased = slow.lease(crate::remote::pool::Role::Interactive).unwrap();
+            assert!(began.elapsed() < Duration::from_millis(700), "the late channel was parked, not lost: {:?}", began.elapsed());
         }
     }
 }

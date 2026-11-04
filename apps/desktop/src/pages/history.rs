@@ -383,7 +383,7 @@ impl HistoryPage {
             let answer = cx
                 .background_spawn(async move {
                     match channel {
-                        Some(pool) => flow_core::history::send_rewrite_over_channel(&pool, &sent, timeout, &cancel),
+                        Some(pool) => flow_core::history::send_rewrite_over_channel(&pool, &sent, timeout, None, &cancel),
                         None => {
                             flow_core::local_model::wait_until_ready(&origin, secret.as_deref(), timeout, &cancel, &mut || {});
                             send_rewrite(&sent, secret.as_deref(), timeout, cancel)
@@ -668,14 +668,19 @@ impl HistoryPage {
             }))
             .child(
                 v_flex()
+                    .id(SharedString::from(format!("history.rowInfo.{}", e.id)))
+                    .test_support()
                     .flex_none()
                     .w(px(if compact { 72. } else { 104. }))
+                    // Whatever a label measures, nothing paints into the transcript's column.
+                    .overflow_hidden()
                     .pt(px(1.5))
                     // `Txt` rounds lines up; Swift's fractional lines keep the column shorter.
                     .gap(px(2.))
                     .child(t(time).size(13.).mono_digits().color(p.muted))
                     .when_some(e.quality_label(), |d, q| d.child(t(q).font(11., 500.).color(p.warning).no_widow()))
-                    .when_some(path, |d, l| d.child(t(l).id("history.pathLabel").size(11.).color(p.muted).no_widow())),
+                    // A box as wide as the column: the label wraps there and never runs under the transcript.
+                    .when_some(path, |d, l| d.child(div().id("history.pathLabelBox").test_support().w_full().min_w_0().child(t(l).id("history.pathLabel").size(11.).color(p.muted).no_widow()))),
             )
             .child(div().id(SharedString::from(format!("history.text.{}", e.id))).test_support().flex_1().min_w_0().child(t(e.text.clone()).size(15.).line_spacing(4.).selectable().no_widow()))
             .child(focus_revealed(group, self.voice_over, &action_focus, window, cx, actions))

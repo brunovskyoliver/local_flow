@@ -29,8 +29,8 @@ pub struct Wait {
 }
 
 /// Before a request to this Mac's flowd: wakes the model and waits, at most `limit`, until flowd
-/// reports it serving. `starting` runs once, when the first check finds it not serving. On timeout
-/// the request goes anyway and reports its own failure.
+/// reports it serving. `starting` runs once, when the first check finds it not serving. A live
+/// dictation's limit is `REWRITE_READY_BUDGET`, and past it `rewrite::Live` skips the request.
 pub fn wait_until_ready(origin: &str, secret: Option<&str>, limit: Duration, cancel: &AtomicBool, starting: &mut dyn FnMut()) -> Wait {
     if origin != loopback_endpoint() {
         return Wait { ready: true, ..Wait::default() };
@@ -67,7 +67,7 @@ pub struct Timing {
     pub wait: Wait,
     /// From the end of the wait to the answer.
     pub rewrite: Duration,
-    /// `ok`, `timeout`, `cancelled`, `failed` or `not_eligible`.
+    /// `ok`, `skipped` (not ready inside `REWRITE_READY_BUDGET`), `cancelled`, `failed` or `not_eligible`.
     pub outcome: &'static str,
 }
 

@@ -1,6 +1,7 @@
 //! Remote client wiring: platform credentials behind flow-core's traits, off-thread operations, and
 //! the pairing and address sheets Settings and onboarding share.
 use crate::core::Core;
+use flow_core::dictation::cooling::Cooling;
 use flow_core::remote::channel::WebSockets;
 use flow_core::remote::handoff::{self, Handoff, Plan, Queue};
 use flow_core::remote::transfer::{self, Request};
@@ -53,6 +54,8 @@ impl DeviceKeys for Platform {
 pub struct Remote {
     pub enrollment: Arc<Enrollment>,
     pub pool: Arc<Pool>,
+    /// The dictation server's fallback backoff, shared by every press on this server.
+    pub cooling: Arc<Cooling>,
     /// Made on first use: its paths come from `Core`.
     handoff: OnceLock<Arc<Handoff>>,
 }
@@ -61,7 +64,9 @@ impl Remote {
     pub fn new(enrollment: Enrollment) -> Arc<Remote> {
         let enrollment = Arc::new(enrollment);
         let pool = Arc::new(Enrollment::pool(&enrollment));
-        Arc::new(Remote { enrollment, pool, handoff: OnceLock::new() })
+        let probed = enrollment.clone();
+        let cooling = Cooling::new(Some(Arc::new(move |origin: &str| probed.probe(origin))), Box::new(system_now));
+        Arc::new(Remote { enrollment, pool, cooling, handoff: OnceLock::new() })
     }
 
     pub fn native(credentials: Arc<dyn Credentials>) -> Arc<Remote> {
