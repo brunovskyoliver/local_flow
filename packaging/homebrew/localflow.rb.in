@@ -31,6 +31,8 @@ cask "localflow" do
     Dictation can be turned on later in Settings.
     Models download inside the app. With a LocalFlow server, paste the token or link
     its owner gives you, and nothing is downloaded.
+    Coming from the earlier LocalFlow app? The first launch offers to copy its
+    history, meetings, models and settings.
     Updates come through Homebrew: brew upgrade --cask localflow
     macOS may ask for permissions again after an upgrade.
   EOS

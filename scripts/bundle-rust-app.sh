@@ -23,6 +23,9 @@ ditto build/SpeechWorker/Release/FluidAudio_FluidAudio.bundle "$staging/Contents
 # the Swift app.
 TARGET_BUILD_DIR="$PWD/$(dirname "$staging")" CONTENTS_FOLDER_PATH="$(basename "$staging")/Contents" \
   CODE_SIGNING_ALLOWED=NO scripts/build-meeting-whisper.sh
+# The app icon, drawn by scripts/make-app-icon.py.
+mkdir -p "$staging/Contents/Resources"
+install -m 644 apps/desktop/resources/AppIcon.icns "$staging/Contents/Resources/AppIcon.icns"
 # The pinned descriptors the worker is pointed at. Code signing refuses them in Helpers.
 models="apps/macos/LocalFlow/Resources/Models"
 mkdir -p "$staging/Contents/Resources/Models"
@@ -53,6 +56,7 @@ cat > "$staging/Contents/Info.plist" <<PLIST
 <key>CFBundleExecutable</key><string>LocalFlow</string>
 <key>CFBundleIdentifier</key><string>$bundle_id</string>
 <key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleShortVersionString</key><string>$short_version</string>
 <key>CFBundleVersion</key><string>$build_version</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>

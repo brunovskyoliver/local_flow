@@ -22,20 +22,66 @@ impl Imported {
     }
 }
 
-/// Runs once per data folder, on first launch. `None` when there's nothing to do.
-pub fn first_launch(db: &Db, prefs: &mut Prefs, swift_root: &Path, own_root: &Path, swift_prefs: Option<Map<String, Value>>) -> Option<Result<Imported, String>> {
-    let marker = own_root.join(MARKER);
-    if marker.exists() || !swift_root.join("history.sqlite").is_file() {
+const DECLINED: &str = ".swift-import-declined";
+
+/// What the Swift app left on this Mac, for the question asked before anything is copied.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Offer {
+    pub transcriptions: i64,
+    pub meetings: i64,
+}
+
+impl Offer {
+    pub fn message(&self) -> String {
+        let counts = match (self.transcriptions, self.meetings) {
+            (0, 0) => String::new(),
+            (t, m) => format!("{t} dictations and {m} meetings, "),
+        };
+        format!(
+            "LocalFlow found data from the earlier LocalFlow app on this Mac: {counts}your settings and downloaded models. \
+             Copying leaves that data untouched, and settings that don't apply to this app stay behind. \
+             Server pairings and API keys aren't copied; pair again in Settings."
+        )
+    }
+}
+
+/// `Some` once per data folder, until the user copies or declines: the Swift app has a history and
+/// this folder hasn't answered yet.
+pub fn pending_offer(swift_root: &Path, own_root: &Path) -> Option<Offer> {
+    let source = swift_root.join("history.sqlite");
+    if own_root.join(MARKER).exists() || own_root.join(DECLINED).exists() || !source.is_file() {
         return None;
     }
-    let result = import(db, swift_root, own_root);
-    if result.is_ok() {
-        if let Some(values) = swift_prefs {
-            prefs.merge_missing(keep_prefs(values));
-        }
-        let _ = std::fs::write(marker, b"");
+    let count = |conn: &rusqlite::Connection, table: &str| conn.query_row(&format!("SELECT count(*) FROM \"{table}\""), [], |r| r.get(0)).unwrap_or(0);
+    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+    // ponytail: counts are a courtesy; an unreadable source still gets the question, and the copy reports the error.
+    Some(match rusqlite::Connection::open_with_flags(read_only_uri(&source), flags) {
+        Ok(conn) => Offer { transcriptions: count(&conn, "transcriptions"), meetings: count(&conn, "meetings") },
+        Err(_) => Offer::default(),
+    })
+}
+
+/// The user said yes: history, meeting files, the settings that apply here, and models. Marks the
+/// folder only on success, so a failed copy is offered again at the next launch.
+pub fn accept(db: &Db, prefs: &mut Prefs, swift_root: &Path, own_root: &Path, swift_prefs: Option<Map<String, Value>>) -> Result<Imported, String> {
+    let imported = import(db, swift_root, own_root)?;
+    if let Some(values) = swift_prefs {
+        prefs.merge_missing(keep_prefs(values));
     }
-    Some(result)
+    // On failure the model reads as not installed and the app offers its download.
+    let _ = clone_models(&swift_root.join("Models"), &own_root.join("Models"));
+    let _ = std::fs::write(own_root.join(MARKER), b"");
+    Ok(imported)
+}
+
+/// The user said no. Settings › Data can still copy later.
+pub fn decline(own_root: &Path) {
+    let _ = std::fs::write(own_root.join(DECLINED), b"");
+}
+
+/// Whether this folder took the Swift app's data, so its models keep following at launch.
+pub fn accepted(own_root: &Path) -> bool {
+    own_root.join(MARKER).exists()
 }
 
 /// Adds what this folder lacks: rows by primary key, files by name and size. Safe to run again; a row
@@ -284,30 +330,50 @@ mod tests {
     }
 
     #[test]
-    fn first_launch_runs_once_and_keeps_what_it_should() {
+    fn asks_once_copies_only_on_yes_and_keeps_what_it_should() {
         let (swift, own) = dirs("once");
         drop(swift_db(&swift));
+        let offer = pending_offer(&swift, &own).expect("the Swift app left a history");
+        assert_eq!(offer, Offer { transcriptions: 1, meetings: 0 });
+        assert!(offer.message().contains("1 dictations and 0 meetings"));
         let db = Db::open_or_create(&own.join("history.sqlite")).unwrap();
+        let count = || db.conn.query_row("SELECT count(*) FROM transcriptions", [], |r| r.get::<_, i64>(0)).unwrap();
+        assert_eq!(count(), 0, "nothing moves before the answer");
         let mut prefs = Prefs::memory();
         prefs.set("appearance", "dark");
         let values: Map<String, Value> = serde_json::from_str(r#"{"appearance":"light","speechModel":"parakeet-v3","NSWindow Frame":"x","remote.state":"approved","remote.enabled":true,"remote.serverURL":"https://s","server.only":true}"#).unwrap();
-        assert!(first_launch(&db, &mut prefs, &swift, &own, Some(values)).unwrap().is_ok());
+        std::fs::create_dir_all(swift.join("Models/parakeet-v3")).unwrap();
+        std::fs::write(swift.join("Models/parakeet-v3/w"), b"w").unwrap();
+        assert!(accept(&db, &mut prefs, &swift, &own, Some(values)).is_ok());
+        assert_eq!(count(), 1);
+        assert!(own.join("Models/parakeet-v3/w").exists(), "models come along");
         assert_eq!(prefs.string("appearance").as_deref(), Some("dark"), "this client's own value stays");
         assert_eq!(prefs.string("speechModel").as_deref(), Some("parakeet-v3"));
         assert_eq!(prefs.string("remote.serverURL").as_deref(), Some("https://s"));
         assert!(!prefs.contains("NSWindow Frame") && !prefs.contains("remote.state") && !prefs.contains("remote.enabled"));
-        assert!(first_launch(&db, &mut prefs, &swift, &own, None).is_none(), "once");
+        assert!(pending_offer(&swift, &own).is_none() && accepted(&own), "asked once");
         std::fs::remove_dir_all(swift.parent().unwrap()).unwrap();
     }
 
     #[test]
-    fn a_broken_source_changes_nothing_and_retries_next_launch() {
+    fn no_is_remembered_and_copies_nothing() {
+        let (swift, own) = dirs("declined");
+        drop(swift_db(&swift));
+        decline(&own);
+        assert!(pending_offer(&swift, &own).is_none() && !accepted(&own));
+        assert!(!own.join("history.sqlite").exists());
+        std::fs::remove_dir_all(swift.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_broken_source_changes_nothing_and_asks_again_next_launch() {
         let (swift, own) = dirs("broken");
         std::fs::write(swift.join("history.sqlite"), b"not a database, not a database, not a database").unwrap();
+        assert_eq!(pending_offer(&swift, &own), Some(Offer::default()));
         let db = Db::open_or_create(&own.join("history.sqlite")).unwrap();
         let mut prefs = Prefs::memory();
-        assert!(first_launch(&db, &mut prefs, &swift, &own, None).unwrap().is_err());
-        assert!(!own.join(MARKER).exists());
+        assert!(accept(&db, &mut prefs, &swift, &own, None).is_err());
+        assert!(!own.join(MARKER).exists() && pending_offer(&swift, &own).is_some());
         add_dictation(&db.conn, "still-works");
         std::fs::remove_dir_all(swift.parent().unwrap()).unwrap();
     }

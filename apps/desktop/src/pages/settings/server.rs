@@ -359,10 +359,12 @@ impl SettingsPage {
             Some(Err(e)) => Some(format!("The copy didn't finish: {e}")),
             None => None,
         };
-        let button = prototype_button("settings.swiftImport", "Copy Again").on_click(cx.listener(|_, _, _, cx| {
+        let label = if core.swift_import.is_some() || flow_core::migration::accepted(&core.paths.root) { "Copy Again" } else { "Copy" };
+        let button = prototype_button("settings.swiftImport", label).on_click(cx.listener(|_, _, _, cx| {
             let core = cx.global_mut::<Core>();
+            let swift_prefs = core.services.swift_prefs();
             core.swift_import = match (&core.db, &core.paths.swift_root) {
-                (Some(db), Some(swift)) => Some(flow_core::migration::import(db, swift, &core.paths.root).map(|i| i.summary())),
+                (Some(db), Some(swift)) => Some(flow_core::migration::accept(db, &mut core.prefs, swift, &core.paths.root, swift_prefs).map(|i| i.summary())),
                 _ => None,
             };
             cx.notify();

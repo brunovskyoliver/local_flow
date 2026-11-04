@@ -42,6 +42,7 @@ fn main() {
             // `LSUIElement`: no Dock icon at launch. Swift's window stays closed until asked for (SHELL-006).
             cx.set_activation_policy(ActivationPolicy::Accessory);
             tray::install(cx);
+            shell::first_launch(cx);
         }
     });
 }

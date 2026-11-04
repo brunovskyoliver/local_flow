@@ -38,8 +38,11 @@ The cask quits the app first. macOS may ask for permissions again after an upgra
 because each ad-hoc build has a new signature. Uninstalling keeps Application Support
 (recordings, transcripts, models and settings); there is deliberately no `zap` stanza.
 
-A Mac that ran the Swift app keeps its data: the Rust app reads the Swift app's
-settings, history and models on first launch.
+On a Mac that ran the Swift app, the first launch asks whether to bring its data over:
+dictation history, meetings, downloaded models and the settings that apply to the new
+app. Copying leaves the Swift app's data untouched. Choosing Start Fresh copies nothing;
+Settings › Data › Copy can still do it later. Server pairings and API keys stay in the
+Keychain under the Swift app, so pair again after copying.
 
 ## Make a release
 

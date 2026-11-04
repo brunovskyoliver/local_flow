@@ -20,6 +20,8 @@ pub struct Core {
     pub meeting_notices: Vec<String>,
     /// What the last copy from the Swift app did.
     pub swift_import: Option<Result<String, String>>,
+    /// The Swift app's data, until the user answers whether to copy it (asked at launch).
+    pub swift_offer: Option<flow_core::migration::Offer>,
     /// The Rust recorder's current or last meeting, on platforms with `Services::meeting_audio`.
     pub recorder: Option<flow_core::capture::Handle>,
     /// Enrollment and channels, built on first use.
@@ -44,14 +46,16 @@ impl Core {
             Ok(lock) => (Some(lock), Db::open_or_create(&paths.database()).map_err(|e| e.to_string())),
             Err(e) => (None, Err(e.to_string())),
         };
-        let mut prefs = Prefs::open(paths.preferences());
-        let swift_import = match (&stores, &paths.swift_root) {
-            (Ok(db), Some(swift)) => flow_core::migration::first_launch(db, &mut prefs, swift, &paths.root, services.swift_prefs()).map(|r| r.map(|i| i.summary())),
+        let prefs = Prefs::open(paths.preferences());
+        let swift_offer = match (&stores, &paths.swift_root) {
+            (Ok(_), Some(swift)) => flow_core::migration::pending_offer(swift, &paths.root),
             _ => None,
         };
         if let (Some(_), Some(swift)) = (&instance_lock, &paths.swift_root) {
-            // On failure the model reads as not installed and the app offers its download.
-            let _ = flow_core::migration::clone_models(&swift.join("Models"), &paths.models());
+            // Models the Swift app downloads later follow, once the user chose to copy.
+            if flow_core::migration::accepted(&paths.root) {
+                let _ = flow_core::migration::clone_models(&swift.join("Models"), &paths.models());
+            }
         }
         let (db, db_error) = match stores {
             Ok(db) => (Some(db), None),
@@ -63,7 +67,19 @@ impl Core {
             // An open cut short by a quit is undone, and an update's helpers reach a managed server.
             std::thread::spawn(move || host.launch());
         }
-        Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![], recorder: None, remote: None, swift_import, analysis: None, analysis_restarts: vec![], server }
+        Core { paths, instance_lock, prefs, db, db_error, services, scenario, reconciled: false, meeting_notices: vec![], recorder: None, remote: None, swift_import: None, swift_offer, analysis: None, analysis_restarts: vec![], server }
+    }
+
+    /// The user's answer to the launch question about the Swift app's data.
+    pub fn answer_swift_offer(&mut self, copy: bool) {
+        let (Some(_), Some(swift)) = (self.swift_offer.take(), self.paths.swift_root.clone()) else { return };
+        if !copy {
+            flow_core::migration::decline(&self.paths.root);
+            return;
+        }
+        let Some(db) = &self.db else { return };
+        let swift_prefs = self.services.swift_prefs();
+        self.swift_import = Some(flow_core::migration::accept(db, &mut self.prefs, &swift, &self.paths.root, swift_prefs).map(|i| i.summary()));
     }
 
     /// The summary queue, made on first use: its paths and channel come from here.
@@ -130,6 +146,7 @@ impl Core {
             reconciled: true,
             meeting_notices: vec![],
             swift_import: None,
+            swift_offer: None,
             recorder: None,
             remote: None,
             analysis: None,

@@ -857,6 +857,40 @@ pub fn present_alert(alert: Alert, window: &mut Window, cx: &mut App) {
     .detach();
 }
 
+/// At launch: the window opens while setup is unfinished, and when the Swift app left data here
+/// it asks whether to copy it before anything moves.
+pub fn first_launch(cx: &mut App) {
+    let core = cx.global::<Core>();
+    let offer = core.swift_offer.as_ref().map(|o| o.message());
+    if offer.is_none() && flow_core::onboarding::is_complete(&core.prefs) {
+        return;
+    }
+    open(None, cx);
+    let (Some(message), Some(window)) = (offer, cx.global::<Session>().window) else { return };
+    // `open` creates the window in this call; the prompt goes on it once it exists.
+    cx.defer(move |cx| {
+        let _ = window.update(cx, |_, w, cx| {
+            let buttons = [PromptButton::Ok("Copy Data".into()), PromptButton::Cancel("Start Fresh".into())];
+            let answer = w.prompt(PromptLevel::Info, "Bring over your LocalFlow data?", Some(&message), &buttons, cx);
+            cx.spawn(async move |cx| {
+                if let Ok(i) = answer.await {
+                    let _ = cx.update(|cx| swift_offer_answered(i == 0, cx));
+                }
+            })
+            .detach();
+        });
+    });
+}
+
+fn swift_offer_answered(copy: bool, cx: &mut App) {
+    cx.global_mut::<Core>().answer_swift_offer(copy);
+    // Setup read the preferences when the window opened; it starts again from the copied choices.
+    if let Some(shell) = copy.then(|| cx.global::<Session>().window.and_then(|w| w.downcast::<Shell>())).flatten() {
+        let _ = shell.update(cx, |shell, w, cx| shell.onboarding = cx.new(|cx| OnboardingPage::new(w, cx)));
+    }
+    cx.refresh_windows();
+}
+
 /// The same from code with no window at hand, on the main window.
 pub fn show_alert(alert: Alert, cx: &mut App) {
     if let Some(w) = cx.global::<Session>().window {
@@ -1389,6 +1423,42 @@ mod tests {
         frame(cx, window);
         cx.update_window(window.into(), |_, w, cx| w.click("recovery.retrySave", cx)).unwrap();
         assert_eq!(get(cx, |s| s.dictation.as_ref().unwrap().status.clone()), "Text saved for review.");
+    }
+
+    /// Beside the Swift app's data the first launch asks before copying, and both answers stick.
+    #[flow_ui::gpui::test]
+    async fn the_first_launch_asks_before_copying_the_swift_apps_data(cx: &mut TestAppContext) {
+        for (answer, copied) in [("Start Fresh", false), ("Copy Data", true)] {
+            boot(cx, Mode::Light);
+            let base = std::env::temp_dir().join(format!("flow-swift-offer-{answer}-{}", std::process::id()));
+            let (swift, own) = (base.join("swift"), base.join("own"));
+            let _ = std::fs::remove_dir_all(&base);
+            std::fs::create_dir_all(&own).unwrap();
+            std::fs::create_dir_all(&swift).unwrap();
+            drop(flow_core::db::Db::open_or_create(&swift.join("history.sqlite")).unwrap());
+            cx.update(|cx| {
+                ensure_session(cx);
+                let core = cx.global_mut::<Core>();
+                core.paths = flow_core::paths::Paths::new(&own);
+                core.paths.swift_root = Some(swift.clone());
+                core.swift_offer = flow_core::migration::pending_offer(&swift, &own);
+                assert!(core.swift_offer.is_some());
+                first_launch(cx);
+            });
+            cx.run_until_parked();
+            let (title, message) = cx.pending_prompt().expect("asks first");
+            assert_eq!(title, "Bring over your LocalFlow data?");
+            assert!(message.contains("Copying leaves that data untouched"));
+            cx.simulate_prompt_answer(answer);
+            cx.run_until_parked();
+            cx.update(|cx| {
+                let core = cx.global::<Core>();
+                assert!(core.swift_offer.is_none());
+                assert_eq!(flow_core::migration::accepted(&own), copied, "{answer}");
+                assert!(flow_core::migration::pending_offer(&swift, &own).is_none(), "{answer}: asked once");
+            });
+            let _ = std::fs::remove_dir_all(&base);
+        }
     }
 
     /// A server Mac dictates with the server's models when its own folder has none.
