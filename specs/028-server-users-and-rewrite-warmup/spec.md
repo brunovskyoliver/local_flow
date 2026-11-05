@@ -92,23 +92,6 @@ The owner's Mac is connected to a server. They want their iPhone on the same acc
 
 ---
 
-### User Story 5 - The first dictation after a server restart still lands at once (Priority: P1, addendum 2026-11-04)
-
-The owner dictates on a MacBook through their server. The server has just restarted, or is out of reach. They don't wait more than about 3 seconds for it: the dictation is recognized on the MacBook instead, inserted without a rewrite, and the next dictations skip the server until it answers again. A rewrite model that is still loading, here or on the server, never holds the text back for more than about 3 seconds either; the text goes in plain and later dictations are rewritten once the model is up.
-
-**Why this priority**: Observed on the owner's setup: after a server restart the first dictation got `worker_unavailable` (the speech worker was ready 2 s later) and fell back at once, labelled "Local after server failure (recognizer unavailable)", a label that also overlapped the transcript in the History list.
-
-**Independent Test**: Restart flowd on the server and dictate on the client at once; time key release to inserted text and read the History row. Repeat with the server unreachable, and with the rewrite model unloaded.
-
-**Acceptance Scenarios**:
-
-1. **Given** the server answers `worker_unavailable` or `busy` and is ready within 3 s of the key press, **When** the owner dictates, **Then** the server recognizes it.
-2. **Given** the server is unreachable or still not ready 3 s after the key press, **When** the owner dictates, **Then** the dictation is recognized on this Mac from sample 0 and inserted, marked "Local · server unreachable" or "Local · server starting".
-3. **Given** a dictation just fell back, **When** the owner dictates again within the backoff, **Then** no connection is attempted and it is recognized on this Mac at once, until a background identity check or a later successful dictation shows the server is back.
-4. **Given** the rewrite model isn't working 3 s after the transcript is ready, **When** the rewrite would run, **Then** the plain text is inserted, History shows "Rewrite skipped: model starting" (not a failure), and the model keeps loading.
-
----
-
 ### Edge Cases
 
 - The model finishes loading after the rewrite timeout: the rewrite fails as today and the text is inserted unrewritten. Nothing is lost.
@@ -162,14 +145,6 @@ The owner dictates on a MacBook through their server. The server has just restar
 - **FR-023**: A device enrolled under one user MUST NOT join another user through an invite.
 - **FR-024**: All device-to-device pairing MUST go through the server. No client opens a listener.
 - **FR-025**: Invite creation MUST be rate-limited per device and per user and recorded in the audit log.
-
-**Server response budget (User Story 5)**
-
-- **FR-026**: A live dictation MUST give the server at most 3 s from the key press (channel, hello and `dictation_accepted`) while audio keeps spooling. Inside that budget a `worker_unavailable`, `busy` or failed connect MUST be retried; once it is spent the dictation MUST be recognized on this Mac. This replaces feature 014 FR-017's "busy falls back immediately" for live dictations only; the retrier keeps its first-answer rule. The 1.5 s stall threshold still applies once the server has accepted.
-- **FR-027**: After a fallback for unreachable, no answer, `worker_unavailable` or `busy`, the client MUST skip that server for 30 s, doubling to at most 5 min on each further failure, while a background `GET /v1/remote/identity` checks every 10 s; the first identity answer with the pinned key, or a successful server dictation, MUST end the skip. Server only ignores the skip. No listener and no new protocol message.
-- **FR-028**: A live rewrite MUST wait at most 3 s after the transcript for the model to be working: this Mac's model reporting ready, or the server sending a `progress`, `delta` or result event (its `accepted` doesn't count; the channel lease counts toward the budget). Past it the plain normalized text MUST be inserted with no failure notice, the attempt recorded as skipped with its reason, and the model left loading. A rewrite routed to a server that is being skipped (FR-027) MUST be skipped as "server unavailable" without connecting. "Starting AI…" (FR-003) shows only inside the budget. Retries from History and the pill keep the full rewrite timeout.
-- **FR-029**: Falling back MUST load this Mac's speech model only then, and its idle release MUST unload it afterwards. A device served by its server keeps no local speech worker or local rewrite model in memory otherwise.
-- **FR-030**: The History row's path label MUST fit its column, wrapping inside it and never reaching the transcript. Labels: "Server", "Local", and "Local · <reason>" with "server unreachable", "no answer", "server busy", "server starting" for the availability reasons.
 
 ### Key Entities
 

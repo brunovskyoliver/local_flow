@@ -730,8 +730,6 @@ pub struct Attempt {
     pub backend_model: Option<String>,
     pub prompt_version: Option<i64>,
     pub shield_version: Option<i64>,
-    /// Holds `skip_rewrite`'s mark on a cancelled attempt; a real answer's backend otherwise.
-    pub backend_kind: Option<String>,
 }
 
 pub fn mode_title(mode: &str) -> String {
@@ -740,12 +738,7 @@ pub fn mode_title(mode: &str) -> String {
 
 impl Attempt {
     pub fn title(&self) -> String {
-        let state = if self.skipped().is_some() { "skipped" } else { self.state.as_str() };
-        format!("Attempt {} · {} · {}", self.ordinal, mode_title(&self.mode), state)
-    }
-    /// Why a live dictation didn't wait for this rewrite, when it didn't.
-    pub fn skipped(&self) -> Option<&'static str> {
-        skipped_reason(&self.state, self.backend_kind.as_deref())
+        format!("Attempt {} · {} · {}", self.ordinal, mode_title(&self.mode), self.state)
     }
     pub fn deliverable(&self) -> Option<&str> {
         if self.state == "succeeded" { self.output_text.as_deref() } else { None }
@@ -757,9 +750,6 @@ impl Attempt {
         }
         if let Some(c) = &self.failure_category {
             parts.push(c.clone());
-        }
-        if let Some(reason) = self.skipped() {
-            parts.push(format!("skipped: {reason}"));
         }
         if self.context_hash.is_some() {
             parts.push("context sent".into());
@@ -778,7 +768,7 @@ impl Attempt {
 
 pub fn attempts(db: &Db, id: &str) -> rusqlite::Result<Vec<Attempt>> {
     let mut s = db.conn.prepare_cached(
-        "SELECT id,ordinal,mode,state,input_text,output_text,failure_category,stale,duration_ms,first_byte_ms,delivered,context_hash,backend_model,prompt_version,shield_version,backend_kind FROM rewrite_attempts WHERE transcription_id=? ORDER BY ordinal",
+        "SELECT id,ordinal,mode,state,input_text,output_text,failure_category,stale,duration_ms,first_byte_ms,delivered,context_hash,backend_model,prompt_version,shield_version FROM rewrite_attempts WHERE transcription_id=? ORDER BY ordinal",
     )?;
     s.query_map([id], |r| {
         Ok(Attempt {
@@ -797,7 +787,6 @@ pub fn attempts(db: &Db, id: &str) -> rusqlite::Result<Vec<Attempt>> {
             backend_model: r.get(12)?,
             prompt_version: r.get(13)?,
             shield_version: r.get(14)?,
-            backend_kind: r.get(15)?,
         })
     })?
     .collect()
@@ -1266,19 +1255,11 @@ pub fn channel_rewrite_category(e: &crate::remote::channel::ChannelError) -> &'s
 /// `RemoteRewriteTransport.rewrite`: the same request JSON in a `rewrite` op on the role's channel,
 /// which closes afterwards. Blocking. Setting `cancel` closes it and returns `"cancelled"`.
 // ponytail: `timeout` starts after the channel is open; a connect that hangs adds up to 10 s (WebSockets::connect_timeout).
-/// With `ready`, a live dictation's budget: no sign of the model working (a `progress`, `delta` or
-/// result event; `accepted` doesn't count) by then is `model_starting`, and the text goes in plain.
-/// The lease counts toward it, so a channel that is slow to open doesn't hold the dictation either.
-pub fn send_rewrite_over_channel(pool: &std::sync::Arc<crate::remote::pool::Pool>, request: &RewriteRequest, timeout: std::time::Duration, ready: Option<std::time::Duration>, cancel: &std::sync::atomic::AtomicBool) -> Result<RewriteAnswer, &'static str> {
+pub fn send_rewrite_over_channel(pool: &crate::remote::pool::Pool, request: &RewriteRequest, timeout: std::time::Duration, cancel: &std::sync::atomic::AtomicBool) -> Result<RewriteAnswer, &'static str> {
     use crate::remote::channel::ServerMessage;
     use std::sync::atomic::Ordering;
     let role = crate::remote::pool::Role::Interactive;
-    let ready_by = ready.map(|budget| std::time::Instant::now() + budget);
-    let (mut channel, op) = match ready_by {
-        Some(by) => lease_by(pool, role, by)?,
-        None => pool.lease(role).map_err(|e| channel_rewrite_category(&e))?,
-    };
-    let mut working = false;
+    let (mut channel, op) = pool.lease(role).map_err(|e| channel_rewrite_category(&e))?;
     let body = rewrite_body(request);
     let request_bytes = body.len() as i64;
     let started = std::time::Instant::now();
@@ -1293,9 +1274,6 @@ pub fn send_rewrite_over_channel(pool: &std::sync::Arc<crate::remote::pool::Pool
             if started.elapsed() >= timeout {
                 return Err("timeout");
             }
-            if !working && ready_by.is_some_and(|by| std::time::Instant::now() >= by) {
-                return Err("model_starting");
-            }
             let Some(message) = channel.poll().map_err(|e| channel_rewrite_category(&e))? else {
                 std::thread::sleep(std::time::Duration::from_millis(10));
                 continue;
@@ -1305,7 +1283,6 @@ pub fn send_rewrite_over_channel(pool: &std::sync::Arc<crate::remote::pool::Pool
                 ServerMessage::Error { code } => return Err(channel_rewrite_category(&crate::remote::channel::ChannelError::Server(code))),
                 ServerMessage::Other(m) if m["op"] == op && m["type"] == "progress" => {}
                 ServerMessage::Other(m) if m["op"] == op && m["type"] == "rewrite_event" => {
-                    working |= m["event"]["event"] != "accepted";
                     let line = serde_json::to_vec(&m["event"]).map_err(|_| "malformed_response")?;
                     total += line.len() + 1;
                     if total > cap + 1 {
@@ -1329,37 +1306,6 @@ pub fn send_rewrite_over_channel(pool: &std::sync::Arc<crate::remote::pool::Pool
     })();
     pool.release(role, channel, None);
     answer
-}
-
-/// `pool.lease` that gives up at `by` as `model_starting`. A lease that comes later goes back to
-/// the pool, kept for the next op: the channel is fine, only late.
-fn lease_by(pool: &std::sync::Arc<crate::remote::pool::Pool>, role: crate::remote::pool::Role, by: std::time::Instant) -> Result<(crate::remote::channel::Channel, i64), &'static str> {
-    use std::sync::{Arc, Mutex, mpsc};
-    let (sender, leased) = mpsc::channel();
-    let gave_up = Arc::new(Mutex::new(false));
-    let (late, owner) = (gave_up.clone(), pool.clone());
-    std::thread::Builder::new()
-        .name("rewrite-lease".into())
-        .spawn(move || {
-            let result = owner.lease(role);
-            // Sent under the lock, so a give-up either finds it queued or this sees the give-up.
-            let gave_up = late.lock().unwrap_or_else(|e| e.into_inner());
-            match result {
-                Ok((channel, op)) if *gave_up => owner.release(role, channel, Some(op)),
-                result => drop(sender.send(result)),
-            }
-        })
-        .map_err(|_| "transport_error")?;
-    match leased.recv_timeout(by.saturating_duration_since(std::time::Instant::now())) {
-        Ok(result) => result.map_err(|e| channel_rewrite_category(&e)),
-        Err(_) => {
-            *gave_up.lock().unwrap_or_else(|e| e.into_inner()) = true;
-            if let Ok(Ok((channel, op))) = leased.try_recv() {
-                pool.release(role, channel, Some(op));
-            }
-            Err("model_starting")
-        }
-    }
 }
 
 /// `RewriteClient.rewrite`: v1, or v2 when the request carries a context plan. Blocking; run it off
@@ -1489,40 +1435,12 @@ pub fn record_rewrite_result(db: &Db, id: &str, answer: &RewriteAnswer, duration
 
 /// `timed_out` for a timeout, `failed` with its category, or `cancelled` when `category` is `None`.
 pub fn terminate_rewrite(db: &Db, id: &str, category: Option<&str>, duration_ms: Option<i64>) -> Result<(), StoreError> {
+    let (transcription, input) = pending_attempt(db, id)?;
     let state = match category {
         None => "cancelled",
         Some("timeout") => "timed_out",
         Some(_) => "failed",
     };
-    end_rewrite(db, id, state, category, duration_ms)
-}
-
-const SKIPPED_MODEL: &str = "skipped: model starting";
-const SKIPPED_SERVER: &str = "skipped: server unavailable";
-
-/// A rewrite a live dictation didn't wait for (`model_starting` or `server_unavailable`): the
-/// plain text went in, and it isn't a failure. The shared schema has no `skipped` state and
-/// allows a category only on `failed` and `timed_out`, so it's `cancelled` with the reason in
-/// `backend_kind`, free text no answer came to fill. `skipped_reason` reads it back.
-// ponytail: a `skipped` state needs a schema migration, which the Swift migrator owns until cutover.
-pub fn skip_rewrite(db: &Db, id: &str, reason: &str, duration_ms: Option<i64>) -> Result<(), StoreError> {
-    end_rewrite(db, id, "cancelled", None, duration_ms)?;
-    let mark = if reason == "server_unavailable" { SKIPPED_SERVER } else { SKIPPED_MODEL };
-    db.conn.execute("UPDATE rewrite_attempts SET backend_kind=? WHERE id=?", params![mark, id])?;
-    Ok(())
-}
-
-/// "model starting" or "server unavailable" for an attempt `skip_rewrite` ended.
-pub fn skipped_reason(state: &str, backend_kind: Option<&str>) -> Option<&'static str> {
-    match (state, backend_kind) {
-        ("cancelled", Some(SKIPPED_MODEL)) => Some("model starting"),
-        ("cancelled", Some(SKIPPED_SERVER)) => Some("server unavailable"),
-        _ => None,
-    }
-}
-
-fn end_rewrite(db: &Db, id: &str, state: &str, category: Option<&str>, duration_ms: Option<i64>) -> Result<(), StoreError> {
-    let (transcription, input) = pending_attempt(db, id)?;
     let tx = db.conn.unchecked_transaction()?;
     tx.execute("UPDATE rewrite_attempts SET state=?,failure_category=?,duration_ms=? WHERE id=?", params![state, category, duration_ms, id])?;
     tx.execute("UPDATE history_usage SET payload_bytes=max(0,payload_bytes-?) WHERE id=1", [reserved_for(input.len())])?;
@@ -2053,9 +1971,6 @@ impl Model {
         }
     }
     pub fn rewrite_state_line(&self) -> String {
-        if let Some(reason) = self.attempts.last().and_then(Attempt::skipped) {
-            return format!("Rewrite skipped: {reason}");
-        }
         let state = self.attempts.last().map(|a| a.state.as_str()).or(self.envelope.as_ref().map(|e| e.entry.rewrite_state.as_str())).unwrap_or("not_requested");
         format!("Rewrite: {}", spaced(state))
     }
@@ -3239,7 +3154,7 @@ mod tests {
     }
 
     fn attempt(ordinal: i64, state: &str, output: Option<&str>, stale: bool) -> Attempt {
-        Attempt { id: format!("a{ordinal}"), ordinal, mode: "clean".into(), state: state.into(), input_text: "in".into(), output_text: output.map(str::to_string), failure_category: None, stale, duration_ms: None, first_byte_ms: None, delivered: false, context_hash: None, backend_model: None, prompt_version: None, shield_version: None, backend_kind: None }
+        Attempt { id: format!("a{ordinal}"), ordinal, mode: "clean".into(), state: state.into(), input_text: "in".into(), output_text: output.map(str::to_string), failure_category: None, stale, duration_ms: None, first_byte_ms: None, delivered: false, context_hash: None, backend_model: None, prompt_version: None, shield_version: None }
     }
 
     fn context(outcome: &str, note: Option<&str>) -> Context {

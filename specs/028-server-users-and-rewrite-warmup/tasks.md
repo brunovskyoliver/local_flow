@@ -183,22 +183,6 @@ description: "Tasks for Feature 028: server mode in the Rust app, users and devi
 
 ---
 
-## Phase 8: Addendum 2026-11-04 - server response budget and rewrite budget (User Story 5)
-
-- [X] T068 [US5] Record today's behaviour before changing it
-  - Note: the post-release stall rule (`remote.fallbackThresholdMs`, 1.5 s) already capped an unreachable server at release + 1.5 s (connect itself may hang 10 s, unseen). `worker_unavailable` and `busy` at `dictation_start` were final at once. A cold local model waited up to `rewriteTimeoutSeconds` (20 s) in `wait_until_ready` and then up to 20 s more for the request; a server-routed rewrite after a fallback still leased a channel (up to 10 s to connect) and waited up to 20 s. Worst case past release: ~1.5 s for recognition, then up to ~40 s for the rewrite.
-- [X] T069 [US5] Accept budget in crates/flow-core/src/dictation/remote.rs: `ACCEPT_BUDGET` 3 s from the press, `RETRY_PAUSE` 400 ms, `Stream::start(.., accept)`, retries of `worker_unavailable`, `busy`, `unreachable` and `timeout` before `dictation_accepted`, and the fallback reason is the last try's (`timeout` if none answered). The stall threshold counts only after acceptance when a budget is set. The retrier passes `None` and is unchanged
-- [X] T070 [US5] Cooling in crates/flow-core/src/dictation/cooling.rs (`COOLING_FIRST` 30 s, `COOLING_MAX` 5 min, `PROBE_INTERVAL` 10 s, clock counts sleep) with `Enrollment::probe` (identity at the origin, pinned key); `Served::cooling` skips a cooling server when a local model is allowed; one `Cooling` per `Remote` in apps/desktop/src/remote.rs, passed through `Route`
-- [X] T071 [US5] Rewrite budget in crates/flow-core/src/dictation/rewrite.rs: `REWRITE_READY_BUDGET` 3 s, `Plan.ready`, `Live` owns the local-model wait (`ModelWait`, `waited`) and the cooling check, `Done::Skipped` / `Rewritten::Skipped` (no notice); `history::send_rewrite_over_channel(.., ready, ..)` with a lease that gives up at the budget and parks a late channel; `history::skip_rewrite` and `Attempt::skipped`. `KeyedRewrite` in apps/desktop/src/dictation.rs keeps the key and timing log (`outcome=skipped`)
-  - Note: the shared schema allows `failure_category` only on `failed`/`timed_out` and has no `skipped` state, and the Swift migrator owns it, so a skip is `state='cancelled'` with `backend_kind` = "skipped: model starting" or "skipped: server unavailable". Swift shows it as cancelled. A real `skipped` state is a migration for cutover.
-  - Note: the server answers a loading model with `backend_unavailable` within ~2 s (its probe timeout); that still reads as the existing failure notice, since the client can't tell loading from missing without a protocol change.
-- [X] T072 [US5] Shorter path labels in crates/flow-core/src/history.rs (`failure_label`, `path_label`) and the row column in apps/desktop/src/pages/history.rs: a column-width box for the label, the column clipped; inventory rows HIST-044 to HIST-046 updated, `scripts/check-parity-inventory.py` passes
-  - Note: headless, the old layout also stretched the label to the column, so the new test guards the rule but did not reproduce the on-screen overlap; the owner checks it on screen.
-- [X] T073 [US5] Tests: crates/flow-core/src/dictation/cooling.rs (backoff, reasons, probe), and in session.rs `remote_dictation` with the scripted server: unreachable goes local within the budget, `worker_unavailable` twice then ready stays on the server, still unavailable at the budget goes local, a cooling server isn't connected and a probe success clears it, a cold local model inserts plain text within the budget and History reads "Rewrite skipped: model starting", a warm model still sends, a silent server rewrite is skipped, a cooling server's rewrite isn't connected, a slow lease gives up and parks; apps/desktop/src/pages/history/tests.rs `a_long_path_label_wraps_inside_its_column`
-- [ ] T074 [US5] Owner check on hardware: restart flowd on the Mac mini and dictate on the MacBook at once; dictate with Tailscale off; dictate with MTPLX unloaded. Not run.
-
----
-
 ## Dependencies and execution order
 
 ### Phases

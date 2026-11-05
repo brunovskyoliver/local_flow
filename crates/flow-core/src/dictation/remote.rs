@@ -2,7 +2,6 @@
 //! `specs/014-remote-dictation-server/contracts/remote-channel.md`. A detached thread owns the
 //! blocking channel, so a stalled socket can't hold up whoever waits: `Stream::poll` watches the
 //! threshold from outside, and an abandoned thread ends at its next socket timeout.
-use super::cooling::Cooling;
 use super::normalize::Vocabulary;
 use super::session::{Feed, RecognizeFailure, Recognizer, Streamed, WINDOW};
 use super::spool::{MAX_SAMPLES, Reader};
@@ -21,17 +20,6 @@ const PUMP: Duration = Duration::from_millis(200);
 const TURN: Duration = Duration::from_millis(5);
 /// `RemoteDictationRouter.retryThreshold`: nobody waits on a retry, so it gets `RemoteChannel`'s stall timeout.
 pub const RETRY_THRESHOLD: Duration = Duration::from_secs(15);
-/// From the key press, how long a live dictation gives the server to accept it: channel, hello and
-/// `dictation_accepted`. Audio keeps spooling meanwhile; past it, the dictation is recognized here.
-pub const ACCEPT_BUDGET: Duration = Duration::from_secs(3);
-/// Between tries inside the accept budget, after `worker_unavailable`, `busy` or a failed connect.
-pub const RETRY_PAUSE: Duration = Duration::from_millis(400);
-
-/// What may be tried again before the server has accepted: it says it is starting or full, or
-/// the connection didn't come up. Anything else is final.
-fn retried_before_accept(reason: &str) -> bool {
-    matches!(reason, "worker_unavailable" | "busy" | "unreachable" | "timeout")
-}
 
 /// What the server finished with. The channel is free for the next op.
 pub struct Completed {
@@ -74,10 +62,6 @@ struct Link {
     abandoned: AtomicBool,
     cancelled: AtomicBool,
     last_frame: Mutex<Option<Instant>>,
-    /// `dictation_accepted` came: the accept budget no longer applies.
-    accepted: AtomicBool,
-    /// Why the last try inside the accept budget failed, for the fallback's reason.
-    last_reason: Mutex<Option<&'static str>>,
 }
 
 impl Link {
@@ -104,21 +88,16 @@ pub struct Stream {
     link: Arc<Link>,
     results: Receiver<Result<Completed, &'static str>>,
     threshold: Duration,
-    started: Instant,
-    accept: Option<Duration>,
 }
 
 impl Stream {
-    /// Opens the channel and starts streaming what `recorded` says has been recorded. With
-    /// `accept`, the server has that long from now to accept, and a `worker_unavailable`, `busy`
-    /// or failed connect inside it is tried again; without, the first such answer is final.
-    pub fn start(enrollment: Arc<Enrollment>, reader: Reader, boost: Option<Boost>, threshold: Duration, accept: Option<Duration>) -> Stream {
+    /// Opens the channel and starts streaming what `recorded` says has been recorded.
+    pub fn start(enrollment: Arc<Enrollment>, reader: Reader, boost: Option<Boost>, threshold: Duration) -> Stream {
         let link = Arc::new(Link::default());
         let (sender, results) = channel();
         let shared = link.clone();
-        let started = Instant::now();
         let spawned = std::thread::Builder::new().name("remote-dictation".into()).spawn(move || {
-            let outcome = drive(&shared, &enrollment, reader, boost, accept.map(|budget| started + budget));
+            let outcome = drive(&shared, &enrollment, reader, boost);
             if let Some(outcome) = outcome {
                 let _ = sender.send(outcome);
             }
@@ -126,7 +105,7 @@ impl Stream {
         if spawned.is_err() {
             link.abandoned.store(true, SeqCst);
         }
-        Stream { link, results, threshold, started, accept }
+        Stream { link, results, threshold }
     }
     pub fn recorded(&self, samples: usize) {
         self.link.recorded.store(samples, SeqCst);
@@ -145,24 +124,12 @@ impl Stream {
     pub fn abandon(&self) {
         self.link.abandoned.store(true, SeqCst);
     }
-    /// The result, once there is one. Not accepted within the accept budget, the last try's reason
-    /// (`timeout` when none answered). Past the threshold since the last frame after release,
-    /// `timeout`; with an accept budget that counts only once the server has accepted.
+    /// The result, once there is one. Past the threshold since the last frame after release, `timeout`.
     pub fn poll(&self, wait: Duration) -> Option<Result<Completed, &'static str>> {
         match self.results.recv_timeout(wait) {
             Ok(outcome) => return Some(outcome),
             Err(RecvTimeoutError::Disconnected) => return Some(Err("unreachable")),
             Err(RecvTimeoutError::Timeout) => {}
-        }
-        let accepted = self.link.accepted.load(SeqCst);
-        if let Some(budget) = self.accept
-            && !accepted
-        {
-            if self.started.elapsed() < budget {
-                return None;
-            }
-            self.abandon();
-            return Some(Err(self.link.last_reason.lock().unwrap().unwrap_or("timeout")));
         }
         let last = *self.link.last_frame.lock().unwrap();
         if self.link.released() && last.is_some_and(|at| at.elapsed() >= self.threshold) {
@@ -174,31 +141,10 @@ impl Stream {
 }
 
 /// The attempts. `None` when the stream was abandoned or cancelled.
-fn drive(link: &Link, enrollment: &Enrollment, mut reader: Reader, boost: Option<Boost>, accept_by: Option<Instant>) -> Option<Result<Completed, &'static str>> {
+fn drive(link: &Link, enrollment: &Enrollment, mut reader: Reader, boost: Option<Boost>) -> Option<Result<Completed, &'static str>> {
     let (mut restarted, mut token_retried, mut refresh_first) = (false, false, false);
     loop {
-        let outcome = attempt(link, enrollment, &mut reader, boost.as_ref(), std::mem::take(&mut refresh_first));
-        // Before the server has accepted, inside the budget: it's starting or full, or the
-        // connection didn't come up. Wait a moment and try again from sample 0.
-        if let (Attempt::Final(reason) | Attempt::Channel(reason), Some(by)) = (&outcome, accept_by)
-            && retried_before_accept(reason)
-            && !link.accepted.load(SeqCst)
-            && enrollment.settings().origin.is_some()
-        {
-            *link.last_reason.lock().unwrap() = Some(*reason);
-            let wake = (Instant::now() + RETRY_PAUSE).min(by);
-            while Instant::now() < wake {
-                if link.abandoned.load(SeqCst) || link.cancelled.load(SeqCst) {
-                    return None;
-                }
-                std::thread::sleep(TURN);
-            }
-            if Instant::now() < by {
-                continue;
-            }
-            return Some(Err(reason));
-        }
-        match outcome {
+        match attempt(link, enrollment, &mut reader, boost.as_ref(), std::mem::take(&mut refresh_first)) {
             Attempt::Done(completed) => return Some(Ok(completed)),
             Attempt::Abandoned => return None,
             Attempt::Final(reason) => return Some(Err(reason)),
@@ -350,7 +296,6 @@ impl Turn {
                     Ok(model) => self.model = Some(model),
                     Err(_) => return bad,
                 }
-                link.accepted.store(true, SeqCst);
                 None
             }
             "window_result" => {
@@ -389,26 +334,12 @@ pub struct Served<'a> {
     switched_off: bool,
     /// The server at the press: a waiting recording goes back only to this one.
     origin: Option<String>,
-    accept: Duration,
-    cooling: Option<Arc<Cooling>>,
 }
 
 impl<'a> Served<'a> {
     pub fn new(enrollment: Arc<Enrollment>, pool: Arc<Pool>, threshold: Duration, local: &'a mut dyn Recognizer, local_allowed: bool) -> Served<'a> {
         let origin = enrollment.settings().origin;
-        Served { enrollment, pool, threshold, local, local_allowed, failure: None, model: None, using_local: false, switched_off: false, origin, accept: ACCEPT_BUDGET, cooling: None }
-    }
-
-    /// The accept budget, `ACCEPT_BUDGET` unless a test shortens it.
-    pub fn accept_within(mut self, budget: Duration) -> Self {
-        self.accept = budget;
-        self
-    }
-
-    /// Skips a cooling server when this Mac can recognize instead, and reports how each went.
-    pub fn cooling(mut self, cooling: Arc<Cooling>) -> Self {
-        self.cooling = Some(cooling);
-        self
+        Served { enrollment, pool, threshold, local, local_allowed, failure: None, model: None, using_local: false, switched_off: false, origin }
     }
 
     fn turned_off(&self) -> bool {
@@ -430,17 +361,9 @@ pub fn boost_of(vocabulary: &Vocabulary) -> Option<Boost> {
 
 impl Recognizer for Served<'_> {
     fn stream(&mut self, vocabulary: &Vocabulary, feed: &Feed) -> Streamed {
-        // A server that just failed isn't asked again until it cools down: straight to this Mac,
-        // no network. Server only has nowhere else to go, so it still asks.
-        if self.local_allowed
-            && let (Some(cooling), Some(origin)) = (&self.cooling, &self.origin)
-            && let Some(reason) = cooling.skip(origin)
-        {
-            return self.failed(reason, feed);
-        }
         let Ok(reader) = feed.reader() else { return self.failed("protocol_error", feed) };
         feed.set_streaming(true);
-        let stream = Stream::start(self.enrollment.clone(), reader, boost_of(vocabulary), self.threshold, Some(self.accept));
+        let stream = Stream::start(self.enrollment.clone(), reader, boost_of(vocabulary), self.threshold);
         loop {
             stream.recorded(feed.recorded());
             if feed.stopped() {
@@ -468,9 +391,6 @@ impl Recognizer for Served<'_> {
             match stream.poll(feed.poll) {
                 None => {}
                 Some(Ok(completed)) => {
-                    if let Some(cooling) = &self.cooling {
-                        cooling.succeeded();
-                    }
                     self.model = Some(completed.model);
                     self.pool.park(Role::Interactive, completed.channel, completed.next_op);
                     feed.set_streaming(false);
@@ -482,12 +402,7 @@ impl Recognizer for Served<'_> {
                     feed.set_streaming(false);
                     return Streamed::Here;
                 }
-                Some(Err(reason)) => {
-                    if let (Some(cooling), Some(origin)) = (&self.cooling, &self.origin) {
-                        cooling.failed(origin, reason);
-                    }
-                    return self.failed(reason, feed);
-                }
+                Some(Err(reason)) => return self.failed(reason, feed),
             }
         }
     }
@@ -619,7 +534,7 @@ pub(super) mod tests {
         let accepted = Reply::Json(json!({"schema_version": 1, "type": "dictation_accepted", "op": 1, "window_samples": WINDOW, "model": {"engine": "e", "model_id": "m", "model_revision": "1", "manifest_hash": "h", "sdk": "s", "worker_build": "b"}}));
         let (e, counters) = enrolled([OPENS(), vec![accepted, Reply::Silent]].concat());
         let (path, reader) = spool("live", 40_000);
-        let stream = Stream::start(e.clone(), reader, None, Duration::from_secs(30), None);
+        let stream = Stream::start(e.clone(), reader, None, Duration::from_secs(30));
         stream.recorded(20_000);
         let began = Instant::now();
         while sent(&counters) < 20_000 {

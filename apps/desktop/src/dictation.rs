@@ -6,10 +6,9 @@ use crate::shell::{self, DictState, Session, update_session};
 use flow_core::db::Db;
 use flow_core::dictation::lifecycle::{Launcher, Lifecycle};
 use flow_core::dictation::learner::{self, Note, Observation};
-use flow_core::dictation::cooling::Cooling;
 use flow_core::dictation::remote::{NoServer, Served};
 use flow_core::dictation::retrier::{self, Retrier};
-use flow_core::dictation::rewrite::{self, Live, Plan, REWRITE_READY_BUDGET};
+use flow_core::dictation::rewrite::{self, Live, Plan};
 use flow_core::dictation::session::{Control, Coordinator, DbHistory, Deps, Event, Inserter, Local, Mic, Progress, Recognizer, Rewriter, Rewritten, Snapshot, State};
 use flow_core::remote::enrollment::Enrollment;
 use flow_core::remote::pool::Pool;
@@ -49,8 +48,6 @@ enum Command {
 #[derive(Clone)]
 struct Route {
     server: Option<(Arc<Enrollment>, Arc<Pool>, Duration)>,
-    /// The server's backoff after a fallback, when there is a server: dictation and rewrite both read it.
-    cooling: Option<Arc<Cooling>>,
     local_allowed: bool,
     rewrite: Plan,
 }
@@ -78,23 +75,25 @@ fn log_timing(timing: &flow_core::local_model::Timing) {
 }
 
 impl Rewriter for KeyedRewrite {
-    /// `Live` waits for this Mac's model inside `REWRITE_READY_BUDGET` and skips past it; this adds
-    /// the key and the timing line.
     fn rewrite(&mut self, id: &str, text: &str, progress: &mut dyn FnMut(Progress), cancel: &Arc<AtomicBool>) -> Rewritten {
-        use flow_core::local_model::Timing;
+        use flow_core::local_model::{Timing, wait_until_ready};
         with_key(&mut self.live.plan, &*self.credentials);
-        let local = self.live.plan.channel.is_none() && self.live.plan.settings.origin == flow_core::settings::loopback_endpoint();
+        let plan = &self.live.plan;
+        let local = plan.enabled && plan.channel.is_none() && plan.settings.origin == flow_core::settings::loopback_endpoint();
+        if !local {
+            return self.live.rewrite(id, text, progress, cancel);
+        }
+        let wait = wait_until_ready(&plan.settings.origin, plan.secret.as_deref(), plan.timeout, cancel, &mut || progress(Progress::StartingModel));
         let began = Instant::now();
         let result = self.live.rewrite(id, text, progress, cancel);
-        let Some(wait) = self.live.waited.filter(|_| local) else { return result };
         let outcome = match &result {
             Rewritten::Text { .. } => "ok",
             Rewritten::NotEligible => "not_eligible",
-            Rewritten::Skipped(_) => "skipped",
             _ if cancel.load(SeqCst) => "cancelled",
+            _ if !wait.ready => "timeout",
             _ => "failed",
         };
-        log_timing(&Timing { wait, rewrite: began.elapsed().saturating_sub(wait.waited), outcome });
+        log_timing(&Timing { wait, rewrite: began.elapsed(), outcome });
         result
     }
 }
@@ -179,15 +178,12 @@ fn serve(parts: Parts, keep_loaded: bool, inbox: Receiver<Command>, publish: Sen
                 let recognizer: &mut dyn Recognizer = match route.server {
                     Some((enrollment, pool, threshold)) => {
                         served = Served::new(enrollment, pool, threshold, &mut local, route.local_allowed);
-                        if let Some(cooling) = route.cooling.clone() {
-                            served = served.cooling(cooling);
-                        }
                         &mut served
                     }
                     None if route.local_allowed => &mut local,
                     None => &mut no_server,
                 };
-                let mut rewriter = Db::open_or_create(&database).ok().map(|db| KeyedRewrite { live: Live { cooling: route.cooling.clone(), ..Live::new(db, route.rewrite) }, credentials: credentials.clone() });
+                let mut rewriter = Db::open_or_create(&database).ok().map(|db| KeyedRewrite { live: Live { db, plan: route.rewrite }, credentials: credentials.clone() });
                 let mut deps = Deps { mic: mic.as_ref(), inputs: &entries, recognizer, rewriter: rewriter.as_mut().map(|r| r as &mut dyn Rewriter), inserter: inserter.as_ref(), history: &mut history };
                 coordinator.run(&mut deps, &control);
                 running.store(false, SeqCst);
@@ -596,10 +592,8 @@ fn route(cx: &mut App) -> Route {
         timeout: Duration::from_secs(server::rewrite_timeout(prefs) as u64),
         channel,
         secret: None,
-        ready: Some(REWRITE_READY_BUDGET),
     };
-    let cooling = remote.as_ref().map(|r| r.cooling.clone());
-    Route { server: remote.filter(|_| dictation).map(|r| (r.enrollment.clone(), r.pool.clone(), threshold)), cooling, local_allowed: installed && !routing.server_only, rewrite }
+    Route { server: remote.filter(|_| dictation).map(|r| (r.enrollment.clone(), r.pool.clone(), threshold)), local_allowed: installed && !routing.server_only, rewrite }
 }
 
 /// The save panel for a kept recording, GPUI's native one. `Ok(None)` when the user cancels.
@@ -1153,8 +1147,8 @@ pub(crate) mod tests {
         let root = std::env::temp_dir().join(format!("flow-driver-{}", std::process::id()));
         let driver = Driver::spawn(doubles(&root), false);
         driver.running.store(true, SeqCst);
-        let rewrite = Plan { enabled: false, mode: "clean", settings: Default::default(), timeout: REPLY, channel: None, secret: None, ready: Some(REWRITE_READY_BUDGET) };
-        driver.commands.send(Command::Begin { control: Arc::new(Control::default()), entries: vec![], route: Route { server: None, cooling: None, local_allowed: true, rewrite } }).unwrap();
+        let rewrite = Plan { enabled: false, mode: "clean", settings: Default::default(), timeout: REPLY, channel: None, secret: None };
+        driver.commands.send(Command::Begin { control: Arc::new(Control::default()), entries: vec![], route: Route { server: None, local_allowed: true, rewrite } }).unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         while driver.running.load(SeqCst) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(5));

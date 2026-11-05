@@ -383,7 +383,7 @@ impl HistoryPage {
             let answer = cx
                 .background_spawn(async move {
                     match channel {
-                        Some(pool) => flow_core::history::send_rewrite_over_channel(&pool, &sent, timeout, None, &cancel),
+                        Some(pool) => flow_core::history::send_rewrite_over_channel(&pool, &sent, timeout, &cancel),
                         None => {
                             flow_core::local_model::wait_until_ready(&origin, secret.as_deref(), timeout, &cancel, &mut || {});
                             send_rewrite(&sent, secret.as_deref(), timeout, cancel)

@@ -127,8 +127,7 @@ impl Retrier {
         };
         // The Dictionary is read again now, not taken from the failed attempt.
         let vocabulary = Vocabulary::load(&self.db).unwrap_or_default();
-        // Nobody waits on a retry: no accept budget, and the first refusal counts as the try.
-        let stream = Stream::start(self.enrollment.clone(), reader, remote::boost_of(&vocabulary), self.threshold, None);
+        let stream = Stream::start(self.enrollment.clone(), reader, remote::boost_of(&vocabulary), self.threshold);
         stream.recorded(samples);
         stream.release(samples);
         let result = loop {

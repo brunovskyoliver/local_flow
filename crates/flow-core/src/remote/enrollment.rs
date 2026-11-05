@@ -623,13 +623,6 @@ impl Enrollment {
         self.settings().addresses().iter().find_map(|origin| settings::ping(origin, Some(&key), Some(&token)))?.1
     }
 
-    /// The cooling probe (`dictation::cooling`): `GET /v1/remote/identity` at `origin` answers with
-    /// the key this device pinned. No token and no channel, so it's cheap and sends nothing new.
-    pub fn probe(&self, origin: &str) -> bool {
-        let Some(pinned) = self.pinned_key() else { return false };
-        self.parts.identity.fetch(origin).ok().and_then(|identity| identity.validated_key()).is_some_and(|key| key == pinned)
-    }
-
     pub fn session_channel(&self) -> Result<Channel, ChannelError> {
         self.origin().ok_or(ChannelError::Closed)?;
         let key = self.pinned_key().ok_or(ChannelError::Closed)?;
