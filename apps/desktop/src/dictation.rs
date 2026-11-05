@@ -583,7 +583,11 @@ fn route(cx: &mut App) -> Route {
         remote
     });
     let prefs = &core.prefs;
-    let threshold = Duration::from_millis(server::fallback_threshold(prefs).max(0) as u64);
+    let local_allowed = installed && !routing.server_only;
+    // The threshold only buys a local fallback. Without one, giving up early pastes nothing and
+    // queues the audio, so a slow link (a VPN, a lossy Wi-Fi) gets the retry's 15 s instead.
+    // swift-note: Swift used the threshold either way.
+    let threshold = if local_allowed { Duration::from_millis(server::fallback_threshold(prefs).max(0) as u64) } else { flow_core::dictation::remote::RETRY_THRESHOLD };
     let channel = remote.as_ref().filter(|_| rewrite_routed).map(|r| r.pool.clone());
     let rewrite = Plan {
         enabled: prefs.bool_or("rewriteEnabled", false),
@@ -593,7 +597,7 @@ fn route(cx: &mut App) -> Route {
         channel,
         secret: None,
     };
-    Route { server: remote.filter(|_| dictation).map(|r| (r.enrollment.clone(), r.pool.clone(), threshold)), local_allowed: installed && !routing.server_only, rewrite }
+    Route { server: remote.filter(|_| dictation).map(|r| (r.enrollment.clone(), r.pool.clone(), threshold)), local_allowed, rewrite }
 }
 
 /// The save panel for a kept recording, GPUI's native one. `Ok(None)` when the user cancels.
@@ -1019,6 +1023,10 @@ pub(crate) mod tests {
             let served = route(cx);
             assert!(served.server.is_some() && served.rewrite.channel.is_some(), "approved now: dictation and rewrite both go to the server");
             assert!(served.rewrite.settings.via_channel);
+            // No local fallback: a slow link waits for the server rather than queueing the audio.
+            assert_eq!(served.server.as_ref().unwrap().2, flow_core::dictation::remote::RETRY_THRESHOLD);
+            cx.global_mut::<Core>().prefs.set("server.only", false);
+            assert_eq!(route(cx).server.unwrap().2, Duration::from_millis(1500), "with a fallback, the setting");
         });
         let _ = std::fs::remove_dir_all(&root);
     }
