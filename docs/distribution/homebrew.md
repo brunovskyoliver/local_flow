@@ -1,9 +1,11 @@
 # Homebrew distribution
 
 From v0.4.0 the cask installs the Rust desktop app (ADR 0036). Swift builds are no longer
-published to Homebrew. The app is ad-hoc signed and not notarized; the cask clears the
-download's quarantine flag so it opens without the Open Anyway step. Gatekeeper stays on
-for everything else.
+published to Homebrew. From v0.4.5 the app is signed with the maintainer's Apple Development
+certificate (`scripts/package-rust-macos.sh` finds it, or set `LOCALFLOW_SIGN`), so macOS keeps
+its permissions across upgrades. It isn't notarized; the cask clears the download's
+quarantine flag so it opens without the Open Anyway step. Gatekeeper stays on for
+everything else.
 
 ## Install
 
@@ -34,8 +36,8 @@ brew upgrade --cask localflow
 brew uninstall --cask localflow
 ```
 
-The cask quits the app first. macOS may ask for permissions again after an upgrade,
-because each ad-hoc build has a new signature. Uninstalling keeps Application Support
+The cask quits the app first. Every build carries the same signing certificate, so macOS
+keeps the app's permissions across upgrades. Uninstalling keeps Application Support
 (recordings, transcripts, models and settings); there is deliberately no `zap` stanza.
 
 On a Mac that ran the Swift app, the first launch asks whether to bring its data over:
